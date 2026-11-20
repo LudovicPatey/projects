@@ -1,0 +1,7 @@
+config/config.php
+storage/blobs/*
+!storage/blobs/.gitkeep
+storage/*.sqlite
+.DS_Store
+__pycache__/
+*.pyc

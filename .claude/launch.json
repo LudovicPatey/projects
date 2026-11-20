@@ -1,0 +1,6 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    { "name": "dev", "runtimeExecutable": "php", "runtimeArgs": ["-S", "localhost:8080", "-t", "public", "bin/dev-router.php"], "port": 8080 }
+  ]
+}

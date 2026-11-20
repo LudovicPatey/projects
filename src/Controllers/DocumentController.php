@@ -1,0 +1,230 @@
+<?php
+declare(strict_types=1);
+
+namespace App\Controllers;
+
+use App\{Access, Auth, Db, HttpError, Request, Response, Storage};
+
+/**
+ * Project files. A "document" is a versioned unit made of one PDF plus optional
+ * LaTeX sources (.tex, .bib, images, .zip...). Each document is flagged as
+ * written by a human or by an AI.
+ */
+final class DocumentController
+{
+    public static function list(Request $r): never
+    {
+        $pid = $r->int('pid');
+        Access::member($pid);
+        $rows = Db::all(
+            "SELECT d.id, d.title, d.description, d.origin, d.ai_model, d.created_at, d.updated_at, d.current_version_id,
+                    u.name AS created_by_name, v.version_no AS current_version_no,
+                    (SELECT COUNT(*) FROM document_versions dv WHERE dv.document_id = d.id) AS version_count,
+                    (SELECT COUNT(*) FROM version_files f WHERE f.version_id = d.current_version_id AND f.role <> 'pdf') AS source_count,
+                    (SELECT COUNT(*) FROM comments c WHERE c.target_type = 'document' AND c.target_id = d.id AND c.parent_id IS NULL AND c.resolved = 0) AS open_threads
+             FROM documents d JOIN users u ON u.id = d.created_by
+             LEFT JOIN document_versions v ON v.id = d.current_version_id
+             WHERE d.project_id = ? AND d.deleted_at IS NULL ORDER BY d.updated_at DESC", [$pid]);
+        Response::json(['documents' => $rows]);
+    }
+
+    public static function create(Request $r): never
+    {
+        $pid = $r->int('pid');
+        Access::member($pid);
+        $title = $r->str('title');
+        if ($title === '') throw new HttpError(422, 'A title is required.');
+        // Files uploaded by an AI agent are always flagged as AI-written.
+        $origin = Auth::isAgent() ? 'ai' : self::origin($r);
+        $pdf = $r->files('pdf')[0] ?? throw new HttpError(422, 'A PDF is required.');
+        $sources = $r->files('sources');
+
+        $id = Db::tx(function () use ($r, $pid, $title, $origin, $pdf, $sources) {
+            $now = Db::now();
+            $id = Db::insert('documents', [
+                'project_id' => $pid, 'title' => mb_substr($title, 0, 255), 'description' => $r->str('description') ?: null,
+                'origin' => $origin, 'ai_model' => $origin === 'ai' ? self::model($r) : null,
+                'created_by' => Auth::id(), 'created_at' => $now, 'updated_at' => $now,
+            ]);
+            self::newVersion($id, $pdf, $sources, $r->str('notes') ?: 'Initial version');
+            return $id;
+        });
+        Response::json(self::present($id), 201);
+    }
+
+    public static function show(Request $r): never
+    {
+        $d = Access::document($r->int('id'));
+        Response::json(self::present((int)$d['id']));
+    }
+
+    public static function update(Request $r): never
+    {
+        $d = self::writable($r->int('id'));
+        $data = ['updated_at' => Db::now()];
+        if ($r->input('title') !== null) {
+            if ($r->str('title') === '') throw new HttpError(422, 'A title is required.');
+            $data['title'] = mb_substr($r->str('title'), 0, 255);
+        }
+        if ($r->input('description') !== null) $data['description'] = $r->str('description') ?: null;
+        if ($r->input('origin') !== null && !Auth::isAgent()) $data['origin'] = self::origin($r);
+        if ($r->input('ai_model') !== null) $data['ai_model'] = mb_substr($r->str('ai_model'), 0, 120) ?: null;
+        if (($data['origin'] ?? $d['origin']) === 'human') $data['ai_model'] = null;
+        Db::update('documents', $data, 'id = :id', ['id' => $d['id']]);
+        Response::json(self::present((int)$d['id']));
+    }
+
+    public static function delete(Request $r): never
+    {
+        $d = Access::document($r->int('id'));
+        if ((int)$d['created_by'] !== Auth::id()) Access::owner((int)$d['project_id']);
+        Db::update('documents', ['deleted_at' => Db::now()], 'id = :id', ['id' => $d['id']]);
+        Response::json(['ok' => true]);
+    }
+
+    public static function addVersion(Request $r): never
+    {
+        $d = self::writable($r->int('id'));
+        $pdf = $r->files('pdf')[0] ?? throw new HttpError(422, 'A PDF is required for a new version.');
+        $sources = $r->files('sources');
+        $keep = $r->str('keep_sources') === '1' && !$sources;
+        Db::tx(function () use ($d, $pdf, $sources, $keep, $r) {
+            $vid = self::newVersion((int)$d['id'], $pdf, $sources, $r->str('notes') ?: null);
+            if ($keep && $d['current_version_id']) {
+                Db::run("INSERT INTO version_files (version_id, role, filename, blob_id)
+                         SELECT ?, role, filename, blob_id FROM version_files WHERE version_id = ? AND role <> 'pdf'",
+                    [$vid, $d['current_version_id']]);
+            }
+        });
+        Response::json(self::present((int)$d['id']), 201);
+    }
+
+    /** Restoring never deletes history: it creates a new version identical to the old one. */
+    public static function restore(Request $r): never
+    {
+        $d = self::writable($r->int('id'));
+        $old = Db::one('SELECT * FROM document_versions WHERE id = ? AND document_id = ?', [$r->int('vid'), $d['id']]);
+        if (!$old) throw new HttpError(404, 'Version not found');
+        Db::tx(function () use ($d, $old) {
+            $vid = self::insertVersion((int)$d['id'], 'Restored from version ' . $old['version_no'], (int)$old['id']);
+            Db::run('INSERT INTO version_files (version_id, role, filename, blob_id) SELECT ?, role, filename, blob_id FROM version_files WHERE version_id = ?',
+                [$vid, $old['id']]);
+        });
+        Response::json(self::present((int)$d['id']));
+    }
+
+    public static function file(Request $r): never
+    {
+        $f = Db::one('SELECT f.*, v.document_id FROM version_files f JOIN document_versions v ON v.id = f.version_id WHERE f.id = ?', [$r->int('fid')]);
+        if (!$f) throw new HttpError(404, 'File not found');
+        Access::document((int)$f['document_id']);
+        Storage::serve((int)$f['blob_id'], $f['filename'], !isset($r->query['download']));
+    }
+
+    /** Download a whole version (PDF + sources) as a zip archive. */
+    public static function zip(Request $r): never
+    {
+        $v = Db::one('SELECT * FROM document_versions WHERE id = ?', [$r->int('vid')]);
+        if (!$v) throw new HttpError(404, 'Version not found');
+        $d = Access::document((int)$v['document_id']);
+        if (!class_exists(\ZipArchive::class)) throw new HttpError(500, 'Zip support is not available on this server.');
+        $tmp = tempnam(sys_get_temp_dir(), 'crpzip');
+        $zip = new \ZipArchive();
+        $zip->open($tmp, \ZipArchive::OVERWRITE);
+        $used = [];
+        foreach (Db::all('SELECT * FROM version_files WHERE version_id = ?', [$v['id']]) as $f) {
+            $name = $f['filename'];
+            for ($i = 2; isset($used[$name]); $i++) $name = pathinfo($f['filename'], PATHINFO_FILENAME) . "-$i." . pathinfo($f['filename'], PATHINFO_EXTENSION);
+            $used[$name] = true;
+            $zip->addFile(Storage::blob((int)$f['blob_id'])['path'], $name);
+        }
+        $zip->close();
+        $fname = preg_replace('/[^\w\-]+/', '_', $d['title']) . '-v' . $v['version_no'] . '.zip';
+        header('Content-Type: application/zip');
+        header('Content-Length: ' . filesize($tmp));
+        header('Content-Disposition: attachment; filename="' . $fname . '"');
+        readfile($tmp);
+        unlink($tmp);
+        exit;
+    }
+
+    // ---------------------------------------------------------------------
+
+    /** Agents may only modify AI-written files; humans may modify any file of their projects. */
+    private static function writable(int $id): array
+    {
+        $d = Access::document($id);
+        if (Auth::isAgent() && $d['origin'] !== 'ai') {
+            throw new HttpError(403, 'AI agents cannot modify human-written files. Upload a new AI file instead.');
+        }
+        return $d;
+    }
+
+    private static function model(Request $r): ?string
+    {
+        $m = $r->str('ai_model');
+        if ($m === '' && Auth::isAgent()) $m = (string)(Auth::user()['ai_model'] ?: Auth::user()['name']);
+        return mb_substr($m, 0, 120) ?: null;
+    }
+
+    private static function origin(Request $r): string
+    {
+        $o = $r->str('origin');
+        if (!in_array($o, ['human', 'ai'], true)) throw new HttpError(422, "Please state whether this file was written by a human or by an AI.");
+        return $o;
+    }
+
+    private static function insertVersion(int $docId, ?string $notes, ?int $restoredFrom = null): int
+    {
+        $no = (int)Db::value('SELECT COALESCE(MAX(version_no), 0) FROM document_versions WHERE document_id = ?', [$docId]) + 1;
+        $vid = Db::insert('document_versions', [
+            'document_id' => $docId, 'version_no' => $no, 'notes' => $notes, 'restored_from_id' => $restoredFrom,
+            'uploaded_by' => Auth::id(), 'created_at' => Db::now(),
+        ]);
+        Db::update('documents', ['current_version_id' => $vid, 'updated_at' => Db::now()], 'id = :id', ['id' => $docId]);
+        return $vid;
+    }
+
+    private static function newVersion(int $docId, array $pdf, array $sources, ?string $notes): int
+    {
+        $pdfBlob = Storage::storeUpload($pdf, true);
+        $vid = self::insertVersion($docId, $notes);
+        Db::insert('version_files', ['version_id' => $vid, 'role' => 'pdf', 'filename' => self::safeName($pdf['name'], 'document.pdf'), 'blob_id' => $pdfBlob]);
+        foreach ($sources as $s) {
+            $name = self::safeName($s['name'], 'source');
+            $role = strtolower(pathinfo($name, PATHINFO_EXTENSION)) === 'bib' ? 'bib' : 'source';
+            Db::insert('version_files', ['version_id' => $vid, 'role' => $role, 'filename' => $name, 'blob_id' => Storage::storeUpload($s)]);
+        }
+        return $vid;
+    }
+
+    private static function safeName(string $name, string $fallback): string
+    {
+        $name = basename(str_replace('\\', '/', $name));
+        $name = preg_replace('/[^\p{L}\p{N}_.\- ]+/u', '_', $name);
+        return mb_substr(trim($name, '. '), 0, 200) ?: $fallback;
+    }
+
+    private static function present(int $id): array
+    {
+        $d = Db::one('SELECT d.*, u.name AS created_by_name FROM documents d JOIN users u ON u.id = d.created_by WHERE d.id = ?', [$id]);
+        $versions = Db::all(
+            'SELECT v.*, u.name AS uploaded_by_name, r.version_no AS restored_from_no
+             FROM document_versions v JOIN users u ON u.id = v.uploaded_by
+             LEFT JOIN document_versions r ON r.id = v.restored_from_id
+             WHERE v.document_id = ? ORDER BY v.version_no DESC', [$id]);
+        $vids = array_column($versions, 'id');
+        [$in, $params] = Db::in($vids);
+        $files = Db::all("SELECT f.id, f.version_id, f.role, f.filename, b.size, b.sha256 FROM version_files f JOIN blobs b ON b.id = f.blob_id
+                          WHERE f.version_id IN $in ORDER BY f.role, f.filename", $params);
+        foreach ($versions as &$v) {
+            $v['files'] = array_values(array_filter($files, fn($f) => $f['version_id'] == $v['id']));
+            $pdf = array_values(array_filter($v['files'], fn($f) => $f['role'] === 'pdf'))[0] ?? null;
+            $v['pdf_file_id'] = $pdf ? (int)$pdf['id'] : null;
+            $v['pdf_sha'] = $pdf['sha256'] ?? null;
+            $v['is_current'] = (int)$v['id'] === (int)$d['current_version_id'];
+        }
+        $d['versions'] = $versions;
+        return $d;
+    }
+}

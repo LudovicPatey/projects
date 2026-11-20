@@ -1,0 +1,8 @@
+<?php
+// Router for PHP's built-in server (local development only):
+//   php -S localhost:8080 -t public bin/dev-router.php
+$path = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+$file = __DIR__ . '/../public' . $path;
+if ($path !== '/' && is_file($file) && !str_ends_with($file, '.php') && basename($file) !== 'app.html') return false;
+$_SERVER['SCRIPT_NAME'] = '/index.php';
+require __DIR__ . '/../public/index.php';
