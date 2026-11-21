@@ -5,7 +5,7 @@ require __DIR__ . '/../src/bootstrap.php';
 
 use App\{Auth, Config, HttpError, Request, Response};
 use App\Controllers\{AgentController, AuthController, BibController, CommentController, ConversationController,
-    DocumentController, ExportController, FactController, KeyController, NotificationController, ProjectController, SearchController};
+    DocumentController, ExportController, FactController, HelpController, KeyController, NotificationController, ProjectController, SearchController};
 
 $routes = [
     // auth
@@ -27,6 +27,7 @@ $routes = [
     ['PATCH',  '/api/projects/{id}/members/{uid}',        [ProjectController::class, 'updateMember']],
     ['DELETE', '/api/projects/{id}/members/{uid}',        [ProjectController::class, 'removeMember']],
     ['GET',    '/api/projects/{id}/mentionables',         [ProjectController::class, 'mentionables']],
+    ['GET',    '/api/projects/{id}/help-context',         [HelpController::class, 'context']],
     ['GET',    '/api/projects/{id}/export',               [ExportController::class, 'project']],
     ['GET',    '/api/projects/{id}/context',              [AgentController::class, 'projectContext']],
     ['GET',    '/api/projects/{id}/backlinks',            [ProjectController::class, 'backlinks']],

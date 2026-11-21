@@ -15,7 +15,7 @@ export const ProjectsView = {
   template: `<div class="page">
     <header class="page-head"><div><h1>Your research projects</h1>
       <p class="muted">Each project is organised around one open question.</p></div>
-      <button v-if="canCreate" class="btn primary" @click="creating = true"><icon name="plus" :size="16"/> New project</button></header>
+      <button v-if="canCreate" class="btn primary" data-tour="new-project" @click="creating = true"><icon name="plus" :size="16"/> New project</button></header>
     <div class="project-grid">
       <a v-for="p in projects" :key="p.id" class="project-card" :href="'#/p/' + p.id">
         <b v-if="p.unread" class="ios-badge card-badge" :aria-label="p.unread + ' unread'">{{ p.unread > 99 ? '99+' : p.unread }}</b>

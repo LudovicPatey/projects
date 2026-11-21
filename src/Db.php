@@ -152,6 +152,7 @@ final class Db
             'ALTER TABLE comments ADD COLUMN ai_model VARCHAR(120) NULL',
             'ALTER TABLE document_versions ADD COLUMN ai_model VARCHAR(120) NULL',
             'ALTER TABLE bib_entries ADD COLUMN ai_model VARCHAR(120) NULL',
+            'ALTER TABLE users ADD COLUMN tours_seen VARCHAR(60) NULL',
         ];
         foreach (['messages', 'comments', 'document_versions', 'bib_entries', 'fact_revisions', 'fact_reviews', 'fact_lean'] as $t) {
             $migrations[] = "ALTER TABLE $t ADD COLUMN ai_user_id INT UNSIGNED NULL";

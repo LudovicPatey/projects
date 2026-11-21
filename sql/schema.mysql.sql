@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS users (
   affiliation VARCHAR(255) NULL,
   kind VARCHAR(10) NOT NULL DEFAULT 'human',  -- 'human' | 'agent' (AI agent using an API token)
   ai_model VARCHAR(120) NULL,                 -- for agents: the AI system behind it
+  tours_seen VARCHAR(60) NULL,                -- first-use tutorials already seen
   created_at DATETIME NOT NULL,
   last_login_at DATETIME NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

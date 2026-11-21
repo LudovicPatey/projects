@@ -25,6 +25,8 @@ projects, and every account is an **ORCID** iD.
 | **Personal API keys** | Each researcher creates keys on their profile page. Their AI client reads what they can read and submits facts, reviews and Lean proofs, labelled with its model. |
 | **Project copy** | Any member can download a `.zip` of everything they can see in a project: question, facts with their traceability, all file versions with sources, bibliography with PDFs, their conversations and comments, as readable documents and JSON. |
 | **Search** | A search bar at the top (⌘K or Ctrl K) finds facts, conversations, files, references, comments, people and projects, in the current project or all of them. It ignores accents and only returns what the user can see. PDF contents are not searched. |
+| **Guided tour** | First-use speech bubbles present the interface and each project's areas, adapted to the user's role. Progress is saved per account, and the tour can be replayed from the help center. |
+| **Help center** | Searchable guides for every feature, in the dashboard. Articles are adapted to the current project, with live pointers to its facts to review, unread items, files and references, and suggested next steps. |
 | **Notifications** | You are notified when someone @mentions you, replies to a thread you took part in, or adds you to a project or conversation. Unread badges appear on the left menu. Each file and bib entry has a "Mentions" tab that lists where it was cited. |
 
 All AI-generated content records the model that produced it (required), the user it corresponds to, and its generation time when the client measured it.

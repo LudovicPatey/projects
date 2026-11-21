@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 namespace App\Controllers;
 
-use App\{Auth, Config, Db, HttpError, Orcid, Request, Response};
+use App\{Auth, Config, Db, HttpError, Orcid, Request, Response, Tours};
 
 final class AuthController
 {
@@ -46,6 +46,7 @@ final class AuthController
         $u = Auth::user();
         Response::json([
             'user' => $u,
+            'tours_seen' => $u ? Tours::parse(Db::value('SELECT tours_seen FROM users WHERE id = ?', [$u['id']])) : [],
             'csrf' => Auth::csrf(),
             'dev' => Config::isDev(),
             'orcid_sandbox' => (bool)Config::get('orcid.sandbox'),
@@ -62,6 +63,11 @@ final class AuthController
             $e = $r->str('email');
             if ($e !== '' && !filter_var($e, FILTER_VALIDATE_EMAIL)) throw new HttpError(422, 'Invalid email address.');
             $data['email'] = $e ?: null;
+        }
+        if ($r->input('tours_seen') !== null) {
+            $seen = Tours::merge(Db::value('SELECT tours_seen FROM users WHERE id = ?', [Auth::id()]), $r->input('tours_seen'));
+            if ($seen === null) throw new HttpError(422, 'Unknown tutorial.');
+            $data['tours_seen'] = $seen;
         }
         if ($data) Db::update('users', $data, 'id = :id', ['id' => Auth::id()]);
         Response::json(['ok' => true]);
