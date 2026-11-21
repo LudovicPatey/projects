@@ -5,7 +5,7 @@ require __DIR__ . '/../src/bootstrap.php';
 
 use App\{Auth, Config, HttpError, Request, Response};
 use App\Controllers\{AgentController, AuthController, BibController, CommentController, ConversationController,
-    DocumentController, FactController, KeyController, NotificationController, ProjectController};
+    DocumentController, ExportController, FactController, KeyController, NotificationController, ProjectController};
 
 $routes = [
     // auth
@@ -27,6 +27,7 @@ $routes = [
     ['PATCH',  '/api/projects/{id}/members/{uid}',        [ProjectController::class, 'updateMember']],
     ['DELETE', '/api/projects/{id}/members/{uid}',        [ProjectController::class, 'removeMember']],
     ['GET',    '/api/projects/{id}/mentionables',         [ProjectController::class, 'mentionables']],
+    ['GET',    '/api/projects/{id}/export',               [ExportController::class, 'project']],
     ['GET',    '/api/projects/{id}/context',              [AgentController::class, 'projectContext']],
     ['GET',    '/api/projects/{id}/backlinks',            [ProjectController::class, 'backlinks']],
     // AI agents
@@ -108,6 +109,7 @@ if (is_file(App\Backup::maintenanceFile())) {
 }
 
 try {
+    App\Db::ensureSchema();
     if (Auth::bearer() === null) Auth::startSession();
     // Browsers may only send GET/POST from forms; allow method override for PATCH/DELETE.
     if ($req->method === 'POST' && !empty($_SERVER['HTTP_X_HTTP_METHOD_OVERRIDE'])) {

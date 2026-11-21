@@ -100,6 +100,34 @@ final class Db
 
     public static function now(): string { return gmdate('Y-m-d H:i:s'); }
 
+    /**
+     * In production, applies the schema once after a deployment that changed it,
+     * so that FTP-only hosting needs no command on the server.
+     */
+    public static function ensureSchema(): void
+    {
+        if (Config::isDev()) return;
+        $files = [__DIR__ . '/../sql/schema.mysql.sql', __FILE__];
+        $version = '';
+        foreach ($files as $f) $version .= filesize($f) . ':' . filemtime($f) . ';';
+        $dir = rtrim((string)Config::get('storage_path'), '/');
+        $stamp = "$dir/schema.version";
+        if (is_file($stamp) && trim((string)file_get_contents($stamp)) === $version) return;
+        if (!is_dir($dir)) mkdir($dir, 0750, true);
+        $lock = fopen("$dir/.schema.lock", 'c');
+        if (!$lock) throw new \RuntimeException('Cannot lock the schema upgrade.');
+        flock($lock, LOCK_EX);
+        try {
+            if (!is_file($stamp) || trim((string)file_get_contents($stamp)) !== $version) {
+                self::install();
+                file_put_contents($stamp, $version, LOCK_EX);
+            }
+        } finally {
+            flock($lock, LOCK_UN);
+            fclose($lock);
+        }
+    }
+
     /** Runs the schema (MySQL file, converted on the fly for SQLite). */
     public static function install(): void
     {

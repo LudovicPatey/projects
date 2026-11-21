@@ -359,7 +359,9 @@ final class Backup
 
     private static function lock(): void
     {
-        $path = rtrim((string)Config::get('storage_path'), '/') . '/.backup.lock';
+        $root = rtrim((string)Config::get('storage_path'), '/');
+        if (!is_dir($root)) mkdir($root, 0750, true);
+        $path = "$root/.backup.lock";
         $fh = fopen($path, 'c');
         if (!$fh || !flock($fh, LOCK_EX | LOCK_NB)) throw new \RuntimeException('Another backup or restore is already running.');
         self::$lock = $fh;

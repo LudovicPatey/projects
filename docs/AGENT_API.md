@@ -133,6 +133,9 @@ Humans review, comment, retract, delete and report Lean checks in the interface.
 the entry is not independent. `chain` is `ok`, `unchecked` or `broken`. `lean` is `none`, `unchecked`, `compiled`, `partial` or `failed`.
 **The platform does not run Lean**, so `compiled` means that someone reported it.
 
+### Downloading a project
+`GET /api/projects/{pid}/export` returns a `.zip` copy of everything the caller can see. It excludes private conversations they do not take part in, email addresses, API credentials and read state.
+
 ### Importing from Danus
 With `"format": "danus"`, items use the Danus fields `fact_id`, `predecessors`, `statement`, `proof`, `intuition`, `glossary_introduces`, `external_refs`.
 Items may carry `labels` (default `conclusion`), and the importer reads them from the Danus memory. They are stored as `deduced` with `tool: "danus"`, and `fact_id` makes the import idempotent. They arrive as **unchecked**, because the platform cannot confirm a Danus verifier run,

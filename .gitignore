@@ -3,8 +3,13 @@ storage/blobs/*
 !storage/blobs/.gitkeep
 storage/*.sqlite
 storage/backups/
+storage/tmp/
 storage/.backup.lock
 storage/maintenance.flag
+storage/schema.version
+storage/.schema.lock
+cache/
+node_modules/
 .DS_Store
 __pycache__/
 *.pyc

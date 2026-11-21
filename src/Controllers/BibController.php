@@ -26,7 +26,7 @@ final class BibController
         Response::json(self::present($b));
     }
 
-    private static function present(array $b): array
+    public static function present(array $b): array
     {
         $fields = json_decode($b['fields_json'], true) ?: [];
         $b['fields'] = $fields;

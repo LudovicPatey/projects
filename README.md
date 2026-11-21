@@ -21,6 +21,7 @@ projects, and every account is an **ORCID** iD.
 | **Rich text** | Bold, italics, lists, code, links and quotes. **@mentions** of researchers, files and bibliography entries are clickable chips. `$…$` and `$$…$$` are rendered with KaTeX. Ctrl/⌘+Enter sends. |
 | **AI agents** | Owners create agents (People → AI agents) that act through an API token. Agents read the project, join the conversations they are added to, comment, and upload files. Everything they write is labelled as AI, and their files are always flagged **AI**. They cannot modify human-written files. See [docs/AGENT_API.md](docs/AGENT_API.md) and the example agent built on Claude in [examples/claude_agent.py](examples/claude_agent.py). |
 | **Personal API keys** | Each researcher creates keys on their profile page. Their AI client reads what they can read and submits facts, reviews and Lean proofs, labelled with its model. |
+| **Project copy** | Any member can download a `.zip` of everything they can see in a project: question, facts with their traceability, all file versions with sources, bibliography with PDFs, their conversations and comments, as readable documents and JSON. |
 | **Notifications** | You are notified when someone @mentions you, replies to a thread you took part in, or adds you to a project or conversation. Unread badges appear on the left menu. Each file and bib entry has a "Mentions" tab that lists where it was cited. |
 
 All AI-generated content records the model that produced it (required), the user it corresponds to, and its generation time when the client measured it.
@@ -47,23 +48,20 @@ bin/install.php      creates the tables (re-run it after an update: it also appl
 docs/AGENT_API.md    API for AI agents
 examples/            example agent (Python, Claude)
 bin/dev-router.php   router for `php -S` in local development
+deploy/              root .htaccess and production configuration template
+scripts/deploy.mjs   upload to the live site (docs/DEPLOY.md)
 ```
 
-## Deploying on OVH (web hosting)
+## Deployment
 
-1. **Register an ORCID application** at <https://orcid.org/developer-tools> (Public API, free).
-   Set the redirect URI to `https://YOUR-DOMAIN/auth/callback`. For tests, use the sandbox
-   (`sandbox.orcid.org`) and set `'sandbox' => true`.
-2. **Create a database** in the OVH Control Panel (Web Cloud → Hosting → Databases), MySQL 8 / MariaDB.
-3. **Upload the project** by FTP/SFTP or Git, for example into `~/research-platform/`.
-4. In **Multisite**, set the domain's **root folder** to `research-platform/public`.
-   Only `public/` is then exposed. `src/`, `config/`, `sql/` and `storage/` also contain a deny-all `.htaccess`, as a safety net.
-5. Copy `.ovhconfig` to the **hosting root** (`~/`) if you don't already have one there. It selects PHP 8.2.
-6. `cp config/config.example.php config/config.php` and fill in `app_url`, `db`, `orcid`. Keep `'env' => 'prod'`.
-7. Create the tables: either `php bin/install.php` over SSH, or import `sql/schema.mysql.sql` with phpMyAdmin.
-8. Make sure `storage/` is writable by PHP. It is by default on OVH.
-9. Upload limits: `public/.user.ini` raises them to 64 MB. If your plan ignores it, set them in the OVH panel.
-   Also set `max_upload_mb` in the config.
+The live site is <https://projects.ludovicpatey.com>, on OVH web hosting, in the FTP folder `projects/`.
+
+```bash
+npm run deploy -- --dry-run
+npm run deploy
+```
+
+The first installation and the full procedure are in [docs/DEPLOY.md](docs/DEPLOY.md).
 
 The first person to sign in creates a project and becomes its owner. They then add colleagues by ORCID iD.
 To restrict who may create projects, list ORCID iDs in `project_creators`.

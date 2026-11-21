@@ -63,10 +63,13 @@ export const OverviewView = {
       <div><span class="tag" :class="{green: p.status==='solved'}">{{ p.status }}</span>
         <h1 v-if="!editing">{{ p.title }}</h1>
         <input v-else class="title-input" v-model="title"></div>
-      <div class="row-gap" v-if="isOwner">
+      <div class="row-gap">
+        <a class="btn" :href="'api/projects/' + p.id + '/export'" download title="Download everything you can see in this project as a .zip" @click="preparing"><icon name="download" :size="15"/> Download project</a>
+        <template v-if="isOwner">
         <select :value="p.status" @change="setStatus($event.target.value)" title="Project status">
           <option value="open">Open</option><option value="solved">Solved</option><option value="archived">Archived</option></select>
         <button v-if="!editing" class="btn" @click="startEdit"><icon name="edit" :size="15"/> Edit question</button>
+        </template>
       </div>
     </header>
     <section class="question-card">
@@ -98,6 +101,7 @@ export const OverviewView = {
   </div>`,
   methods: {
     timeAgo, link,
+    preparing() { toast('Preparing your copy. The download starts when it is ready.'); },
     startEdit() { this.title = this.p.title; this.editing = true; },
     async save() {
       if (await attempt(() => api.patch(`api/projects/${this.p.id}`, { title: this.title, question_html: first(this.$refs.qEd).getHTML() }), 'Saved')) {

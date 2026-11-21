@@ -8,7 +8,9 @@ An archive does **not** contain `config/config.php`, which holds your database p
 Keep a copy of that file in a password manager.
 
 > **Archives contain private research and personal data.** Treat them like the database itself.
-> They are created readable by the owner only, in `storage/backups/`, outside the web root.
+> They are created readable by the owner only, in `projects-data/backups/` on the live site (`storage/backups/` locally), outside the web root.
+
+This is the administrator's full backup. Project members can separately download their own copy of a project with **Download project**, which only contains what they can see and cannot be restored with these tools.
 
 ## Create a backup
 
@@ -33,7 +35,7 @@ php bin/backup.php --verify oq-backup-20261121-030000.zip
 
 In the OVH Control Panel, open **Web Cloud → Hosting → your hosting → Scheduled tasks (Cron) → Add**:
 
-- **Command:** `research-platform/bin/backup.php` (path from your hosting root)
+- **Command:** `projects/bin/backup.php` (path from your hosting root)
 - **Language:** PHP 8.2
 - **Frequency:** daily, at night
 - **Email report:** enabled, so that you hear about failures
@@ -46,7 +48,7 @@ so if your files grow very large, check that backups still finish.
 **A backup stored only on the server does not protect you if you lose the hosting.** Copy archives regularly to another machine:
 
 ```bash
-rsync -av --include='oq-*' --exclude='*' USER@SSH_HOST:research-platform/storage/backups/ ~/open-questions-backups/
+rsync -av --include='oq-*' --exclude='*' USER@SSH_HOST:projects-data/backups/ ~/open-questions-backups/
 ```
 
 Then check what you copied:
@@ -57,7 +59,7 @@ cd ~/open-questions-backups && shasum -a 256 -c oq-backup-20261121-030000.zip.sh
 
 ## Restore
 
-Restoring **replaces all current data** with the content of the archive. It needs SSH access to the hosting.
+Restoring **replaces all current data** with the content of the archive. It needs SSH access to the hosting. Run the commands below from the `projects/` folder, with PHP 8.2 (on OVH, `/usr/local/php8.2/bin/php` if `php` is another version).
 
 1. Choose the archive:
 
@@ -80,26 +82,26 @@ Exit code 0 means a clean restore, 1 means it failed, and 2 means it completed w
 The tool then proceeds as follows:
 
 1. It verifies the whole archive. If anything is wrong, nothing is changed.
-2. It saves the current data to `storage/backups/oq-pre-restore-*.zip`, so **a restore can be undone** by restoring that file. These copies are never removed automatically.
+2. It saves the current data to `oq-pre-restore-*.zip` in the backup folder, so **a restore can be undone** by restoring that file. These copies are never removed automatically.
 3. The site shows a maintenance page.
 4. It restores the files, then replaces the tables in one transaction. On failure, the database stays as it was.
 5. It applies any schema upgrade and reopens the site.
 
 Uploaded files that are not in the archive stay on disk, unused. Tables of other software in the same database are never touched.
 
-If the process is killed during a restore, the site stays in maintenance. Run the restore again. To reopen the site with the data as it is, delete `storage/maintenance.flag`.
+If the process is killed during a restore, the site stays in maintenance. Run the restore again. To reopen the site with the data as it is, delete `maintenance.flag` from `projects-data/` (`storage/` locally).
 
 ## Recover on a new server
 
-1. Deploy the application as described in the [README](../README.md).
-2. Put your `config/config.php` back, with the new database credentials and URL.
+1. Deploy the application as described in [DEPLOY.md](DEPLOY.md).
+2. Put your production configuration back, with the new database credentials and URL.
 3. Create the tables:
 
    ```bash
    php bin/install.php
    ```
 
-4. Copy the archive to `storage/backups/`, then restore it. There is nothing to preserve, so you can skip the safety copy:
+4. Copy the archive to the backup folder, then restore it. There is nothing to preserve, so you can skip the safety copy:
 
    ```bash
    php bin/restore.php oq-backup-20261121-030000.zip --no-safety-backup

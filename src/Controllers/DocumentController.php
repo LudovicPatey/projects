@@ -228,7 +228,7 @@ final class DocumentController
         return mb_substr(trim($name, '. '), 0, 200) ?: $fallback;
     }
 
-    private static function present(int $id): array
+    public static function present(int $id): array
     {
         $d = Db::one('SELECT d.*, u.name AS created_by_name FROM documents d JOIN users u ON u.id = d.created_by WHERE d.id = ?', [$id]);
         $versions = Db::all(

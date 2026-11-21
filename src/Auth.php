@@ -46,7 +46,7 @@ final class Auth
     /** API token sent as "Authorization: Bearer ..." (or "X-Api-Key: ..." when the host strips Authorization). */
     public static function bearer(): ?string
     {
-        $h = $_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '';
+        $h = $_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_REDIRECT_HTTP_AUTHORIZATION'] ?? '';
         if (preg_match('/^Bearer\s+(\S+)$/i', trim($h), $m)) return $m[1];
         $k = trim($_SERVER['HTTP_X_API_KEY'] ?? '');
         return $k !== '' ? $k : null;

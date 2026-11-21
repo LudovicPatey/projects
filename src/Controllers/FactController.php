@@ -925,7 +925,7 @@ final class FactController
     }
 
     /** Sources with a link. A quote from a conversation is only shown to its participants. */
-    private static function presentSources(int $id, int $revision): array
+    public static function presentSources(int $id, int $revision): array
     {
         $out = [];
         foreach (Db::all('SELECT s.*, u.orcid AS author_orcid, u.kind AS author_kind FROM fact_sources s LEFT JOIN users u ON u.id = s.author_user_id
@@ -966,12 +966,12 @@ final class FactController
         return $out;
     }
 
-    private static function present(array $f): array
+    /** @param ?array $byId the project's graph by id, when the caller already has it */
+    public static function present(array $f, ?array $byId = null): array
     {
         $id = (int)$f['id'];
         $pid = (int)$f['project_id'];
-        $g = self::graph($pid);
-        $byId = array_column($g['facts'], null, 'id');
+        $byId ??= array_column(self::graph($pid)['facts'], null, 'id');
         $out = $byId[$id];
         $brief = fn($x) => ['id' => $x, 'label' => $byId[$x]['label'], 'title' => $byId[$x]['title'], 'kind' => $byId[$x]['kind'],
             'status' => $byId[$x]['status'], 'origin' => $byId[$x]['origin'], 'ai_model' => $byId[$x]['ai_model']];

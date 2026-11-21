@@ -1,0 +1,11 @@
+{
+  "name": "open-questions",
+  "private": true,
+  "type": "module",
+  "description": "Deployment tools only: the platform itself is plain PHP with no build step.",
+  "scripts": {
+    "deploy": "node scripts/deploy.mjs",
+    "test": "node --test tests/deploy.test.mjs"
+  },
+  "engines": { "node": ">=22" }
+}

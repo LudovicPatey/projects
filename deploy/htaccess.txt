@@ -1,0 +1,39 @@
+# Root .htaccess of the live site (uploaded as .htaccess by scripts/deploy.mjs).
+# The domain points to this folder. Only public/ is reachable: every request is sent there.
+Options -Indexes
+DirectoryIndex disabled
+
+<IfModule !mod_rewrite.c>
+  Require all denied
+</IfModule>
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteCond %{HTTPS} off
+  RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L,NE,QSA]
+
+  # Forward the Authorization header to PHP (API keys).
+  RewriteCond %{HTTP:Authorization} .
+  RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+
+  # A direct request for an internal folder or dotfile goes to the application, as an unknown page.
+  RewriteRule ^public/ - [L]
+  RewriteRule ^(.*)$ public/$1 [L]
+</IfModule>
+
+<FilesMatch "^\.">
+  Require all denied
+</FilesMatch>
+
+# Compress text responses.
+<IfModule mod_deflate.c>
+  AddOutputFilterByType DEFLATE text/html text/plain text/css text/javascript application/javascript application/json image/svg+xml
+</IfModule>
+
+<IfModule mod_headers.c>
+  Header always set Strict-Transport-Security "max-age=31536000" "expr=%{HTTPS} == 'on'"
+  # File names are not versioned: revalidate at each visit (304 until the next deployment).
+  <FilesMatch "\.(js|css|html)$">
+    Header set Cache-Control "no-cache"
+  </FilesMatch>
+</IfModule>
