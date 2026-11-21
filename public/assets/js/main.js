@@ -9,6 +9,7 @@ import { FilesView } from './views/files.js';
 import { BibView } from './views/bib.js';
 import { FactsView } from './views/facts.js';
 import { LandingPage } from './views/landing.js';
+import { GlobalSearch } from './search.js';
 import { ProjectsView, OverviewView, MembersView, ProfileView, NotificationsDrawer } from './views/misc.js';
 
 const App = {
@@ -87,6 +88,12 @@ const App = {
         <icon name="bell" :size="21"/><span>Alerts</span><b v-if="store.counters.notifications" class="badge">{{ store.counters.notifications }}</b></button>
       <a class="rail-item" href="#/profile" :title="store.user.name"><avatar :name="store.user.name" :id="store.user.id" :size="30"/></a>
     </nav>
+    <div class="app-column">
+    <header class="topbar">
+      <a class="topbar-title ellipsis" :href="store.project && route.name === 'project' ? link('overview') : '#/projects'">{{ store.project && route.name === 'project' ? store.project.title : 'Open Questions' }}</a>
+      <global-search/>
+      <span class="topbar-side"></span>
+    </header>
     <main class="main" :class="{'item-open': itemOpen}">
       <a v-if="route.name === 'project' && itemOpen && listViews.includes(route.view)" class="mobile-back" :href="backLink"><span aria-hidden="true">‹</span> Back to list</a>
       <projects-view v-if="route.name === 'projects'"/>
@@ -104,6 +111,7 @@ const App = {
         <div v-else class="placeholder">Loading project…</div>
       </template>
     </main>
+    </div>
     <notifications-drawer v-if="showNotifs" @close="showNotifs = false"/>
   </div>
   <div class="toasts"><div v-for="t in store.toasts" :key="t.id" class="toast" :class="t.type">{{ t.message }}</div></div>`,
@@ -129,6 +137,7 @@ app.component('files-view', FilesView);
 app.component('bib-view', BibView);
 app.component('facts-view', FactsView);
 app.component('landing-page', LandingPage);
+app.component('global-search', GlobalSearch);
 app.component('projects-view', ProjectsView);
 app.component('overview-view', OverviewView);
 app.component('members-view', MembersView);

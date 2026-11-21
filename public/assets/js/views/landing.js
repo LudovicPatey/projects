@@ -13,13 +13,13 @@ const FEATURES = [
     kicker: 'Traceability', title: 'Know where every proof comes from',
     text: 'Each fact shows whether its proof comes from a human or an AI, who is credited, which passage it was taken from, and which results it depends on.',
     points: ['Human, AI and mixed proofs are told apart', 'Sources cite a page and an exact quote', 'Every revision is kept'],
-    img: 'fact-trace.webp', w: 1551, h: 1320, alt: 'Trace of a fact listing its origin, credited people, the facts it is built on and its revisions',
+    img: 'fact-trace.webp', w: 1551, h: 1239, alt: 'Trace of a fact listing its origin, credited people, the facts it is built on and its revisions',
   },
   {
     kicker: 'Human and AI review', title: 'Trust is earned, one check at a time',
     text: 'Researchers endorse facts in one click. Humans and independent models can mark them correct, point out a gap, or reject them, and Lean proofs can be attached.',
     points: ['A model cannot validate its own work', 'A new revision needs new reviews', 'Lean code containing sorry is detected'],
-    img: 'fact-reviews.webp', w: 1551, h: 1320, alt: 'Reviews of a fact by researchers and by an AI model, with the endorsement button',
+    img: 'fact-reviews.webp', w: 1551, h: 1239, alt: 'Reviews of a fact by researchers and by an AI model, with the endorsement button',
   },
   {
     kicker: 'Conversations', title: 'Discuss like in your mailbox',
@@ -82,7 +82,7 @@ export const LandingPage = {
       <div><b>Every AI output is labelled</b><span>with its model, its user, and its generation time when measured</span></div>
       <div><b>Humans stay in charge</b><span>they endorse, dispute and retract results</span></div>
       <div><b>Credit is traceable</b><span>from each result back to its sources</span></div>
-      <div><b>Several projects</b><span>each with its own question and team</span></div>
+      <div><b>Find anything at once</b><span>one search across facts, files, discussions and people</span></div>
     </section>
 
     <section v-for="(f, i) in features" :key="f.img" class="lp-feature" :class="{flip: i % 2 === 1}">

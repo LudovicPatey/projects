@@ -4,8 +4,10 @@ A web platform where a group of researchers works on an **open question**, combi
 human collaboration with AI-produced intermediate results. It supports several research
 projects, and every account is an **ORCID** iD.
 
-- **Backend:** plain PHP 8.1+ with PDO (MySQL/MariaDB on OVH, SQLite for local dev). No Composer and no build step.
+- **Backend:** plain PHP 8.1+ with PDO (MySQL/MariaDB in production, SQLite for local use). No Composer and no build step.
 - **Frontend:** one-page app made of ES modules. It uses Vue 3, Quill 2 (rich text), PDF.js 4 (viewer) and KaTeX (math), all loaded from jsDelivr.
+
+**[Installation instructions](#installation)** · [Try it locally](#2-try-it-on-your-computer) · [AI agent API](docs/AGENT_API.md) · [Backups](docs/BACKUP.md) · [Deployment](docs/DEPLOY.md)
 
 ## Features
 
@@ -22,6 +24,7 @@ projects, and every account is an **ORCID** iD.
 | **AI agents** | Owners create agents (People → AI agents) that act through an API token. Agents read the project, join the conversations they are added to, comment, and upload files. Everything they write is labelled as AI, and their files are always flagged **AI**. They cannot modify human-written files. See [docs/AGENT_API.md](docs/AGENT_API.md) and the example agent built on Claude in [examples/claude_agent.py](examples/claude_agent.py). |
 | **Personal API keys** | Each researcher creates keys on their profile page. Their AI client reads what they can read and submits facts, reviews and Lean proofs, labelled with its model. |
 | **Project copy** | Any member can download a `.zip` of everything they can see in a project: question, facts with their traceability, all file versions with sources, bibliography with PDFs, their conversations and comments, as readable documents and JSON. |
+| **Search** | A search bar at the top (⌘K or Ctrl K) finds facts, conversations, files, references, comments, people and projects, in the current project or all of them. It ignores accents and only returns what the user can see. PDF contents are not searched. |
 | **Notifications** | You are notified when someone @mentions you, replies to a thread you took part in, or adds you to a project or conversation. Unread badges appear on the left menu. Each file and bib entry has a "Mentions" tab that lists where it was cited. |
 
 All AI-generated content records the model that produced it (required), the user it corresponds to, and its generation time when the client measured it.
@@ -32,10 +35,334 @@ Visitors who are not signed in see a public front page presenting these features
 
 The left vertical menu (Question · Mail · Facts · Files · Biblio · People · Alerts) switches between these modes, like a webmail client.
 
-## Layout
+## Installation
+
+- [1. Requirements](#1-requirements)
+- [2. Try it on your computer](#2-try-it-on-your-computer)
+- [3. Prepare a production installation](#3-prepare-a-production-installation)
+- [4. Install on your own server](#4-install-on-your-own-server)
+- [5. Install on shared hosting (OVH or similar)](#5-install-on-shared-hosting-ovh-or-similar)
+- [6. Configuration reference](#6-configuration-reference)
+- [7. Check the installation](#7-check-the-installation)
+- [8. First steps](#8-first-steps)
+- [9. Backups](#9-backups)
+- [10. Updating](#10-updating)
+- [11. Troubleshooting](#11-troubleshooting)
+
+### 1. Requirements
+
+| Component | Needed | Notes |
+|---|---|---|
+| **PHP** | 8.1 or newer, 8.2 recommended | Extensions: `pdo_mysql` (or `pdo_sqlite` for local use), `curl`, `dom`, `fileinfo`, `iconv`, `mbstring`, `zip`. `intl` is optional |
+| **Web server** | Apache 2.4 with `mod_rewrite` | `.htaccess` files must be allowed. They protect private folders, so other web servers need equivalent rules |
+| **Database** | MySQL 8 or MariaDB | SQLite is enough to try the platform locally |
+| **HTTPS** | Required in production | ORCID sign-in and secure cookies depend on it |
+| **ORCID client** | Free | Required in production, not for a local trial |
+| **Node.js** | 22 or newer, on your computer | Only for the deployment script of [section 5](#5-install-on-shared-hosting-ovh-or-similar) |
+
+There is no Composer install and no build step. The browser loads Vue, Quill, PDF.js and KaTeX from the jsDelivr CDN, so users need access to it.
+
+> **Tested so far:** PHP 8.4 with SQLite, on Apache with PHP-FPM and on PHP's built-in server. The MySQL/MariaDB setup and real ORCID sign-in have not been exercised yet, so try them on a test installation first.
+
+Check your PHP version and extensions:
+
+```bash
+php -v
+php -r 'foreach (["curl","dom","fileinfo","iconv","mbstring","zip","pdo_mysql","pdo_sqlite"] as $e) echo str_pad($e, 12), extension_loaded($e) ? "ok" : "MISSING", PHP_EOL;'
+```
+
+### 2. Try it on your computer
+
+This takes a few minutes and needs only PHP with `pdo_sqlite`: no database server and no ORCID account.
+
+```bash
+git clone https://github.com/LudovicPatey/projects.git open-questions
+cd open-questions
+```
+
+Create a local configuration:
+
+```bash
+cat > config/config.php <<'PHP'
+<?php
+return [
+    'app_url' => 'http://localhost:8080',
+    'env' => 'dev',
+    'db' => ['dsn' => 'sqlite:' . __DIR__ . '/../storage/dev.sqlite', 'user' => null, 'password' => null],
+    'orcid' => ['client_id' => '', 'client_secret' => '', 'sandbox' => true],
+    'storage_path' => __DIR__ . '/../storage',
+    'max_upload_mb' => 64,
+    'project_creators' => [],
+];
+PHP
+```
+
+Create the tables and start the server:
+
+```bash
+php bin/install.php
+php -S localhost:8080 -t public bin/dev-router.php
+```
+
+Open <http://localhost:8080>, and use the **Dev login** form at the top of the page. It accepts any ORCID iD, so you can sign in as several people from different browsers to try collaboration.
+
+> **Never use `'env' => 'dev'` on a public server:** anyone could sign in as anyone.
+
+### 3. Prepare a production installation
+
+You need these three things for both kinds of installation.
+
+**a. A domain with HTTPS,** for example `research.example.org`.
+
+**b. A database.** On shared hosting, create it in the control panel and note its host, name, user and password. On your own server:
+
+```sql
+CREATE DATABASE open_questions CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER 'open_questions'@'localhost' IDENTIFIED BY 'choose-a-strong-password';
+GRANT ALL PRIVILEGES ON open_questions.* TO 'open_questions'@'localhost';
+FLUSH PRIVILEGES;
+```
+
+**c. An ORCID API client:**
+
+1. Sign in at <https://orcid.org/developer-tools> and register for the free **Public API**.
+2. Enter your application's name and website.
+3. Add this redirect URI, replacing the domain with yours. It must match exactly:
+
+   ```text
+   https://research.example.org/auth/callback
+   ```
+
+4. Note the **Client ID** (`APP-…`) and **Client secret**.
+
+To test without real ORCID accounts, register at <https://sandbox.orcid.org/developer-tools> instead and set `'sandbox' => true`.
+
+### 4. Install on your own server
+
+These steps are for Debian or Ubuntu with Apache.
+
+**1. Install the packages:**
+
+```bash
+sudo apt update
+sudo apt install apache2 mariadb-server php libapache2-mod-php php-mysql php-curl php-xml php-mbstring php-zip git certbot python3-certbot-apache
+sudo a2enmod rewrite headers
+```
+
+**2. Get the code:**
+
+```bash
+sudo git clone https://github.com/LudovicPatey/projects.git /var/www/open-questions
+cd /var/www/open-questions
+```
+
+**3. Create the configuration,** then fill it in as described in [section 6](#6-configuration-reference):
+
+```bash
+sudo cp config/config.example.php config/config.php
+sudo nano config/config.php
+```
+
+**4. Set the permissions.** PHP must be able to write to `storage/`, and only PHP should read the configuration:
+
+```bash
+sudo chown -R www-data:www-data storage
+sudo chown root:www-data config/config.php
+sudo chmod 640 config/config.php
+```
+
+**5. Create the tables:**
+
+```bash
+sudo -u www-data php bin/install.php
+```
+
+**6. Configure Apache.** The document root must be the `public/` folder. Create `/etc/apache2/sites-available/open-questions.conf`:
+
+```apache
+<VirtualHost *:80>
+    ServerName research.example.org
+    DocumentRoot /var/www/open-questions/public
+
+    <Directory /var/www/open-questions/public>
+        AllowOverride All
+        Require all granted
+    </Directory>
+</VirtualHost>
+```
+
+**7. Enable the site and HTTPS:**
+
+```bash
+sudo a2ensite open-questions
+sudo systemctl reload apache2
+sudo certbot --apache -d research.example.org --redirect
+```
+
+The files in `public/` set the upload limit to 64 MB. If uploads are still refused, set these values in `/etc/php/*/apache2/php.ini` and run `sudo systemctl restart apache2`:
+
+```ini
+upload_max_filesize = 64M
+post_max_size = 80M
+```
+
+Continue with [section 7](#7-check-the-installation).
+
+### 5. Install on shared hosting (OVH or similar)
+
+The deployment script runs on **your computer** and uploads the application over SFTP. The hosting needs no SSH command, Node.js or Composer.
+
+The site folder and data folder sit side by side in your hosting account:
+
+```text
+~/projects/         the site: the domain points here, only public/ is reachable
+~/projects-data/    uploaded files and backups, outside the web root
+```
+
+**1. Attach the domain.** In the OVH Control Panel, open **Web Cloud → Hosting → Multisite**, and attach your domain to the root folder `projects`, with SSL enabled.
+
+**2. Create a database** under **Web Cloud → Hosting → Databases**.
+
+**3. Get the code on your computer:**
+
+```bash
+git clone https://github.com/LudovicPatey/projects.git open-questions
+cd open-questions
+mkdir -p cache
+```
+
+**4. Set your domain.** If it is not `projects.ludovicpatey.com`, change it in two files:
+
+- the `SITE` constant at the top of `scripts/deploy.mjs`;
+- `app_url` in `deploy/config.prod.example.php`.
+
+**5. Enter your FTP account** in `cache/deploy.json`. The host and login are under **Web Hosting → FTP-SSH**. This file stays on your computer:
+
+```json
+{ "protocol": "sftp", "host": "ftp.clusterXXX.hosting.ovh.net", "user": "LOGIN", "dir": "projects" }
+```
+
+**6. Create the production configuration,** then fill in the database and ORCID values:
+
+```bash
+cp deploy/config.prod.example.php cache/config.prod.php
+```
+
+**7. Preview, then deploy.** ssh asks for your **FTP password**:
+
+```bash
+npm test
+npm run deploy -- --dry-run
+npm run deploy -- --config
+```
+
+`--config` also uploads your configuration. It is refused if a value is missing or if the file is not in production mode. You only need it the first time, or when the configuration changes.
+
+The first page request creates the database tables. More details are in [docs/DEPLOY.md](docs/DEPLOY.md).
+
+### 6. Configuration reference
+
+| Setting | Description |
+|---|---|
+| `app_url` | Public URL, without a trailing slash. ORCID's redirect URI is built from it |
+| `env` | `prod` on a server. `dev` enables the login without ORCID |
+| `db.dsn` | For example `mysql:host=localhost;dbname=open_questions;charset=utf8mb4`. On OVH, the host looks like `xxxxx.mysql.db` |
+| `db.user`, `db.password` | Database credentials |
+| `orcid.client_id`, `orcid.client_secret` | Your ORCID API client |
+| `orcid.sandbox` | `true` to use `sandbox.orcid.org` for tests |
+| `storage_path` | Folder for uploads. It must be writable by PHP and **outside the web root** |
+| `backup.path`, `backup.keep` | Backup folder (default: `backups/` inside the storage path) and number of backups kept (default 14) |
+| `max_upload_mb` | Maximum size of an uploaded file. PHP's own limits also apply |
+| `project_creators` | ORCID iDs allowed to create projects. **Empty means anyone with an ORCID account who signs in** |
+
+> On a public site, set `project_creators` to your own ORCID iD unless you want anyone to be able to create projects:
+>
+> ```php
+> 'project_creators' => ['0000-0000-0000-0000'],
+> ```
+
+### 7. Check the installation
+
+Replace the domain with yours:
+
+```bash
+curl -s https://research.example.org/api/me
+curl -s -o /dev/null -w '%{http_code}\n' https://research.example.org/config/config.php
+```
+
+- The first command must show `"user":null` and `"dev":false`.
+- The second must **not** print `200`. If it does, stop: your private files are exposed, so check the document root and `.htaccess` support.
+
+Then open the site, sign in with ORCID, and create a test project.
+
+### 8. First steps
+
+1. Sign in with ORCID and create a project with its open question.
+2. Under **People**, add your colleagues by ORCID iD. They do not need to have signed in before.
+3. Upload papers under **Files** and add references under **Biblio**.
+4. To let an AI client work on the project, create a personal key on your **profile page** and give it the instructions shown there. The API is described in [docs/AGENT_API.md](docs/AGENT_API.md).
+
+### 9. Backups
+
+```bash
+php bin/backup.php                 # verified archive of the database and uploaded files
+php bin/backup.php --list
+php bin/restore.php ARCHIVE.zip    # checks it, saves the current data, then restores
+```
+
+Schedule a daily backup, and **keep a copy off the server**:
+
+- **Your own server:** run `sudo crontab -u www-data -e` and add:
+
+  ```cron
+  0 3 * * * cd /var/www/open-questions && php bin/backup.php
+  ```
+
+- **OVH:** under **Web Cloud → Hosting → Scheduled tasks (Cron)**, add `projects/bin/backup.php` with PHP 8.2, daily, with email reports enabled.
+
+Archives contain private research and personal data, but not `config/config.php`, so keep a copy of that file somewhere safe. The full procedure, including recovery on a new server, is in [docs/BACKUP.md](docs/BACKUP.md).
+
+### 10. Updating
+
+Back up first.
+
+**Your own server:**
+
+```bash
+cd /var/www/open-questions
+sudo -u www-data php bin/backup.php
+sudo git pull
+sudo -u www-data php bin/install.php
+```
+
+**Shared hosting,** from your computer:
+
+```bash
+git pull
+npm run deploy -- --dry-run
+npm run deploy
+```
+
+The database schema is upgraded automatically on the next request.
+
+### 11. Troubleshooting
+
+| Symptom | What to check |
+|---|---|
+| `Missing config/config.php` | Create the configuration ([section 4](#4-install-on-your-own-server) or [section 5](#5-install-on-shared-hosting-ovh-or-similar)) |
+| Error 500 on every page | Read the PHP error log. Check the database settings, the PHP version and the extensions |
+| Error 404 on every page except the home page | `mod_rewrite` is off, or `AllowOverride All` is missing |
+| ORCID says the redirect URI is invalid | It must be exactly `app_url` followed by `/auth/callback`, with `https` |
+| "ORCID authentication failed" | Wrong client ID or secret, or a sandbox client used with `'sandbox' => false` |
+| Uploads fail | Check that `storage_path` is writable, and PHP's `upload_max_filesize` and `post_max_size` |
+| API keys answer 401 | The key was revoked, or a proxy dropped the header: send it as `X-Api-Key` |
+| Page stuck on "being restored" | A restore was interrupted: see [docs/BACKUP.md](docs/BACKUP.md) |
+| Old interface after an update | Reload without cache |
+
+## Project layout
 
 ```
-public/              ← web root (point the domain here)
+public/              ← web root
   index.php          front controller + route table
   app.html           SPA shell (served by index.php only)
   assets/js/         main.js, store, api, editor (Quill+mentions), pdfviewer, comments, views/*
@@ -51,41 +378,6 @@ bin/dev-router.php   router for `php -S` in local development
 deploy/              root .htaccess and production configuration template
 scripts/deploy.mjs   upload to the live site (docs/DEPLOY.md)
 ```
-
-## Deployment
-
-The live site is <https://projects.ludovicpatey.com>, on OVH web hosting, in the FTP folder `projects/`.
-
-```bash
-npm run deploy -- --dry-run
-npm run deploy
-```
-
-The first installation and the full procedure are in [docs/DEPLOY.md](docs/DEPLOY.md).
-
-The first person to sign in creates a project and becomes its owner. They then add colleagues by ORCID iD.
-To restrict who may create projects, list ORCID iDs in `project_creators`.
-
-## Backup and restoration
-
-```bash
-php bin/backup.php                 # verified archive of the database and uploaded files
-php bin/backup.php --list
-php bin/restore.php ARCHIVE.zip    # checks it, saves the current data, then restores
-```
-
-Schedule `bin/backup.php` daily in the OVH panel and keep a copy off the server. The full procedure is in [docs/BACKUP.md](docs/BACKUP.md).
-
-## Local development
-
-```bash
-cp config/config.example.php config/config.php   # set 'env' => 'dev' and the SQLite DSN
-php bin/install.php
-php -S localhost:8080 -t public bin/dev-router.php
-```
-
-In dev mode the login page has a **Dev login** form (any ORCID iD, no orcid.org round-trip).
-Never enable `'env' => 'dev'` on a public server.
 
 ## Security notes
 

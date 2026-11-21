@@ -30,6 +30,51 @@ export function formatDuration(ms) {
   return `${Math.floor(n / 3600000)} h ${String(Math.floor(n / 60000) % 60).padStart(2, '0')} min`;
 }
 
+const FOLD = { ø: 'o', ł: 'l', đ: 'd', ð: 'd', ħ: 'h', ı: 'i', ß: 'ss', æ: 'ae', œ: 'oe', þ: 'th', '–': '-', '—': '-', '−': '-', '‐': '-', '’': "'", '‘': "'", '“': '"', '”': '"' };
+
+/** Lower case without accents, as the server compares text in a search. */
+export function foldText(s) {
+  return [...String(s ?? '').toLowerCase()].map((c) => FOLD[c] ?? c.normalize('NFD').replace(/\p{M}/gu, '')).join('');
+}
+
+/** Wraps the search terms found in the text of an element, outside rendered formulas. */
+export function markTerms(root, terms) {
+  if (!terms?.length) return;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode: (n) => (n.parentElement.closest('.katex') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
+  });
+  const nodes = [];
+  while (walker.nextNode()) nodes.push(walker.currentNode);
+  for (const node of nodes) {
+    const chars = [...node.textContent];
+    let folded = '';
+    const at = [];
+    chars.forEach((c, i) => { const f = foldText(c); for (let k = 0; k < f.length; k++) at.push(i); folded += f; });
+    const ranges = [];
+    for (const t of terms) {
+      for (let p = folded.indexOf(t); p >= 0; p = folded.indexOf(t, p + t.length)) ranges.push([at[p], at[p + t.length - 1] + 1]);
+    }
+    if (!ranges.length) continue;
+    ranges.sort((a, b) => a[0] - b[0]);
+    const merged = [];
+    for (const r of ranges) {
+      const last = merged[merged.length - 1];
+      if (last && r[0] <= last[1]) last[1] = Math.max(last[1], r[1]); else merged.push([...r]);
+    }
+    const out = document.createDocumentFragment();
+    let pos = 0;
+    for (const [a, b] of merged) {
+      if (a > pos) out.append(chars.slice(pos, a).join(''));
+      const m = document.createElement('mark');
+      m.textContent = chars.slice(a, b).join('');
+      out.append(m);
+      pos = b;
+    }
+    if (pos < chars.length) out.append(chars.slice(pos).join(''));
+    node.replaceWith(out);
+  }
+}
+
 export function fileSize(n) {
   n = +n || 0;
   if (n < 1024) return n + ' B';

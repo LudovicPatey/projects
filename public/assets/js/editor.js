@@ -1,7 +1,7 @@
 // Rich-text editor (Quill 2) with @mentions of researchers, files and bibliography entries,
 // and a renderer for stored rich text (KaTeX for $...$ math, clickable mentions).
 import { store, go } from './store.js';
-import { escapeHtml } from './util.js';
+import { escapeHtml, markTerms } from './util.js';
 
 const Embed = Quill.import('blots/embed');
 
@@ -163,22 +163,24 @@ export function renderMath(el) {
 
 /** One line of plain text with its LaTeX rendered, for titles and previews in lists. */
 export const MathText = {
-  props: { text: String },
+  props: { text: String, highlight: Array },
   template: `<span class="math-text" ref="el"></span>`,
   mounted() { this.paint(); },
   beforeUnmount() { clearTimeout(this.retry); },
-  watch: { text() { this.paint(); } },
+  watch: { text() { this.paint(); }, highlight() { this.paint(); } },
   methods: {
     paint() {
       const el = this.$refs.el;
       if (!el) return;
       el.textContent = String(this.text || '').replace(/@\{\w+:([^}]+)\}/g, '$1').replace(/\$\$/g, '$');
-      if (!el.textContent.includes('$') && !el.textContent.includes('\\(')) return;
-      if (window.renderMathInElement) {
-        window.renderMathInElement(el, { delimiters: [{ left: '$', right: '$', display: false }, { left: '\\(', right: '\\)', display: false }], throwOnError: false });
-      } else {
-        this.retry = setTimeout(() => this.paint(), 400); // KaTeX is loaded with defer
+      if (el.textContent.includes('$') || el.textContent.includes('\\(')) {
+        if (window.renderMathInElement) {
+          window.renderMathInElement(el, { delimiters: [{ left: '$', right: '$', display: false }, { left: '\\(', right: '\\)', display: false }], throwOnError: false });
+        } else {
+          this.retry = setTimeout(() => this.paint(), 400); // KaTeX is loaded with defer
+        }
       }
+      markTerms(el, this.highlight);
     },
   },
 };

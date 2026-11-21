@@ -5,7 +5,7 @@ require __DIR__ . '/../src/bootstrap.php';
 
 use App\{Auth, Config, HttpError, Request, Response};
 use App\Controllers\{AgentController, AuthController, BibController, CommentController, ConversationController,
-    DocumentController, ExportController, FactController, KeyController, NotificationController, ProjectController};
+    DocumentController, ExportController, FactController, KeyController, NotificationController, ProjectController, SearchController};
 
 $routes = [
     // auth
@@ -87,6 +87,7 @@ $routes = [
     ['POST',   '/api/comments',                           [CommentController::class, 'create']],
     ['PATCH',  '/api/comments/{id}',                      [CommentController::class, 'update']],
     ['DELETE', '/api/comments/{id}',                      [CommentController::class, 'delete']],
+    ['GET',    '/api/search',                             [SearchController::class, 'search']],
     // notifications
     ['GET',    '/api/notifications',                      [NotificationController::class, 'list']],
     ['POST',   '/api/notifications/read',                 [NotificationController::class, 'markRead']],

@@ -133,6 +133,9 @@ Humans review, comment, retract, delete and report Lean checks in the interface.
 the entry is not independent. `chain` is `ok`, `unchecked` or `broken`. `lean` is `none`, `unchecked`, `compiled`, `partial` or `failed`.
 **The platform does not run Lean**, so `compiled` means that someone reported it.
 
+### Searching
+`GET /api/search?q=TEXT` searches everything the caller can see. Optional: `project=ID` ranks that project first, `scope=project` limits results to it, and `type=fact|conversation|file|reference|comment|person|project` returns up to 50 results of one kind. Results are grouped, each with a `title`, a `snippet` and a `link`.
+
 ### Downloading a project
 `GET /api/projects/{pid}/export` returns a `.zip` copy of everything the caller can see. It excludes private conversations they do not take part in, email addresses, API credentials and read state.
 
