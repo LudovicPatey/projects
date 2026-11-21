@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 namespace App\Controllers;
 
-use App\{Access, Auth, BibTex, Db, HttpError, Request, Response, Storage};
+use App\{Access, Activity, Auth, BibTex, Db, HttpError, Provenance, Request, Response, Storage};
 
 final class BibController
 {
@@ -12,10 +12,10 @@ final class BibController
         $pid = $r->int('pid');
         Access::member($pid);
         $rows = Db::all(
-            "SELECT b.id, b.cite_key, b.entry_type, b.title, b.authors, b.year, b.venue, b.doi, b.url,
+            "SELECT b.id, b.cite_key, b.entry_type, b.title, b.authors, b.year, b.venue, b.doi, b.url, b.ai_model, b.ai_user_id, b.ai_generation_ms, au.name AS ai_user_name,
                     CASE WHEN b.pdf_blob_id IS NULL THEN 0 ELSE 1 END AS has_pdf, b.created_at, u.name AS added_by,
                     (SELECT COUNT(*) FROM comments c WHERE c.target_type = 'bib' AND c.target_id = b.id) AS comment_count
-             FROM bib_entries b JOIN users u ON u.id = b.created_by
+             FROM bib_entries b JOIN users u ON u.id = b.created_by LEFT JOIN users au ON au.id = b.ai_user_id
              WHERE b.project_id = ? ORDER BY b.cite_key", [$pid]);
         Response::json(['entries' => $rows]);
     }
@@ -33,6 +33,8 @@ final class BibController
         $b['bibtex'] = BibTex::write($b['entry_type'], $b['cite_key'], $fields);
         $b['has_pdf'] = $b['pdf_blob_id'] !== null;
         $b['added_by'] = Db::value('SELECT name FROM users WHERE id = ?', [$b['created_by']]);
+        $b['ai_user_name'] = $b['ai_user_id'] ? Db::value('SELECT name FROM users WHERE id = ?', [$b['ai_user_id']]) : null;
+        $b['last_activity_id'] = Activity::latest((int)$b['project_id'], 'bib', (int)$b['id']);
         if ($b['has_pdf']) {
             $blob = Storage::blob((int)$b['pdf_blob_id']);
             $b['pdf'] = [
@@ -49,6 +51,8 @@ final class BibController
     {
         $pid = $r->int('pid');
         Access::member($pid);
+        $model = Provenance::agentModel($r);
+        $stamp = Provenance::stamp($model, $r->input('generation_seconds'));
         $entries = [];
         if ($r->str('doi') !== '') {
             $entries = BibTex::parse(BibTex::fetchDoi($r->str('doi')));
@@ -70,11 +74,12 @@ final class BibController
             }
             $key = self::uniqueKey($pid, $e['key'] !== '' ? $e['key'] : self::makeKey($fields));
             $now = Db::now();
-            $created[] = Db::insert('bib_entries', BibTex::columns($fields) + [
+            $created[] = $bid = Db::insert('bib_entries', BibTex::columns($fields) + $stamp + [
                 'project_id' => $pid, 'cite_key' => $key, 'entry_type' => strtolower(preg_replace('/\W/', '', $e['type']) ?: 'misc'),
                 'fields_json' => json_encode($fields, JSON_UNESCAPED_UNICODE),
-                'created_by' => Auth::id(), 'created_at' => $now, 'updated_at' => $now,
+                'ai_model' => $model, 'created_by' => Auth::id(), 'created_at' => $now, 'updated_at' => $now,
             ]);
+            Activity::touch($pid, 'bib', $bid, 'created');
         }
         Response::json(['created' => $created, 'skipped' => $skipped], 201);
     }
@@ -93,10 +98,13 @@ final class BibController
         }
         if (empty($fields['title'])) throw new HttpError(422, 'A title is required.');
         if ($key !== $b['cite_key']) $key = self::uniqueKey((int)$b['project_id'], $key);
-        Db::update('bib_entries', BibTex::columns($fields) + [
+        $model = Provenance::agentModel($r);
+        Db::update('bib_entries', BibTex::columns($fields) + ($model !== null ? Provenance::stamp($model, $r->input('generation_seconds')) : []) + [
             'cite_key' => $key, 'entry_type' => strtolower(preg_replace('/\W/', '', $type) ?: 'misc'),
             'fields_json' => json_encode($fields, JSON_UNESCAPED_UNICODE), 'updated_at' => Db::now(),
+            'ai_model' => $model ?? $b['ai_model'],
         ], 'id = :id', ['id' => $b['id']]);
+        Activity::touch((int)$b['project_id'], 'bib', (int)$b['id'], 'updated');
         Response::json(self::present(Access::bib((int)$b['id'])));
     }
 
@@ -116,6 +124,7 @@ final class BibController
         $blob = Storage::storeUpload($file, true);
         Db::update('bib_entries', ['pdf_blob_id' => $blob, 'pdf_uploaded_by' => Auth::id(), 'pdf_uploaded_at' => Db::now(), 'updated_at' => Db::now()],
             'id = :id', ['id' => $b['id']]);
+        Activity::touch((int)$b['project_id'], 'bib', (int)$b['id'], 'pdf');
         Response::json(self::present(Access::bib((int)$b['id'])));
     }
 
@@ -123,6 +132,7 @@ final class BibController
     {
         $b = Access::bib($r->int('id'));
         Db::update('bib_entries', ['pdf_blob_id' => null, 'pdf_uploaded_by' => null, 'pdf_uploaded_at' => null], 'id = :id', ['id' => $b['id']]);
+        Activity::touch((int)$b['project_id'], 'bib', (int)$b['id'], 'pdf_removed');
         Response::json(self::present(Access::bib((int)$b['id'])));
     }
 

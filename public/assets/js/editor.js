@@ -32,7 +32,7 @@ Quill.register(MentionBlot);
 
 const FORMATS = ['bold', 'italic', 'underline', 'strike', 'link', 'blockquote', 'code-block', 'code', 'list', 'header', 'indent', 'mention', 'script'];
 
-const MENTION_ICONS = { user: 'user', document: 'files', bib: 'book' };
+const MENTION_ICONS = { user: 'user', document: 'files', bib: 'book', fact: 'graph' };
 
 export const RichEditor = {
   props: {
@@ -118,6 +118,8 @@ export const RichEditor = {
       return [
         ...mm.users.filter((u) => has(u.name, u.orcid)).slice(0, 6)
           .map((u) => ({ type: 'user', id: u.id, label: u.name, sub: u.kind === 'agent' ? 'AI agent' : u.orcid, agent: u.kind === 'agent' })),
+        ...(mm.facts || []).filter((f) => has(f.label, f.title)).slice(0, 6)
+          .map((f) => ({ type: 'fact', id: f.id, label: f.label, sub: f.title })),
         ...mm.documents.filter((d) => has(d.title)).slice(0, 5)
           .map((d) => ({ type: 'document', id: d.id, label: d.title, sub: d.origin === 'ai' ? 'AI file' : 'Human file' })),
         ...mm.bib.filter((b) => has(b.cite_key, b.title, b.authors)).slice(0, 5)
@@ -159,6 +161,28 @@ export function renderMath(el) {
   }
 }
 
+/** One line of plain text with its LaTeX rendered, for titles and previews in lists. */
+export const MathText = {
+  props: { text: String },
+  template: `<span class="math-text" ref="el"></span>`,
+  mounted() { this.paint(); },
+  beforeUnmount() { clearTimeout(this.retry); },
+  watch: { text() { this.paint(); } },
+  methods: {
+    paint() {
+      const el = this.$refs.el;
+      if (!el) return;
+      el.textContent = String(this.text || '').replace(/@\{\w+:([^}]+)\}/g, '$1').replace(/\$\$/g, '$');
+      if (!el.textContent.includes('$') && !el.textContent.includes('\\(')) return;
+      if (window.renderMathInElement) {
+        window.renderMathInElement(el, { delimiters: [{ left: '$', right: '$', display: false }, { left: '\\(', right: '\\)', display: false }], throwOnError: false });
+      } else {
+        this.retry = setTimeout(() => this.paint(), 400); // KaTeX is loaded with defer
+      }
+    },
+  },
+};
+
 /** Displays sanitized rich text coming from the server. */
 export const RichContent = {
   props: { html: String },
@@ -182,6 +206,7 @@ export const RichContent = {
       const { type, id } = m.dataset;
       if (type === 'document') go(`/p/${pid}/files/${id}`);
       else if (type === 'bib') go(`/p/${pid}/bib/${id}`);
+      else if (type === 'fact') go(`/p/${pid}/facts/${id}`);
       else if (type === 'user') go(`/p/${pid}/members?user=${id}`);
     },
   },

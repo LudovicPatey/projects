@@ -59,6 +59,9 @@ CREATE TABLE IF NOT EXISTS bib_entries (
   pdf_blob_id INT UNSIGNED NULL,
   pdf_uploaded_by INT UNSIGNED NULL,
   pdf_uploaded_at DATETIME NULL,
+  ai_model VARCHAR(120) NULL,
+  ai_user_id INT UNSIGNED NULL,           -- user this AI output was produced for
+  ai_generation_ms INT UNSIGNED NULL,     -- generation time, when the client measured it
   created_by INT UNSIGNED NOT NULL,
   created_at DATETIME NOT NULL,
   updated_at DATETIME NOT NULL,
@@ -90,6 +93,9 @@ CREATE TABLE IF NOT EXISTS document_versions (
   version_no INT UNSIGNED NOT NULL,
   notes TEXT NULL,
   restored_from_id INT UNSIGNED NULL,
+  ai_model VARCHAR(120) NULL,
+  ai_user_id INT UNSIGNED NULL,           -- user this AI output was produced for
+  ai_generation_ms INT UNSIGNED NULL,     -- generation time, when the client measured it
   uploaded_by INT UNSIGNED NOT NULL,
   created_at DATETIME NOT NULL,
   UNIQUE KEY uq_doc_version (document_id, version_no),
@@ -133,6 +139,9 @@ CREATE TABLE IF NOT EXISTS messages (
   id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   conversation_id INT UNSIGNED NOT NULL,
   author_id INT UNSIGNED NOT NULL,
+  ai_model VARCHAR(120) NULL,
+  ai_user_id INT UNSIGNED NULL,           -- user this AI output was produced for
+  ai_generation_ms INT UNSIGNED NULL,     -- generation time, when the client measured it
   body_html MEDIUMTEXT NOT NULL,
   created_at DATETIME NOT NULL,
   edited_at DATETIME NULL,
@@ -146,10 +155,13 @@ CREATE TABLE IF NOT EXISTS messages (
 CREATE TABLE IF NOT EXISTS comments (
   id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   project_id INT UNSIGNED NOT NULL,
-  target_type VARCHAR(20) NOT NULL,       -- 'conversation' | 'document' | 'bib'
+  target_type VARCHAR(20) NOT NULL,       -- 'conversation' | 'document' | 'bib' | 'fact'
   target_id INT UNSIGNED NOT NULL,
   parent_id INT UNSIGNED NULL,
   author_id INT UNSIGNED NOT NULL,
+  ai_model VARCHAR(120) NULL,
+  ai_user_id INT UNSIGNED NULL,           -- user this AI output was produced for
+  ai_generation_ms INT UNSIGNED NULL,     -- generation time, when the client measured it
   body_html MEDIUMTEXT NOT NULL,
   anchor_json TEXT NULL,
   resolved TINYINT(1) NOT NULL DEFAULT 0,
@@ -201,4 +213,169 @@ CREATE TABLE IF NOT EXISTS api_tokens (
   FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
   FOREIGN KEY (agent_user_id) REFERENCES users(id) ON DELETE CASCADE,
   FOREIGN KEY (created_by) REFERENCES users(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Fact database: a dependency graph (DAG) of mathematical statements.
+-- Content lives in immutable revisions. Reviews and Lean proofs apply to one revision.
+CREATE TABLE IF NOT EXISTS facts (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  project_id INT UNSIGNED NOT NULL,
+  label VARCHAR(120) NOT NULL,
+  kind VARCHAR(20) NOT NULL,
+  title VARCHAR(255) NOT NULL,
+  current_revision INT UNSIGNED NOT NULL DEFAULT 1,
+  origin VARCHAR(10) NOT NULL,            -- who produced the mathematics: 'human' | 'ai'
+  method VARCHAR(12) NOT NULL,            -- 'extracted' (from a source) | 'deduced'
+  proof_origin VARCHAR(8) NOT NULL DEFAULT 'none', -- 'human' | 'ai' | 'mixed' | 'none'
+  labels_json TEXT NULL,                  -- Danus labels: counterexample, conclusion...
+  tool VARCHAR(60) NULL,                  -- e.g. 'danus'
+  external_id VARCHAR(64) NULL,           -- e.g. the Danus fact_id
+  ai_model VARCHAR(120) NULL,             -- model that wrote this entry
+  retracted_at DATETIME NULL,
+  retracted_by INT UNSIGNED NULL,
+  retract_reason TEXT NULL,
+  created_by INT UNSIGNED NOT NULL,
+  created_at DATETIME NOT NULL,
+  updated_at DATETIME NOT NULL,
+  deleted_at DATETIME NULL,
+  UNIQUE KEY uq_fact_label (project_id, label),
+  UNIQUE KEY uq_fact_external (project_id, external_id),
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+  FOREIGN KEY (created_by) REFERENCES users(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS fact_revisions (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  fact_id INT UNSIGNED NOT NULL,
+  revision_no INT UNSIGNED NOT NULL,
+  statement_html MEDIUMTEXT NOT NULL,
+  proof_html MEDIUMTEXT NULL,
+  intuition_html MEDIUMTEXT NULL,
+  deps_json TEXT NULL,
+  proof_origin VARCHAR(8) NOT NULL DEFAULT 'none',
+  glossary_json MEDIUMTEXT NULL,
+  external_refs_json MEDIUMTEXT NULL,
+  origin VARCHAR(10) NOT NULL,
+  ai_model VARCHAR(120) NULL,
+  ai_user_id INT UNSIGNED NULL,           -- user this AI output was produced for
+  ai_generation_ms INT UNSIGNED NULL,     -- generation time, when the client measured it
+  notes TEXT NULL,
+  author_id INT UNSIGNED NOT NULL,
+  created_at DATETIME NOT NULL,
+  UNIQUE KEY uq_fact_revision (fact_id, revision_no),
+  FOREIGN KEY (fact_id) REFERENCES facts(id) ON DELETE CASCADE,
+  FOREIGN KEY (author_id) REFERENCES users(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS fact_deps (
+  fact_id INT UNSIGNED NOT NULL,
+  depends_on_id INT UNSIGNED NOT NULL,
+  PRIMARY KEY (fact_id, depends_on_id),
+  FOREIGN KEY (fact_id) REFERENCES facts(id) ON DELETE CASCADE,
+  FOREIGN KEY (depends_on_id) REFERENCES facts(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS fact_reviews (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  fact_id INT UNSIGNED NOT NULL,
+  revision_no INT UNSIGNED NOT NULL,
+  reviewer_id INT UNSIGNED NOT NULL,
+  reviewer_kind VARCHAR(10) NOT NULL,
+  ai_model VARCHAR(120) NULL,
+  ai_user_id INT UNSIGNED NULL,           -- user this AI output was produced for
+  ai_generation_ms INT UNSIGNED NULL,     -- generation time, when the client measured it
+  verdict VARCHAR(12) NOT NULL,
+  body_html MEDIUMTEXT NULL,
+  created_at DATETIME NOT NULL,
+  updated_at DATETIME NOT NULL,
+  UNIQUE KEY uq_fact_review (fact_id, revision_no, reviewer_id, reviewer_kind),
+  FOREIGN KEY (fact_id) REFERENCES facts(id) ON DELETE CASCADE,
+  FOREIGN KEY (reviewer_id) REFERENCES users(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS fact_lean (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  fact_id INT UNSIGNED NOT NULL,
+  revision_no INT UNSIGNED NOT NULL,
+  code MEDIUMTEXT NOT NULL,
+  decl_name VARCHAR(255) NULL,
+  lean_version VARCHAR(60) NULL,
+  mathlib_rev VARCHAR(80) NULL,
+  url VARCHAR(500) NULL,
+  origin VARCHAR(10) NOT NULL,
+  ai_model VARCHAR(120) NULL,
+  ai_user_id INT UNSIGNED NULL,           -- user this AI output was produced for
+  ai_generation_ms INT UNSIGNED NULL,     -- generation time, when the client measured it
+  incomplete TINYINT(1) NOT NULL DEFAULT 0,
+  check_status VARCHAR(10) NOT NULL DEFAULT 'unchecked',
+  check_log TEXT NULL,
+  checked_by INT UNSIGNED NULL,
+  check_model VARCHAR(120) NULL,
+  check_user_id INT UNSIGNED NULL,
+  check_generation_ms INT UNSIGNED NULL,
+  checked_at DATETIME NULL,
+  created_by INT UNSIGNED NOT NULL,
+  created_at DATETIME NOT NULL,
+  FOREIGN KEY (fact_id) REFERENCES facts(id) ON DELETE CASCADE,
+  FOREIGN KEY (created_by) REFERENCES users(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Where a fact comes from. Quotes from private conversations are shown to participants only.
+CREATE TABLE IF NOT EXISTS fact_sources (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  fact_id INT UNSIGNED NOT NULL,
+  revision_no INT UNSIGNED NOT NULL,
+  source_type VARCHAR(12) NOT NULL,       -- 'document' | 'bib' | 'message' | 'comment'
+  source_id INT UNSIGNED NOT NULL,
+  version_id INT UNSIGNED NULL,
+  conversation_id INT UNSIGNED NULL,
+  page INT UNSIGNED NULL,
+  quote TEXT NOT NULL,
+  is_human TINYINT(1) NOT NULL DEFAULT 1,
+  covers VARCHAR(10) NOT NULL DEFAULT 'context', -- 'statement' | 'proof' | 'both' | 'context'
+  author_user_id INT UNSIGNED NULL,
+  author_name VARCHAR(500) NULL,
+  author_basis VARCHAR(20) NULL,          -- how the credit is known
+  KEY idx_fact_source (fact_id, revision_no),
+  FOREIGN KEY (fact_id) REFERENCES facts(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Personal API keys: a user's AI client reads what the user can read and submits facts.
+CREATE TABLE IF NOT EXISTS user_api_keys (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  user_id INT UNSIGNED NOT NULL,
+  name VARCHAR(120) NOT NULL,
+  token_hash CHAR(64) NOT NULL UNIQUE,
+  token_prefix VARCHAR(16) NOT NULL,
+  created_at DATETIME NOT NULL,
+  last_used_at DATETIME NULL,
+  revoked_at DATETIME NULL,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Ordered log of changes, used to compute what each user has not read yet.
+CREATE TABLE IF NOT EXISTS activity (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  project_id INT UNSIGNED NOT NULL,
+  item_type VARCHAR(12) NOT NULL,         -- conversation, fact, document, bib, question, member
+  item_id INT UNSIGNED NOT NULL,
+  actor_id INT UNSIGNED NULL,             -- NULL for a user's AI client: its work is new to that user
+  kind VARCHAR(20) NOT NULL,
+  ref_id INT UNSIGNED NULL,               -- e.g. the comment concerned
+  created_at DATETIME NOT NULL,
+  KEY idx_activity_item (project_id, item_type, item_id, id),
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- What each user has read. item_id = 0 marks a whole item type as read up to activity_id.
+CREATE TABLE IF NOT EXISTS read_marks (
+  user_id INT UNSIGNED NOT NULL,
+  project_id INT UNSIGNED NOT NULL,
+  item_type VARCHAR(12) NOT NULL,
+  item_id INT UNSIGNED NOT NULL,
+  activity_id INT UNSIGNED NOT NULL DEFAULT 0,
+  forced_unread TINYINT(1) NOT NULL DEFAULT 0,
+  PRIMARY KEY (user_id, project_id, item_type, item_id),
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

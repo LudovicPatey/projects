@@ -1,5 +1,5 @@
 import { api } from '../api.js';
-import { store, go, link, attempt, toast, refreshCounters } from '../store.js';
+import { store, go, link, attempt, toast, refreshCounters, unreadCount, markRead } from '../store.js';
 import { timeAgo, fullDate, parseDate } from '../util.js';
 
 const first = (r) => (Array.isArray(r) ? r[0] : r);
@@ -21,7 +21,7 @@ export const ConversationsView = {
     folders() {
       const inbox = this.list.filter((c) => !c.archived);
       return [
-        { k: 'inbox', label: 'Inbox', n: inbox.filter((c) => c.unread).length },
+        { k: 'inbox', label: 'Inbox', n: inbox.filter((c) => unreadCount('conversation', c.id)).length },
         { k: 'starred', label: 'Starred', n: 0 },
         { k: 'archived', label: 'Archived', n: 0 },
       ];
@@ -64,7 +64,7 @@ export const ConversationsView = {
   template: `<div class="cols3">
   <section class="col col-list">
     <header class="col-head"><h2>Conversations</h2>
-      <button class="btn primary sm" @click="startCompose"><icon name="edit" :size="14"/> New</button></header>
+      <div class="row-gap"><mark-all-read type="conversation"/><button class="btn primary sm" @click="startCompose"><icon name="edit" :size="14"/> New</button></div></header>
     <div class="col-tools">
       <div class="seg">
         <button v-for="f in folders" :key="f.k" :class="{on: folder === f.k}" @click="folder = f.k">
@@ -74,18 +74,18 @@ export const ConversationsView = {
     </div>
     <div class="list">
       <a v-for="c in filtered" :key="c.id" class="li conv-li" :href="link('conversations', c.id)"
-         :class="{active: c.id === id, unread: c.unread > 0}">
+         :class="{active: c.id === id, unread: !!unreadOf(c.id), 'is-new': !!unreadOf(c.id)}">
         <div class="li-top">
           <span class="li-who">{{ who(c) }}</span>
           <span class="li-time">{{ timeAgo(c.last_message_at) }}</span>
+          <unread-badge type="conversation" :id="c.id"/>
         </div>
-        <div class="li-subject"><span v-if="c.unread" class="dot"></span>{{ c.subject }}</div>
-        <div class="li-snippet">{{ c.snippet }}</div>
+        <div class="li-subject">{{ c.subject }}</div>
+        <div class="li-snippet"><math-text :text="c.snippet"/></div>
         <div class="li-meta">
           <span v-if="c.message_count > 1"><icon name="mail" :size="12"/> {{ c.message_count }}</span>
           <span v-if="c.comment_count"><icon name="comment" :size="12"/> {{ c.comment_count }}</span>
           <span class="grow"></span>
-          <span v-if="c.unread" class="pill">{{ c.unread }} new</span>
           <icon v-if="c.starred" name="star" :size="13" class="starred"/>
         </div>
       </a>
@@ -145,7 +145,8 @@ export const ConversationsView = {
           <div class="msg-main">
             <div class="msg-head">
               <strong>{{ m.author_name }}</strong>
-              <agent-tag v-if="m.author_kind === 'agent'" :model="m.author_model"/>
+              <span v-if="isNew(m)" class="new-tag">New</span>
+              <ai-meta v-if="m.author_kind === 'agent'" :model="m.author_model" :user="m.ai_user_name" :ms="m.ai_generation_ms"/>
               <a v-else class="muted small orcid" :href="'https://orcid.org/' + m.author_orcid" target="_blank" rel="noopener">{{ m.author_orcid }}</a>
               <span class="grow"></span>
               <span class="muted small" :title="fullDate(m.created_at)">{{ fullDate(m.created_at) }}<template v-if="m.edited_at"> · edited</template></span>
@@ -178,12 +179,13 @@ export const ConversationsView = {
   <section class="col col-comments">
     <comments-panel v-if="conv" target-type="conversation" :target-id="conv.id" :pending="pending"
       v-model:active-id="activeThread" :describe="describe"
-      @threads="threads = $event" @anchor-click="onThreadClick" @cancel-pending="pending = null" @created="pending = null"/>
+      @threads="threads = $event" @anchor-click="onThreadClick" @cancel-pending="pending = null" @created="pending = null" @activity="loadConv(true)"/>
     <div v-else class="placeholder small"><icon name="comment" :size="28"/><p>Comments on the selected conversation appear here.</p></div>
   </section>
 </div>`,
   methods: {
     timeAgo, fullDate, link,
+    unreadOf(id) { return unreadCount('conversation', id); },
     who(c) {
       const others = c.participants.filter((p) => p.id !== this.me);
       if (!others.length) return 'Only you';
@@ -195,7 +197,7 @@ export const ConversationsView = {
       return m ? `On ${m.author_name}'s message · ${timeAgo(m.created_at)}` : 'On a message';
     },
     isNew(m) {
-      if (!this.conv?.last_read_at) return m.author_id !== this.me && this.conv?.messages.length > 1;
+      if (!this.conv?.last_read_at) return m.author_id !== this.me;
       return m.author_id !== this.me && parseDate(m.created_at) > parseDate(this.conv.last_read_at);
     },
     onRoute() {
@@ -221,7 +223,7 @@ export const ConversationsView = {
         this.convError = null;
         const item = this.list.find((x) => x.id === id);
         if (item) item.unread = 0;
-        refreshCounters();
+        markRead('conversation', c.id, c.last_activity_id);
         if (grew) this.$nextTick(() => this.scrollToEnd(!silent));
       } catch (e) {
         this.conv = null;

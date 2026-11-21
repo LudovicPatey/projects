@@ -5,7 +5,7 @@ require __DIR__ . '/../src/bootstrap.php';
 
 use App\{Auth, Config, HttpError, Request, Response};
 use App\Controllers\{AgentController, AuthController, BibController, CommentController, ConversationController,
-    DocumentController, NotificationController, ProjectController};
+    DocumentController, FactController, KeyController, NotificationController, ProjectController};
 
 $routes = [
     // auth
@@ -15,6 +15,9 @@ $routes = [
     ['GET',    '/api/me',                                 [AuthController::class, 'me'], false],
     ['POST',   '/api/logout',                             [AuthController::class, 'logout']],
     ['PATCH',  '/api/me',                                 [AuthController::class, 'updateProfile']],
+    ['GET',    '/api/me/keys',                            [KeyController::class, 'list']],
+    ['POST',   '/api/me/keys',                            [KeyController::class, 'create']],
+    ['DELETE', '/api/me/keys/{id}',                       [KeyController::class, 'revoke']],
     // projects & members
     ['GET',    '/api/projects',                           [ProjectController::class, 'list']],
     ['POST',   '/api/projects',                           [ProjectController::class, 'create']],
@@ -24,6 +27,7 @@ $routes = [
     ['PATCH',  '/api/projects/{id}/members/{uid}',        [ProjectController::class, 'updateMember']],
     ['DELETE', '/api/projects/{id}/members/{uid}',        [ProjectController::class, 'removeMember']],
     ['GET',    '/api/projects/{id}/mentionables',         [ProjectController::class, 'mentionables']],
+    ['GET',    '/api/projects/{id}/context',              [AgentController::class, 'projectContext']],
     ['GET',    '/api/projects/{id}/backlinks',            [ProjectController::class, 'backlinks']],
     // AI agents
     ['GET',    '/api/projects/{id}/agents',               [AgentController::class, 'list']],
@@ -52,6 +56,22 @@ $routes = [
     ['POST',   '/api/documents/{id}/versions/{vid}/restore', [DocumentController::class, 'restore']],
     ['GET',    '/api/files/{fid}',                        [DocumentController::class, 'file']],
     ['GET',    '/api/versions/{vid}/zip',                 [DocumentController::class, 'zip']],
+    // fact database
+    ['GET',    '/api/projects/{pid}/facts',               [FactController::class, 'list']],
+    ['POST',   '/api/projects/{pid}/facts',               [FactController::class, 'create']],
+    ['POST',   '/api/projects/{pid}/facts/batch',         [FactController::class, 'batch']],
+    ['GET',    '/api/fact-format',                        [FactController::class, 'format']],
+    ['GET',    '/api/facts/{id}/trace',                   [FactController::class, 'trace']],
+    ['GET',    '/api/facts/{id}',                         [FactController::class, 'show']],
+    ['PATCH',  '/api/facts/{id}',                         [FactController::class, 'update']],
+    ['DELETE', '/api/facts/{id}',                         [FactController::class, 'delete']],
+    ['POST',   '/api/facts/{id}/retract',                 [FactController::class, 'retract']],
+    ['POST',   '/api/facts/{id}/reinstate',               [FactController::class, 'reinstate']],
+    ['POST',   '/api/facts/{id}/reviews',                 [FactController::class, 'review']],
+    ['DELETE', '/api/facts/{id}/reviews/{rid}',           [FactController::class, 'deleteReview']],
+    ['POST',   '/api/facts/{id}/lean',                    [FactController::class, 'addLean']],
+    ['POST',   '/api/fact-lean/{lid}/check',              [FactController::class, 'checkLean']],
+    ['DELETE', '/api/fact-lean/{lid}',                    [FactController::class, 'deleteLean']],
     // conversations
     ['GET',    '/api/projects/{pid}/conversations',       [ConversationController::class, 'list']],
     ['POST',   '/api/projects/{pid}/conversations',       [ConversationController::class, 'create']],
@@ -69,6 +89,9 @@ $routes = [
     // notifications
     ['GET',    '/api/notifications',                      [NotificationController::class, 'list']],
     ['POST',   '/api/notifications/read',                 [NotificationController::class, 'markRead']],
+    ['POST',   '/api/projects/{id}/read',                 [NotificationController::class, 'read']],
+    ['POST',   '/api/projects/{id}/read-all',             [NotificationController::class, 'readAll']],
+    ['POST',   '/api/projects/{id}/unread',               [NotificationController::class, 'unread']],
     ['GET',    '/api/counters',                           [NotificationController::class, 'counters']],
 ];
 
@@ -88,7 +111,7 @@ try {
         if (!preg_match($regex, $req->path, $m)) continue;
         if ($method !== $req->method) { $allowedOther = true; continue; }
         $req->params = array_filter($m, 'is_string', ARRAY_FILTER_USE_KEY);
-        if ($needsAuth) { Auth::require(); Auth::checkCsrf($req); }
+        if ($needsAuth) { Auth::require(); Auth::checkCsrf($req); Auth::checkClientRoute($method, $pattern); }
         $handler($req);
     }
     if ($isApi) throw new HttpError(isset($allowedOther) ? 405 : 404, 'Not found');

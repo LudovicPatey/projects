@@ -1,5 +1,5 @@
 import { api } from '../api.js';
-import { store, go, link, attempt, toast, refreshMentionables } from '../store.js';
+import { store, go, link, attempt, toast, refreshMentionables, unreadCount, markRead, markItemUnread } from '../store.js';
 import { timeAgo, fullDate, fileSize, isTextFile } from '../util.js';
 
 /** Upload form used both for a new file and for a new version. */
@@ -8,7 +8,7 @@ const UploadForm = {
   emits: ['done', 'cancel'],
   data() {
     return {
-      title: '', description: '', origin: '', aiModel: '', notes: '', keepSources: true,
+      title: '', description: '', origin: '', aiModel: this.doc?.ai_model || '', genSeconds: '', notes: '', keepSources: true,
       pdf: null, sources: [], progress: null,
     };
   },
@@ -23,11 +23,17 @@ const UploadForm = {
             <icon name="bot" :size="22"/><b>AI</b><small>Generated (mostly) by an AI system</small></label>
         </div>
       </div>
-      <label class="field" v-if="origin === 'ai'"><span>AI system / model <small class="muted">(optional)</small></span>
-        <input v-model="aiModel" placeholder="e.g. Claude Opus 5.5, AlphaProof…"></label>
+      <label class="field" v-if="origin === 'ai'"><span>AI system / model <small class="muted">(required)</small></span>
+        <input v-model="aiModel" required placeholder="e.g. Claude Opus 5.5, AlphaProof…"></label>
+      <label class="field" v-if="origin === 'ai'"><span>Generation time in seconds <small class="muted">(optional, only if measured)</small></span>
+        <input v-model="genSeconds" type="number" min="0" step="any"></label>
       <label class="field"><span>Description <small class="muted">(optional)</small></span>
         <textarea v-model="description" rows="2" placeholder="What does this file contain?"></textarea></label>
     </template>
+    <label class="field" v-if="mode === 'version' && doc.origin === 'ai'"><span>AI model of this version <small class="muted">(required)</small></span>
+      <input v-model="aiModel" required></label>
+    <label class="field" v-if="mode === 'version' && doc.origin === 'ai'"><span>Generation time in seconds <small class="muted">(optional, only if measured)</small></span>
+      <input v-model="genSeconds" type="number" min="0" step="any"></label>
     <div class="field"><span>PDF <small class="muted">(required)</small></span>
       <input type="file" accept="application/pdf,.pdf" @change="pdf = $event.target.files[0] || null"></div>
     <div class="field"><span>LaTeX sources <small class="muted">(optional — .tex, .bib, figures, or a .zip)</small></span>
@@ -49,11 +55,14 @@ const UploadForm = {
     async submit() {
       if (this.mode === 'new' && !this.title.trim()) return toast('Please give a title', 'error');
       if (this.mode === 'new' && !this.origin) return toast('Please state whether a human or an AI wrote this file', 'error');
+      const isAi = this.mode === 'new' ? this.origin === 'ai' : this.doc.origin === 'ai';
+      if (isAi && !this.aiModel.trim()) return toast('AI-generated content must state its model', 'error');
       if (!this.pdf) return toast('Please choose a PDF file', 'error');
       const fd = new FormData();
       fd.append('pdf', this.pdf);
       this.sources.forEach((f) => fd.append('sources[]', f));
       fd.append('notes', this.notes);
+      if (isAi && this.genSeconds !== '') fd.append('generation_seconds', this.genSeconds);
       let url;
       if (this.mode === 'new') {
         fd.append('title', this.title); fd.append('description', this.description);
@@ -61,6 +70,7 @@ const UploadForm = {
         url = `api/projects/${store.project.id}/documents`;
       } else {
         fd.append('keep_sources', this.keepSources ? '1' : '0');
+        if (isAi) fd.append('ai_model', this.aiModel);
         url = `api/documents/${this.doc.id}/versions`;
       }
       this.progress = 0;
@@ -118,7 +128,7 @@ export const FilesView = {
   template: `<div class="cols3">
   <section class="col col-list">
     <header class="col-head"><h2>Files</h2>
-      <button class="btn primary sm" @click="startUpload"><icon name="upload" :size="14"/> Upload</button></header>
+      <div class="row-gap"><mark-all-read type="document"/><button class="btn primary sm" @click="startUpload"><icon name="upload" :size="14"/> Upload</button></div></header>
     <div class="col-tools">
       <div class="seg">
         <button :class="{on: filter==='all'}" @click="filter='all'">All <b class="seg-n plain">{{ counts.all }}</b></button>
@@ -128,13 +138,14 @@ export const FilesView = {
       <div class="search"><icon name="search" :size="15"/><input v-model="search" placeholder="Search files"></div>
     </div>
     <div class="list">
-      <a v-for="d in filtered" :key="d.id" class="li file-li" :class="['o-' + d.origin, {active: d.id === id}]" :href="link('files', d.id)">
+      <a v-for="d in filtered" :key="d.id" class="li file-li" :class="['o-' + d.origin, {active: d.id === id, 'is-new': !!unreadOf(d.id)}]" :href="link('files', d.id)">
         <div class="file-icon" :class="d.origin"><icon :name="d.origin === 'ai' ? 'bot' : 'user'" :size="18"/></div>
         <div class="file-text">
-          <div class="li-subject">{{ d.title }}</div>
+          <div class="li-subject li-with-badge"><span>{{ d.title }}</span><unread-badge type="document" :id="d.id"/></div>
           <div class="li-snippet">v{{ d.current_version_no }} · {{ timeAgo(d.updated_at) }} · {{ d.created_by_name }}</div>
           <div class="li-meta">
             <origin-badge :origin="d.origin" :model="d.ai_model"/>
+            <ai-meta :model="d.ai_model" :user="d.ai_user_name" :ms="d.ai_generation_ms"/>
             <span v-if="d.source_count" title="LaTeX sources"><icon name="code" :size="12"/> {{ d.source_count }}</span>
             <span v-if="d.version_count > 1" title="Versions"><icon name="history" :size="12"/> {{ d.version_count }}</span>
             <span v-if="d.open_threads" title="Open comment threads"><icon name="comment" :size="12"/> {{ d.open_threads }}</span>
@@ -153,7 +164,7 @@ export const FilesView = {
     <template v-else-if="doc && version">
       <div class="doc-banner" :class="doc.origin">
         <icon :name="doc.origin === 'ai' ? 'bot' : 'user'" :size="16"/>
-        <span v-if="doc.origin === 'ai'"><b>AI-generated file</b><template v-if="doc.ai_model"> — {{ doc.ai_model }}</template>. Check carefully before relying on it.</span>
+        <span v-if="doc.origin === 'ai'"><b>AI-generated file.</b> <ai-meta :model="version.ai_model || doc.ai_model" :user="version.ai_user_name" :ms="version.ai_generation_ms"/> Check carefully before relying on it.</span>
         <span v-else><b>Human-written file</b></span>
       </div>
       <header class="doc-head">
@@ -169,6 +180,7 @@ export const FilesView = {
           <button class="btn sm" @click="newVersion = true"><icon name="upload" :size="14"/> New version</button>
           <button v-if="!version.is_current" class="btn sm warn" @click="restore(version)"><icon name="restore" :size="14"/> Restore v{{ version.version_no }}</button>
           <a class="btn sm" :href="'api/versions/' + version.id + '/zip'" title="PDF + sources as .zip"><icon name="download" :size="14"/> .zip</a>
+          <button class="icon-btn" title="Mark as unread" @click="markItemUnread('document', doc.id)"><icon name="mail-unread"/></button>
           <button class="icon-btn" title="Edit details" @click="startEdit"><icon name="edit"/></button>
           <button v-if="canDelete" class="icon-btn" title="Delete file" @click="remove"><icon name="trash"/></button>
         </div>
@@ -210,6 +222,7 @@ export const FilesView = {
                 <span v-if="v.restored_from_no" class="tag">restored from v{{ v.restored_from_no }}</span>
                 <span class="grow"></span><span class="muted small">{{ fullDate(v.created_at) }}</span></div>
               <div class="muted small">by {{ v.uploaded_by_name }} · {{ v.files.length }} file{{ v.files.length > 1 ? 's' : '' }}</div>
+              <ai-meta :model="v.ai_model" :user="v.ai_user_name" :ms="v.ai_generation_ms"/>
               <div v-if="v.notes" class="tl-notes">{{ v.notes }}</div>
               <div class="tl-actions">
                 <button class="btn xs" @click="selectVersion(v.id); tab='preview'"><icon name="eye" :size="13"/> View</button>
@@ -236,7 +249,7 @@ export const FilesView = {
     <template v-if="doc && version && !uploading">
       <comments-panel target-type="document" :target-id="doc.id" :pending="pending" v-model:active-id="activeThread"
         :filter="threadFilter" :describe="describe"
-        @threads="threads = $event" @anchor-click="onThreadClick" @cancel-pending="pending = null" @created="pending = null"/>
+        @threads="threads = $event" @anchor-click="onThreadClick" @cancel-pending="pending = null" @created="pending = null" @activity="loadDoc"/>
       <label class="check all-versions"><input type="checkbox" v-model="allVersions"> Show comments of all versions</label>
     </template>
     <div v-else class="placeholder small"><icon name="comment" :size="28"/><p>Comments on the selected file appear here.</p></div>
@@ -253,14 +266,15 @@ export const FilesView = {
           <label class="origin-opt human" :class="{on: editing.origin === 'human'}"><input type="radio" value="human" v-model="editing.origin"><icon name="user" :size="20"/><b>Human</b></label>
           <label class="origin-opt ai" :class="{on: editing.origin === 'ai'}"><input type="radio" value="ai" v-model="editing.origin"><icon name="bot" :size="20"/><b>AI</b></label>
         </div></div>
-      <label class="field" v-if="editing.origin === 'ai'"><span>AI system / model</span><input v-model="editing.ai_model"></label>
+      <label class="field" v-if="editing.origin === 'ai'"><span>AI system / model <small class="muted">(required)</small></span><input v-model="editing.ai_model" required></label>
       <label class="field"><span>Description</span><textarea v-model="editing.description" rows="3"></textarea></label>
       <div class="row-end"><button type="button" class="btn ghost" @click="editing=null">Cancel</button><button class="btn primary">Save</button></div>
     </form>
   </modal>
 </div>`,
   methods: {
-    timeAgo, fullDate, fileSize, isTextFile, link,
+    timeAgo, fullDate, fileSize, isTextFile, link, markItemUnread,
+    unreadOf(id) { return unreadCount('document', id); },
     threadFilter(t) { return this.allVersions || !t.anchor?.version_id || t.anchor.version_id === this.version?.id; },
     describe(t) {
       const v = this.doc?.versions.find((x) => x.id === t.anchor?.version_id);
@@ -283,6 +297,7 @@ export const FilesView = {
         const d = await api.get(`api/documents/${id}`);
         if (id !== this.id) return;
         this.doc = d; this.docError = null;
+        markRead('document', d.id, d.last_activity_id);
         if (this.tab === 'links') this.loadBacklinks();
       } catch (e) { this.doc = null; this.docError = e.message; }
     },

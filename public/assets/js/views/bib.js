@@ -1,5 +1,5 @@
 import { api } from '../api.js';
-import { store, go, link, attempt, toast, refreshMentionables } from '../store.js';
+import { store, go, link, attempt, toast, refreshMentionables, unreadCount, markRead, markItemUnread } from '../store.js';
 import { timeAgo, fullDate, fileSize } from '../util.js';
 
 const TYPES = ['article', 'inproceedings', 'book', 'incollection', 'phdthesis', 'mastersthesis', 'techreport', 'misc', 'unpublished'];
@@ -38,6 +38,7 @@ export const BibView = {
   <section class="col col-list">
     <header class="col-head"><h2>Bibliography</h2>
       <div class="row-gap">
+        <mark-all-read type="bib"/>
         <a class="icon-btn" :href="'api/projects/' + pid + '/bib/export'" title="Export as .bib"><icon name="download" :size="16"/></a>
         <button class="btn primary sm" @click="adding = true"><icon name="plus" :size="14"/> Add</button></div></header>
     <div class="col-tools">
@@ -49,13 +50,14 @@ export const BibView = {
       </div>
     </div>
     <div class="list">
-      <a v-for="e in filtered" :key="e.id" class="li bib-li" :class="{active: e.id === id}" :href="link('bib', e.id)">
-        <div class="li-top"><code class="key">{{ e.cite_key }}</code><span class="li-time">{{ e.year }}</span></div>
-        <div class="li-subject">{{ e.title }}</div>
+      <a v-for="e in filtered" :key="e.id" class="li bib-li" :class="{active: e.id === id, 'is-new': !!unreadOf(e.id)}" :href="link('bib', e.id)">
+        <div class="li-top"><code class="key">{{ e.cite_key }}</code><span class="li-time">{{ e.year }}</span><unread-badge type="bib" :id="e.id"/></div>
+        <div class="li-subject"><math-text :text="e.title"/></div>
         <div class="li-snippet">{{ e.authors }}</div>
         <div class="li-meta">
           <span v-if="e.has_pdf" class="tag red"><icon name="pdf" :size="11"/> PDF</span>
           <span v-else class="tag muted-tag">no PDF</span>
+          <ai-meta :model="e.ai_model" :user="e.ai_user_name" :ms="e.ai_generation_ms"/>
           <span v-if="e.comment_count"><icon name="comment" :size="12"/> {{ e.comment_count }}</span>
           <span class="grow"></span><span class="muted small ellipsis">{{ e.venue }}</span>
         </div>
@@ -71,19 +73,21 @@ export const BibView = {
           <div class="row-gap"><code class="key big">{{ entry.cite_key }}</code>
             <button class="icon-btn xs" title="Copy \\cite command" @click="copyCite"><icon name="copy" :size="13"/></button>
             <span class="tag">{{ entry.entry_type }}</span></div>
-          <h2>{{ entry.title }}</h2>
+          <h2><math-text :text="entry.title"/></h2>
           <div class="bib-authors">{{ entry.authors }}</div>
           <div class="muted">{{ [entry.venue, entry.year].filter(Boolean).join(', ') }}</div>
           <div class="row-gap small">
             <a v-if="entry.doi" :href="'https://doi.org/' + entry.doi" target="_blank" rel="noopener"><icon name="link" :size="12"/> doi:{{ entry.doi }}</a>
             <a v-if="entry.url" :href="entry.url" target="_blank" rel="noopener"><icon name="external" :size="12"/> {{ shortUrl(entry.url) }}</a>
             <span class="muted">added by {{ entry.added_by }} · {{ timeAgo(entry.created_at) }}</span>
+            <ai-meta :model="entry.ai_model" :user="entry.ai_user_name" :ms="entry.ai_generation_ms"/>
           </div>
         </div>
         <div class="doc-actions">
           <label class="btn sm"><icon name="upload" :size="14"/> {{ entry.has_pdf ? 'Replace PDF' : 'Upload PDF' }}
             <input type="file" accept="application/pdf,.pdf" hidden @change="uploadPdf"></label>
           <button v-if="entry.has_pdf" class="icon-btn" title="Remove PDF" @click="removePdf"><icon name="x"/></button>
+          <button class="icon-btn" title="Mark as unread" @click="markItemUnread('bib', entry.id)"><icon name="mail-unread"/></button>
           <button v-if="canDelete" class="icon-btn" title="Delete entry" @click="remove"><icon name="trash"/></button>
         </div>
       </header>
@@ -121,7 +125,7 @@ export const BibView = {
     <template v-if="entry">
       <comments-panel target-type="bib" :target-id="entry.id" :pending="pending" v-model:active-id="activeThread"
         :filter="threadFilter" :describe="describe"
-        @threads="threads = $event" @anchor-click="onThreadClick" @cancel-pending="pending = null" @created="pending = null"/>
+        @threads="threads = $event" @anchor-click="onThreadClick" @cancel-pending="pending = null" @created="pending = null" @activity="onActivity"/>
     </template>
     <div v-else class="placeholder small"><icon name="comment" :size="28"/><p>Comments on the selected reference appear here.</p></div>
   </section>
@@ -156,7 +160,9 @@ export const BibView = {
 </div>`,
   created() { this.types = TYPES; },
   methods: {
-    timeAgo, fullDate, fileSize, link,
+    timeAgo, fullDate, fileSize, link, markItemUnread,
+    unreadOf(id) { return unreadCount('bib', id); },
+    onActivity() { if (this.tab !== 'bibtex' || this.editBib === this.entry?.bibtex) this.loadEntry(); },
     shortUrl(u) { try { const x = new URL(u); return x.host + x.pathname.slice(0, 30); } catch { return u; } },
     threadFilter(t) { return !t.anchor?.blob_id || t.anchor.blob_id === this.entry?.pdf?.blob_id; },
     describe(t) { return t.anchor?.page ? `Page ${t.anchor.page}` : ''; },
@@ -174,6 +180,7 @@ export const BibView = {
         const e = await api.get(`api/bib/${id}`);
         if (id !== this.id) return;
         this.entry = e; this.entryError = null; this.editBib = e.bibtex;
+        markRead('bib', e.id, e.last_activity_id);
         if (this.tab === 'links') this.loadBacklinks();
       } catch (e) { this.entry = null; this.entryError = e.message; }
     },

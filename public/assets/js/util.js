@@ -20,6 +20,16 @@ export function fullDate(s) {
   return d.toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
+/** Generation time: 850 ms, 12.4 s, 3 min 05 s, 2 h 10 min. */
+export function formatDuration(ms) {
+  if (ms === null || ms === undefined || ms === '') return '';
+  const n = +ms;
+  if (n < 1000) return `${Math.round(n)} ms`;
+  if (n < 60000) return `${(n / 1000).toFixed(1)} s`;
+  if (n < 3600000) return `${Math.floor(n / 60000)} min ${String(Math.floor(n / 1000) % 60).padStart(2, '0')} s`;
+  return `${Math.floor(n / 3600000)} h ${String(Math.floor(n / 60000) % 60).padStart(2, '0')} min`;
+}
+
 export function fileSize(n) {
   n = +n || 0;
   if (n < 1024) return n + ' B';

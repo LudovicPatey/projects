@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 namespace App\Controllers;
 
-use App\{Access, Auth, Config, Db, HttpError, Notify, Orcid, Request, Response, Sanitizer};
+use App\{Activity, Access, Auth, Config, Db, HttpError, Notify, Orcid, Request, Response, Sanitizer};
 
 final class ProjectController
 {
@@ -14,6 +14,8 @@ final class ProjectController
                     (SELECT COUNT(*) FROM project_members m WHERE m.project_id = p.id) AS members
              FROM projects p JOIN project_members pm ON pm.project_id = p.id AND pm.user_id = ?
              ORDER BY p.updated_at DESC', [Auth::id()]);
+        foreach ($rows as &$p) $p['unread'] = Activity::total((int)$p['id'], Auth::id());
+        unset($p);
         Response::json(['projects' => $rows, 'can_create' => self::canCreate()]);
     }
 
@@ -48,12 +50,14 @@ final class ProjectController
         $role = Access::member($id);
         $p = Db::one('SELECT * FROM projects WHERE id = ?', [$id]);
         $p['my_role'] = $role;
+        $p['last_activity_id'] = Activity::latest($id, 'question', $id);
         $p['members'] = self::members($id);
         $p['stats'] = [
             'documents_human' => (int)Db::value("SELECT COUNT(*) FROM documents WHERE project_id = ? AND origin = 'human' AND deleted_at IS NULL", [$id]),
             'documents_ai' => (int)Db::value("SELECT COUNT(*) FROM documents WHERE project_id = ? AND origin = 'ai' AND deleted_at IS NULL", [$id]),
             'bib' => (int)Db::value('SELECT COUNT(*) FROM bib_entries WHERE project_id = ?', [$id]),
             'conversations' => (int)Db::value('SELECT COUNT(*) FROM conversations WHERE project_id = ?', [$id]),
+            'facts' => (int)Db::value('SELECT COUNT(*) FROM facts WHERE project_id = ? AND deleted_at IS NULL', [$id]),
         ];
         $p['recent_documents'] = Db::all(
             'SELECT d.id, d.title, d.origin, d.updated_at, u.name AS author FROM documents d JOIN users u ON u.id = d.created_by
@@ -86,6 +90,7 @@ final class ProjectController
         }
         if (in_array($r->str('status'), ['open', 'solved', 'archived'], true)) $data['status'] = $r->str('status');
         Db::update('projects', $data, 'id = :id', ['id' => $id]);
+        if (isset($data['title']) || isset($data['question_html']) || isset($data['status'])) Activity::touch($id, 'question', $id, 'updated');
         Response::json(['ok' => true]);
     }
 
@@ -107,6 +112,8 @@ final class ProjectController
             throw new HttpError(409, 'This researcher is already a member.');
         }
         Db::insert('project_members', ['project_id' => $id, 'user_id' => $uid, 'role' => $role, 'joined_at' => Db::now()]);
+        Activity::touch($id, 'member', $uid, 'joined');
+        Activity::joined($id, $uid);
         Notify::send($uid, $id, 'added', ['link' => ['view' => 'overview'], 'excerpt' => 'You were added to the project.']);
         Response::json(['members' => self::members($id)]);
     }
@@ -152,6 +159,7 @@ final class ProjectController
             'users' => Db::all('SELECT u.id, u.name, u.orcid, u.kind FROM project_members pm JOIN users u ON u.id = pm.user_id WHERE pm.project_id = ? ORDER BY u.name', [$id]),
             'documents' => Db::all('SELECT id, title, origin FROM documents WHERE project_id = ? AND deleted_at IS NULL ORDER BY title', [$id]),
             'bib' => Db::all('SELECT id, cite_key, title, authors, year FROM bib_entries WHERE project_id = ? ORDER BY cite_key', [$id]),
+            'facts' => Db::all('SELECT id, label, title, kind, origin FROM facts WHERE project_id = ? AND deleted_at IS NULL ORDER BY label', [$id]),
         ]);
     }
 
@@ -173,8 +181,14 @@ final class ProjectController
                 $c = Db::one('SELECT target_type, target_id, created_at FROM comments WHERE id = ?', [$m['source_id']]);
                 if (!$c) continue;
                 if ($c['target_type'] === 'conversation' && !Db::value('SELECT 1 FROM conversation_participants WHERE conversation_id = ? AND user_id = ?', [$c['target_id'], Auth::id()])) continue;
-                $view = ['conversation' => 'conversations', 'document' => 'files', 'bib' => 'bib'][$c['target_type']];
+                $view = ['conversation' => 'conversations', 'document' => 'files', 'bib' => 'bib', 'fact' => 'facts'][$c['target_type']];
                 $out[] = ['kind' => 'comment', 'label' => 'Comment on ' . $c['target_type'], 'link' => ['view' => $view, 'id' => (int)$c['target_id']], 'at' => $c['created_at']];
+            } elseif ($m['source_type'] === 'fact') {
+                $f = Db::one('SELECT id, label, updated_at FROM facts WHERE id = ? AND deleted_at IS NULL', [$m['source_id']]);
+                if ($f) $out[] = ['kind' => 'fact', 'label' => 'Fact ' . $f['label'], 'link' => ['view' => 'facts', 'id' => (int)$f['id']], 'at' => $f['updated_at']];
+            } elseif ($m['source_type'] === 'fact_review') {
+                $f = Db::one('SELECT f.id, f.label, v.updated_at FROM fact_reviews v JOIN facts f ON f.id = v.fact_id WHERE v.id = ? AND f.deleted_at IS NULL', [$m['source_id']]);
+                if ($f) $out[] = ['kind' => 'fact', 'label' => 'Review of ' . $f['label'], 'link' => ['view' => 'facts', 'id' => (int)$f['id']], 'at' => $f['updated_at']];
             }
         }
         Response::json(['backlinks' => $out]);

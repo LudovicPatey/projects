@@ -16,9 +16,9 @@ export const CommentsPanel = {
     describe: Function,         // thread => label of its anchor
     title: { type: String, default: 'Comments' },
   },
-  emits: ['threads', 'anchor-click', 'cancel-pending', 'created', 'update:activeId'],
+  emits: ['threads', 'anchor-click', 'cancel-pending', 'created', 'update:activeId', 'activity'],
   data() {
-    return { threads: [], loading: true, showResolved: false, composing: false, replyTo: null, editing: null, busy: false };
+    return { threads: [], loading: true, showResolved: false, composing: false, replyTo: null, editing: null, busy: false, freshIds: [], lastActivity: null };
   },
   computed: {
     me() { return store.user?.id; },
@@ -31,7 +31,7 @@ export const CommentsPanel = {
     resolvedCount() { return this.visible.filter((t) => t.resolved).length; },
   },
   watch: {
-    targetId() { this.composing = false; this.replyTo = null; this.load(); },
+    targetId() { this.composing = false; this.replyTo = null; this.freshIds = []; this.lastActivity = null; this.load(); },
     pending(v) { if (v) this.composing = false; },
     activeId(v) { if (v) this.$nextTick(() => this.scrollTo(v)); },
   },
@@ -74,10 +74,10 @@ export const CommentsPanel = {
           <span class="t-anchor-label">{{ describe ? describe(t) : '' }}</span>
           <blockquote v-if="t.anchor.quote">{{ t.anchor.quote }}</blockquote>
         </div>
-        <div v-for="c in [t, ...t.replies]" :key="c.id" class="c-item" :class="{reply: c !== t}">
+        <div v-for="c in [t, ...t.replies]" :key="c.id" class="c-item" :class="{reply: c !== t, fresh: freshIds.includes(c.id)}">
           <div class="c-head">
             <avatar :name="c.author_name" :id="c.author_id" :kind="c.author_kind" :size="22"/>
-            <strong>{{ c.author_name }}</strong><icon v-if="c.author_kind === 'agent'" name="bot" :size="13" class="ai-mark" title="AI agent"/>
+            <strong>{{ c.author_name }}</strong><span v-if="freshIds.includes(c.id)" class="new-tag">New</span>
             <span class="muted small" :title="fullDate(c.created_at)">{{ timeAgo(c.created_at) }}<template v-if="c.edited_at"> · edited</template></span>
             <span class="grow"></span>
             <template v-if="c.author_id === me && editing !== c.id">
@@ -85,6 +85,7 @@ export const CommentsPanel = {
               <button class="icon-btn xs" title="Delete" @click.stop="remove(c)"><icon name="trash" :size="13"/></button>
             </template>
           </div>
+          <ai-meta :model="c.author_model" :user="c.ai_user_name" :ms="c.ai_generation_ms" class="c-ai"/>
           <div v-if="editing === c.id" @click.stop>
             <rich-editor ref="editEd" compact autofocus :initial-html="c.body_html" @submit="saveEdit(c)" @cancel="editing=null"/>
             <div class="row-end"><button class="btn ghost sm" @click="editing=null">Cancel</button>
@@ -114,6 +115,10 @@ export const CommentsPanel = {
       try {
         const r = await api.get(`api/comments?type=${this.targetType}&id=${this.targetId}`);
         this.threads = r.threads;
+        this.freshIds = [...new Set([...this.freshIds, ...(r.fresh_ids || [])])];
+        const before = this.lastActivity;
+        this.lastActivity = r.last_activity_id ?? null;
+        if (before !== null && r.last_activity_id !== before) this.$emit('activity');
         this.$emit('threads', r.threads);
         if (this.activeId) this.$nextTick(() => this.scrollTo(this.activeId));
       } catch (e) { /* shown elsewhere */ }

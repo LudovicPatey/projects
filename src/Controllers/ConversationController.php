@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 namespace App\Controllers;
 
-use App\{Access, Auth, Db, HttpError, Notify, Request, Response, Sanitizer};
+use App\{Access, Activity, Auth, Db, HttpError, Notify, Provenance, Request, Response, Sanitizer};
 
 /** Webmail-like linear conversations between a subset of project members. */
 final class ConversationController
@@ -38,6 +38,9 @@ final class ConversationController
             $c['starred'] = (bool)$c['starred'];
             $c['archived'] = (bool)$c['archived'];
         }
+        $unread = Activity::unread($pid, $me)['items']['conversation'];
+        foreach ($convs as &$c) $c['unread'] = $unread[(int)$c['id']] ?? 0;
+        unset($c);
         Response::json(['conversations' => $convs]);
     }
 
@@ -53,7 +56,9 @@ final class ConversationController
         $ids[] = Auth::id();
         $ids = array_values(array_unique($ids));
 
-        $cid = Db::tx(function () use ($pid, $subject, $ids, $body) {
+        $model = Provenance::agentModel($r);
+        $stamp = Provenance::stamp($model, $r->input('generation_seconds'));
+        $cid = Db::tx(function () use ($pid, $subject, $ids, $body, $model, $stamp) {
             $now = Db::now();
             $cid = Db::insert('conversations', [
                 'project_id' => $pid, 'subject' => mb_substr($subject, 0, 255), 'created_by' => Auth::id(),
@@ -62,7 +67,8 @@ final class ConversationController
             foreach ($ids as $uid) {
                 Db::insert('conversation_participants', ['conversation_id' => $cid, 'user_id' => $uid, 'last_read_at' => $uid === Auth::id() ? $now : null]);
             }
-            $mid = Db::insert('messages', ['conversation_id' => $cid, 'author_id' => Auth::id(), 'body_html' => $body['html'], 'created_at' => $now]);
+            $mid = Db::insert('messages', $stamp + ['conversation_id' => $cid, 'author_id' => Auth::id(), 'ai_model' => $model, 'body_html' => $body['html'], 'created_at' => $now]);
+            Activity::touch($pid, 'conversation', $cid, 'message', $mid);
             Notify::mentions($pid, 'message', $mid, $body['mentions'], ['view' => 'conversations', 'id' => $cid], $body['text'], $ids);
             return $cid;
         });
@@ -75,9 +81,9 @@ final class ConversationController
         $me = Auth::id();
         $c['participants'] = Db::all('SELECT u.id, u.name, u.orcid, u.kind, u.ai_model FROM conversation_participants cp JOIN users u ON u.id = cp.user_id WHERE cp.conversation_id = ? ORDER BY u.name', [$c['id']]);
         $c['messages'] = Db::all(
-            "SELECT m.id, m.author_id, u.name AS author_name, u.orcid AS author_orcid, u.kind AS author_kind, u.ai_model AS author_model, m.body_html, m.created_at, m.edited_at
-             FROM messages m JOIN users u ON u.id = m.author_id WHERE m.conversation_id = ? ORDER BY m.created_at, m.id", [$c['id']]);
-        if (Auth::isAgent() || isset($r->query['text'])) {
+            "SELECT m.id, m.author_id, u.name AS author_name, u.orcid AS author_orcid, u.kind AS author_kind, m.ai_model AS author_model, m.ai_user_id, au.name AS ai_user_name, m.ai_generation_ms, m.body_html, m.created_at, m.edited_at
+             FROM messages m JOIN users u ON u.id = m.author_id LEFT JOIN users au ON au.id = m.ai_user_id WHERE m.conversation_id = ? ORDER BY m.created_at, m.id", [$c['id']]);
+        if (Auth::isAi() || isset($r->query['text'])) {
             foreach ($c['messages'] as &$msg) $msg['body_text'] = Sanitizer::toText($msg['body_html']);
             unset($msg);
         }
@@ -85,7 +91,11 @@ final class ConversationController
         $c['last_read_at'] = $flags['last_read_at'];
         $c['starred'] = (bool)$flags['starred'];
         $c['archived'] = (bool)$flags['archived'];
-        Db::update('conversation_participants', ['last_read_at' => Db::now()], 'conversation_id = :c AND user_id = :u', ['c' => $c['id'], 'u' => $me]);
+        $c['last_activity_id'] = Activity::latest((int)$c['project_id'], 'conversation', (int)$c['id']);
+        // An AI client reading on the user's behalf must not mark messages as read.
+        if (!Auth::isClient()) {
+            Db::update('conversation_participants', ['last_read_at' => Db::now()], 'conversation_id = :c AND user_id = :u', ['c' => $c['id'], 'u' => $me]);
+        }
         Response::json($c);
     }
 
@@ -94,8 +104,11 @@ final class ConversationController
         $c = Access::conversation($r->int('id'));
         $body = Sanitizer::fromRequest($r, (int)$c['project_id']) ?? throw new HttpError(422, 'body_html or body_text is required.');
         if ($body['text'] === '' && !$body['mentions']) throw new HttpError(422, 'The message is empty.');
+        $model = Provenance::agentModel($r);
+        $stamp = Provenance::stamp($model, $r->input('generation_seconds'));
         $now = Db::now();
-        $mid = Db::insert('messages', ['conversation_id' => $c['id'], 'author_id' => Auth::id(), 'body_html' => $body['html'], 'created_at' => $now]);
+        $mid = Db::insert('messages', $stamp + ['conversation_id' => $c['id'], 'author_id' => Auth::id(), 'ai_model' => $model, 'body_html' => $body['html'], 'created_at' => $now]);
+        Activity::touch((int)$c['project_id'], 'conversation', (int)$c['id'], 'message', $mid);
         Db::update('conversations', ['last_message_at' => $now], 'id = :id', ['id' => $c['id']]);
         // A new message brings archived conversations back to the inbox.
         Db::run('UPDATE conversation_participants SET archived = 0 WHERE conversation_id = ?', [$c['id']]);
@@ -113,7 +126,9 @@ final class ConversationController
         if ((int)$m['author_id'] !== Auth::id()) throw new HttpError(403, 'You can only edit your own messages.');
         $body = Sanitizer::fromRequest($r, (int)$c['project_id']) ?? throw new HttpError(422, 'body_html or body_text is required.');
         if ($body['text'] === '' && !$body['mentions']) throw new HttpError(422, 'The message is empty.');
-        Db::update('messages', ['body_html' => $body['html'], 'edited_at' => Db::now()], 'id = :id', ['id' => $m['id']]);
+        $model = Provenance::agentModel($r);
+        Db::update('messages', Provenance::stamp($model, $r->input('generation_seconds')) + ['body_html' => $body['html'], 'ai_model' => $model, 'edited_at' => Db::now()], 'id = :id', ['id' => $m['id']]);
+        Activity::touch((int)$c['project_id'], 'conversation', (int)$c['id'], 'message_edit', (int)$m['id']);
         Notify::mentions((int)$c['project_id'], 'message', (int)$m['id'], $body['mentions'], ['view' => 'conversations', 'id' => (int)$c['id']],
             $body['text'], Access::audience('conversation', (int)$c['id']), false);
         Response::json(['ok' => true]);
@@ -147,6 +162,7 @@ final class ConversationController
         if ($r->input('archived') !== null) $data['archived'] = $r->input('archived') ? 1 : 0;
         if ($r->input('unread')) $data['last_read_at'] = null;
         if ($data) Db::update('conversation_participants', $data, 'conversation_id = :c AND user_id = :u', ['c' => $c['id'], 'u' => Auth::id()]);
+        if ($r->input('unread')) Activity::markUnread((int)$c['project_id'], Auth::id(), 'conversation', (int)$c['id']);
         Response::json(['ok' => true]);
     }
 

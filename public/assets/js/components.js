@@ -1,4 +1,5 @@
-import { initials, colorFor } from './util.js';
+import { initials, colorFor, formatDuration } from './util.js';
+import { store, unreadCount, markAllRead } from './store.js';
 
 const ICONS = {
   home: '<path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>',
@@ -38,6 +39,9 @@ const ICONS = {
   pdf: '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/>',
   'mail-unread': '<path d="M22 10.5V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v12c0 1.1.9 2 2 2h12.5"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/><circle cx="19" cy="17" r="3"/>',
   key: '<circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6"/><path d="m15.5 7.5 3 3L22 7l-3-3"/>',
+  graph: '<circle cx="12" cy="5" r="3"/><circle cx="5" cy="19" r="3"/><circle cx="19" cy="19" r="3"/><path d="m10.5 7.6-4 8.8"/><path d="m13.5 7.6 4 8.8"/>',
+  list: '<path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/>',
+  filter: '<path d="M3 6h18"/><path d="M7 12h10"/><path d="M10 18h4"/>',
   settings: '<circle cx="12" cy="12" r="3"/><path d="M12 1v3M12 20v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M1 12h3M20 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/>',
 };
 
@@ -63,8 +67,32 @@ export const Avatar = {
 
 /** Small "AI agent" tag shown next to the name of an agent. */
 export const AgentTag = {
-  props: { model: String },
-  template: `<span class="agent-tag" :title="model ? 'AI agent — ' + model : 'AI agent'"><icon name="bot" :size="11"/> AI agent<template v-if="model"> · {{ model }}</template></span>`,
+  props: { model: String, compact: Boolean },
+  template: `<span class="agent-tag" :title="model ? 'AI agent — ' + model : 'AI agent'"><icon name="bot" :size="11"/> <template v-if="!compact">AI agent<template v-if="model"> · </template></template><span class="ellipsis">{{ model }}</span></span>`,
+};
+
+/** AI provenance: the model, the user it worked for, and the generation time when known. */
+export const AiMeta = {
+  props: { model: String, user: String, ms: [Number, String], compact: Boolean },
+  computed: {
+    duration() { return formatDuration(this.ms); },
+    title() { return [`AI model: ${this.model}`, this.user && `For: ${this.user}`, this.duration ? `Generation time: ${this.duration}` : 'Generation time not reported'].filter(Boolean).join('\n'); },
+  },
+  template: `<span v-if="model" class="ai-meta" :class="{compact}" :title="title"><icon name="bot" :size="11"/> <b>{{ model }}</b><span v-if="user && !compact"> · for {{ user }}</span><span v-if="duration"> · {{ duration }}</span></span>`,
+};
+
+/** Red counter, like the badge of an iPhone app. */
+export const UnreadBadge = {
+  props: { type: String, id: Number },
+  computed: { n() { return unreadCount(this.type, this.id); } },
+  template: `<b v-if="n" class="ios-badge" :aria-label="n + ' unread'">{{ n > 99 ? '99+' : n }}</b>`,
+};
+
+export const MarkAllRead = {
+  props: { type: String },
+  computed: { n() { return store.counters.totals?.[this.type] || 0; } },
+  methods: { run() { markAllRead(this.type); } },
+  template: `<button v-if="n" class="link-btn mark-all" title="Mark everything here as read" aria-label="Mark everything here as read" @click="run"><icon name="check" :size="13"/> <span>Read all</span></button>`,
 };
 
 export const Modal = {
@@ -99,4 +127,7 @@ export function registerCommon(app) {
   app.component('modal', Modal);
   app.component('origin-badge', OriginBadge);
   app.component('agent-tag', AgentTag);
+  app.component('ai-meta', AiMeta);
+  app.component('unread-badge', UnreadBadge);
+  app.component('mark-all-read', MarkAllRead);
 }

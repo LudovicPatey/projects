@@ -3,7 +3,8 @@ declare(strict_types=1);
 
 namespace App\Controllers;
 
-use App\{Access, Auth, Db, HttpError, Request, Response, Storage};
+use App\Provenance;
+use App\{Access, Activity, Auth, Db, HttpError, Request, Response, Storage};
 
 /**
  * Project files. A "document" is a versioned unit made of one PDF plus optional
@@ -18,12 +19,13 @@ final class DocumentController
         Access::member($pid);
         $rows = Db::all(
             "SELECT d.id, d.title, d.description, d.origin, d.ai_model, d.created_at, d.updated_at, d.current_version_id,
-                    u.name AS created_by_name, v.version_no AS current_version_no,
+                    u.name AS created_by_name, v.version_no AS current_version_no, v.ai_user_id, v.ai_generation_ms, au.name AS ai_user_name,
                     (SELECT COUNT(*) FROM document_versions dv WHERE dv.document_id = d.id) AS version_count,
                     (SELECT COUNT(*) FROM version_files f WHERE f.version_id = d.current_version_id AND f.role <> 'pdf') AS source_count,
                     (SELECT COUNT(*) FROM comments c WHERE c.target_type = 'document' AND c.target_id = d.id AND c.parent_id IS NULL AND c.resolved = 0) AS open_threads
              FROM documents d JOIN users u ON u.id = d.created_by
              LEFT JOIN document_versions v ON v.id = d.current_version_id
+             LEFT JOIN users au ON au.id = v.ai_user_id
              WHERE d.project_id = ? AND d.deleted_at IS NULL ORDER BY d.updated_at DESC", [$pid]);
         Response::json(['documents' => $rows]);
     }
@@ -34,19 +36,21 @@ final class DocumentController
         Access::member($pid);
         $title = $r->str('title');
         if ($title === '') throw new HttpError(422, 'A title is required.');
-        // Files uploaded by an AI agent are always flagged as AI-written.
-        $origin = Auth::isAgent() ? 'ai' : self::origin($r);
+        // Files uploaded by an AI agent are always flagged as AI-written, and AI files name their model.
+        $prov = Provenance::resolve($r);
         $pdf = $r->files('pdf')[0] ?? throw new HttpError(422, 'A PDF is required.');
         $sources = $r->files('sources');
 
-        $id = Db::tx(function () use ($r, $pid, $title, $origin, $pdf, $sources) {
+        $stamp = Provenance::stamp($prov['ai_model'], $r->input('generation_seconds'));
+        $id = Db::tx(function () use ($r, $pid, $title, $prov, $pdf, $sources, $stamp) {
             $now = Db::now();
             $id = Db::insert('documents', [
                 'project_id' => $pid, 'title' => mb_substr($title, 0, 255), 'description' => $r->str('description') ?: null,
-                'origin' => $origin, 'ai_model' => $origin === 'ai' ? self::model($r) : null,
+                'origin' => $prov['origin'], 'ai_model' => $prov['ai_model'],
                 'created_by' => Auth::id(), 'created_at' => $now, 'updated_at' => $now,
             ]);
-            self::newVersion($id, $pdf, $sources, $r->str('notes') ?: 'Initial version');
+            self::newVersion($id, $pdf, $sources, $r->str('notes') ?: 'Initial version', $prov['ai_model'], $stamp);
+            Activity::touch($pid, 'document', $id, 'created');
             return $id;
         });
         Response::json(self::present($id), 201);
@@ -68,9 +72,22 @@ final class DocumentController
         }
         if ($r->input('description') !== null) $data['description'] = $r->str('description') ?: null;
         if ($r->input('origin') !== null && !Auth::isAgent()) $data['origin'] = self::origin($r);
-        if ($r->input('ai_model') !== null) $data['ai_model'] = mb_substr($r->str('ai_model'), 0, 120) ?: null;
-        if (($data['origin'] ?? $d['origin']) === 'human') $data['ai_model'] = null;
+        if ($r->input('ai_model') !== null) $data['ai_model'] = mb_substr($r->str('ai_model'), 0, 120);
+        if (($data['origin'] ?? $d['origin']) === 'human') {
+            $data['ai_model'] = null;
+        } elseif (($data['ai_model'] ?? $d['ai_model']) == '') {
+            throw new HttpError(422, 'AI-generated content must state the model that produced it.');
+        }
         Db::update('documents', $data, 'id = :id', ['id' => $d['id']]);
+        // The current version carries the AI details: keep them consistent with the file.
+        if ($d['current_version_id']) {
+            if (($data['origin'] ?? $d['origin']) === 'human') {
+                Db::update('document_versions', ['ai_model' => null, 'ai_user_id' => null, 'ai_generation_ms' => null], 'id = :id', ['id' => $d['current_version_id']]);
+            } elseif (array_key_exists('ai_model', $data) && $data['ai_model'] !== $d['ai_model']) {
+                Db::update('document_versions', ['ai_model' => $data['ai_model'], 'ai_user_id' => Auth::aiUserId()], 'id = :id', ['id' => $d['current_version_id']]);
+            }
+        }
+        Activity::touch((int)$d['project_id'], 'document', (int)$d['id'], 'updated');
         Response::json(self::present((int)$d['id']));
     }
 
@@ -88,8 +105,18 @@ final class DocumentController
         $pdf = $r->files('pdf')[0] ?? throw new HttpError(422, 'A PDF is required for a new version.');
         $sources = $r->files('sources');
         $keep = $r->str('keep_sources') === '1' && !$sources;
-        Db::tx(function () use ($d, $pdf, $sources, $keep, $r) {
-            $vid = self::newVersion((int)$d['id'], $pdf, $sources, $r->str('notes') ?: null);
+        // A new version of an AI file names the model that produced this version.
+        $model = $d['origin'] === 'ai'
+            ? (Provenance::agentModel($r) ?? (mb_substr($r->str('ai_model'), 0, 120) ?: $d['ai_model']))
+            : null;
+        if ($d['origin'] === 'ai' && (string)$model === '') throw new HttpError(422, 'AI-generated content must state the model that produced it.');
+        $stamp = $model !== null
+            ? ['ai_user_id' => Auth::aiUserId(), 'ai_generation_ms' => Provenance::milliseconds($r->input('generation_seconds'))]
+            : Provenance::stamp(null, null);
+        Db::tx(function () use ($d, $pdf, $sources, $keep, $r, $model, $stamp) {
+            $vid = self::newVersion((int)$d['id'], $pdf, $sources, $r->str('notes') ?: null, $model, $stamp);
+            Activity::touch((int)$d['project_id'], 'document', (int)$d['id'], 'version', $vid);
+            if ($model !== null) Db::update('documents', ['ai_model' => $model], 'id = :id', ['id' => $d['id']]);
             if ($keep && $d['current_version_id']) {
                 Db::run("INSERT INTO version_files (version_id, role, filename, blob_id)
                          SELECT ?, role, filename, blob_id FROM version_files WHERE version_id = ? AND role <> 'pdf'",
@@ -106,7 +133,10 @@ final class DocumentController
         $old = Db::one('SELECT * FROM document_versions WHERE id = ? AND document_id = ?', [$r->int('vid'), $d['id']]);
         if (!$old) throw new HttpError(404, 'Version not found');
         Db::tx(function () use ($d, $old) {
-            $vid = self::insertVersion((int)$d['id'], 'Restored from version ' . $old['version_no'], (int)$old['id']);
+            $vid = self::insertVersion((int)$d['id'], 'Restored from version ' . $old['version_no'], (int)$old['id'], $old['ai_model'],
+                ['ai_user_id' => $old['ai_user_id'], 'ai_generation_ms' => $old['ai_generation_ms']]);
+            Activity::touch((int)$d['project_id'], 'document', (int)$d['id'], 'restored', $vid);
+            if ($old['ai_model'] !== null) Db::update('documents', ['ai_model' => $old['ai_model']], 'id = :id', ['id' => $d['id']]);
             Db::run('INSERT INTO version_files (version_id, role, filename, blob_id) SELECT ?, role, filename, blob_id FROM version_files WHERE version_id = ?',
                 [$vid, $old['id']]);
         });
@@ -160,13 +190,6 @@ final class DocumentController
         return $d;
     }
 
-    private static function model(Request $r): ?string
-    {
-        $m = $r->str('ai_model');
-        if ($m === '' && Auth::isAgent()) $m = (string)(Auth::user()['ai_model'] ?: Auth::user()['name']);
-        return mb_substr($m, 0, 120) ?: null;
-    }
-
     private static function origin(Request $r): string
     {
         $o = $r->str('origin');
@@ -174,21 +197,21 @@ final class DocumentController
         return $o;
     }
 
-    private static function insertVersion(int $docId, ?string $notes, ?int $restoredFrom = null): int
+    private static function insertVersion(int $docId, ?string $notes, ?int $restoredFrom = null, ?string $model = null, array $stamp = []): int
     {
         $no = (int)Db::value('SELECT COALESCE(MAX(version_no), 0) FROM document_versions WHERE document_id = ?', [$docId]) + 1;
-        $vid = Db::insert('document_versions', [
-            'document_id' => $docId, 'version_no' => $no, 'notes' => $notes, 'restored_from_id' => $restoredFrom,
+        $vid = Db::insert('document_versions', $stamp + [
+            'document_id' => $docId, 'version_no' => $no, 'notes' => $notes, 'restored_from_id' => $restoredFrom, 'ai_model' => $model,
             'uploaded_by' => Auth::id(), 'created_at' => Db::now(),
         ]);
         Db::update('documents', ['current_version_id' => $vid, 'updated_at' => Db::now()], 'id = :id', ['id' => $docId]);
         return $vid;
     }
 
-    private static function newVersion(int $docId, array $pdf, array $sources, ?string $notes): int
+    private static function newVersion(int $docId, array $pdf, array $sources, ?string $notes, ?string $model = null, array $stamp = []): int
     {
         $pdfBlob = Storage::storeUpload($pdf, true);
-        $vid = self::insertVersion($docId, $notes);
+        $vid = self::insertVersion($docId, $notes, null, $model, $stamp);
         Db::insert('version_files', ['version_id' => $vid, 'role' => 'pdf', 'filename' => self::safeName($pdf['name'], 'document.pdf'), 'blob_id' => $pdfBlob]);
         foreach ($sources as $s) {
             $name = self::safeName($s['name'], 'source');
@@ -209,8 +232,9 @@ final class DocumentController
     {
         $d = Db::one('SELECT d.*, u.name AS created_by_name FROM documents d JOIN users u ON u.id = d.created_by WHERE d.id = ?', [$id]);
         $versions = Db::all(
-            'SELECT v.*, u.name AS uploaded_by_name, r.version_no AS restored_from_no
+            'SELECT v.*, u.name AS uploaded_by_name, au.name AS ai_user_name, r.version_no AS restored_from_no
              FROM document_versions v JOIN users u ON u.id = v.uploaded_by
+             LEFT JOIN users au ON au.id = v.ai_user_id
              LEFT JOIN document_versions r ON r.id = v.restored_from_id
              WHERE v.document_id = ? ORDER BY v.version_no DESC', [$id]);
         $vids = array_column($versions, 'id');
@@ -225,6 +249,7 @@ final class DocumentController
             $v['is_current'] = (int)$v['id'] === (int)$d['current_version_id'];
         }
         $d['versions'] = $versions;
+        $d['last_activity_id'] = Activity::latest((int)$d['project_id'], 'document', $id);
         return $d;
     }
 }

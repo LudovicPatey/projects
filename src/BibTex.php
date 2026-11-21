@@ -97,15 +97,35 @@ final class BibTex
     public static function plain(string $s): string
     {
         $s = preg_replace('/\\\\(textit|textbf|emph|mathrm|text)\{([^{}]*)\}/', '$2', $s);
+        $marks = ["'" => "\u{301}", '`' => "\u{300}", '^' => "\u{302}", '"' => "\u{308}", '~' => "\u{303}", '=' => "\u{304}", '.' => "\u{307}",
+            'H' => "\u{30B}", 'c' => "\u{327}", 'k' => "\u{328}", 'u' => "\u{306}", 'v' => "\u{30C}", 'r' => "\u{30A}"];
+        $accent = fn($m) => $m[2] . $marks[$m[1]];
+        $s = preg_replace_callback('/\\\\([\'`^"~=.])\s*\{?\\\\?([A-Za-z])\}?/', $accent, $s);
+        $s = preg_replace_callback('/\\\\([Hckuvr])(?:\s+|\s*\{)\\\\?([A-Za-z])\}?/', $accent, $s);
+        $letters = ['ss' => 'ß', 'ae' => 'æ', 'AE' => 'Æ', 'oe' => 'œ', 'OE' => 'Œ', 'aa' => 'å', 'AA' => 'Å', 'o' => 'ø', 'O' => 'Ø', 'l' => 'ł', 'L' => 'Ł'];
+        $s = preg_replace_callback('/\\\\(ss|ae|AE|oe|OE|aa|AA|o|O|l|L)(?![A-Za-z])\s*/', fn($m) => $letters[$m[1]], $s);
+        $s = str_replace(['---', '--'], ['—', '–'], $s);
         $s = str_replace(['{', '}', '\\&', '~'], ['', '', '&', ' '], $s);
+        if (class_exists(\Normalizer::class)) $s = \Normalizer::normalize($s, \Normalizer::FORM_C) ?: $s;
         return trim($s);
+    }
+
+    /** "Tao, Terence" becomes "Terence Tao". */
+    private static function displayName(string $name): string
+    {
+        $parts = array_map('trim', explode(',', self::plain($name)));
+        return match (count($parts)) {
+            2 => $parts[1] . ' ' . $parts[0],
+            3 => $parts[2] . ' ' . $parts[0] . ' ' . $parts[1],
+            default => implode(', ', $parts),
+        };
     }
 
     /** Columns stored for listing/sorting. */
     public static function columns(array $fields): array
     {
         $authors = $fields['author'] ?? ($fields['editor'] ?? '');
-        $authors = implode(', ', array_map(fn($a) => self::plain(trim($a)), preg_split('/\s+and\s+/i', $authors) ?: []));
+        $authors = implode(', ', array_map(fn($a) => self::displayName(trim($a)), preg_split('/\s+and\s+/i', $authors) ?: []));
         $venue = $fields['journal'] ?? $fields['booktitle'] ?? $fields['publisher'] ?? $fields['school'] ?? $fields['howpublished'] ?? '';
         if (!$venue && !empty($fields['eprint'])) $venue = 'arXiv:' . $fields['eprint'];
         $url = $fields['url'] ?? '';

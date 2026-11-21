@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 namespace App\Controllers;
 
-use App\{Access, Auth, Db, HttpError, Request, Response, Sanitizer};
+use App\{Access, Activity, Auth, Db, HttpError, Request, Response, Sanitizer};
 
 /**
  * AI agents: project members of kind 'agent' that call the API with a bearer token.
@@ -28,7 +28,8 @@ final class AgentController
         Access::owner($pid);
         $name = mb_substr($r->str('name'), 0, 120);
         if ($name === '') throw new HttpError(422, 'Give the agent a name.');
-        $model = mb_substr($r->str('ai_model'), 0, 120) ?: null;
+        $model = mb_substr($r->str('ai_model'), 0, 120);
+        if ($model === '') throw new HttpError(422, 'State the AI model behind this agent.');
         $token = Db::tx(function () use ($pid, $name, $model) {
             $now = Db::now();
             $uid = Db::insert('users', [
@@ -36,6 +37,8 @@ final class AgentController
                 'affiliation' => 'AI agent', 'created_at' => $now,
             ]);
             Db::insert('project_members', ['project_id' => $pid, 'user_id' => $uid, 'role' => 'agent', 'joined_at' => $now]);
+            Activity::touch($pid, 'member', $uid, 'joined');
+            Activity::joined($pid, $uid);
             return self::issue($pid, $uid);
         });
         Response::json(['token' => $token, 'agents' => self::agents($pid, true)], 201);
@@ -78,7 +81,10 @@ final class AgentController
         $uid = self::agentId($pid, $r->int('uid'));
         $data = [];
         if ($r->str('name') !== '') $data['name'] = mb_substr($r->str('name'), 0, 120);
-        if ($r->input('ai_model') !== null) $data['ai_model'] = mb_substr($r->str('ai_model'), 0, 120) ?: null;
+        if ($r->input('ai_model') !== null) {
+            $data['ai_model'] = mb_substr($r->str('ai_model'), 0, 120);
+            if ($data['ai_model'] === '') throw new HttpError(422, 'An agent must have an AI model.');
+        }
         if ($data) Db::update('users', $data, 'id = :id', ['id' => $uid]);
         Response::json(['agents' => self::agents($pid, true)]);
     }
@@ -89,7 +95,19 @@ final class AgentController
     public static function context(Request $r): never
     {
         if (!Auth::isAgent()) throw new HttpError(403, 'This endpoint is for AI agents (use an API token).');
-        $pid = (int)Auth::tokenProject();
+        self::snapshot((int)Auth::tokenProject());
+    }
+
+    /** Same overview for any member, in particular a user's AI client. */
+    public static function projectContext(Request $r): never
+    {
+        $pid = $r->int('id');
+        Access::member($pid);
+        self::snapshot($pid);
+    }
+
+    private static function snapshot(int $pid): never
+    {
         $me = Auth::id();
         $p = Db::one('SELECT id, title, status, question_html, updated_at FROM projects WHERE id = ?', [$pid]);
         $p['question_text'] = Sanitizer::toText($p['question_html']);
@@ -115,9 +133,12 @@ final class AgentController
             'bibliography' => Db::all(
                 'SELECT id, cite_key, title, authors, year, venue, doi, url, CASE WHEN pdf_blob_id IS NULL THEN 0 ELSE 1 END AS has_pdf
                  FROM bib_entries WHERE project_id = ? ORDER BY cite_key', [$pid]),
+            'facts' => array_map(fn($f) => array_intersect_key($f, array_flip(['id', 'label', 'kind', 'title', 'origin', 'ai_model', 'status', 'chain', 'lean', 'current_revision', 'statement_text', 'deps', 'method', 'tool', 'external_id', 'labels', 'proof_origin', 'endorsed_by'])),
+                FactController::graph($pid)['facts']),
             'conversations' => $convs,
             'unread_notifications' => $notifs,
-            'help' => 'See docs/AGENT_API.md. Write messages with body_text; mention with @{user:ID}, @{document:ID}, @{bib:KEY}; LaTeX with $...$.',
+            'fact_format' => FactController::formatSpec(),
+            'help' => 'See docs/AGENT_API.md. Agents write messages with body_text; mention with @{user:ID}, @{document:ID}, @{bib:KEY}, @{fact:LABEL}; LaTeX with $...$. Send ai_model with each write to record the exact model used.',
         ]);
     }
 

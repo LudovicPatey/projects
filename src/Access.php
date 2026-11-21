@@ -50,6 +50,19 @@ final class Access
         return $b;
     }
 
+    public static function fact(int $id): array
+    {
+        $f = Db::one('SELECT * FROM facts WHERE id = ? AND deleted_at IS NULL', [$id]);
+        if (!$f) throw new HttpError(404, 'Fact not found');
+        self::member((int)$f['project_id']);
+        return $f;
+    }
+
+    public static function isMember(int $projectId, int $userId): bool
+    {
+        return (bool)Db::value('SELECT 1 FROM project_members WHERE project_id = ? AND user_id = ?', [$projectId, $userId]);
+    }
+
     /** Checks access to a comment target and returns its project id. */
     public static function commentTarget(string $type, int $id): int
     {
@@ -57,6 +70,7 @@ final class Access
             'conversation' => self::conversation($id)['project_id'],
             'document' => self::document($id)['project_id'],
             'bib' => self::bib($id)['project_id'],
+            'fact' => self::fact($id)['project_id'],
             default => throw new HttpError(400, 'Invalid comment target'),
         };
     }

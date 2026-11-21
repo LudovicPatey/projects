@@ -47,7 +47,7 @@ it up as a separate file.
 Formatting (plain text, rendered by the platform):
 - Write LaTeX between $...$ (inline) or $$...$$ (display).
 - Separate paragraphs with a blank line; **bold**, *italic* and `code` are supported.
-- Mention people, files and references with exactly these tokens: @{user:ID}, @{document:ID}, @{bib:CITEKEY} \
+- Mention people, files, facts and references with exactly these tokens: @{user:ID}, @{document:ID}, @{fact:LABEL}, @{bib:CITEKEY} \
 (the IDs are listed in the project context). Mention a person only when you need their attention.
 - Reply with the message text only, without a greeting header or signature."""
 
@@ -89,6 +89,10 @@ def project_context(ctx: dict) -> str:
     for d in ctx["documents"]:
         model = f", {d['ai_model']}" if d.get("ai_model") else ""
         lines.append(f"- @{{document:{d['id']}}} \"{d['title']}\" v{d['current_version_no']} [{d['origin']}{model}]")
+    lines += ["", "## Fact database (status = review state; do not rely on disputed or retracted facts)"]
+    for f in ctx.get("facts", []):
+        model = f", {f['ai_model']}" if f.get("ai_model") else ""
+        lines.append(f"- @{{fact:{f['label']}}} {f['kind']} {f['labels']} [{f['status']}, proof: {f['proof_origin']}{model}, lean: {f['lean']}]: {f['statement_text']}")
     lines += ["", "## Bibliography"]
     for b in ctx["bibliography"]:
         lines.append(f"- @{{bib:{b['cite_key']}}} {b['authors']} ({b['year'] or 'n.d.'}). {b['title']}. {b['venue'] or ''}")
@@ -135,8 +139,9 @@ def pdf_blocks(platform: Platform, ctx: dict, text: str) -> list:
 
 
 def ask_claude(client, context_text: str, discussion: str, pdfs: list, task: str):
-    """Returns the reply text, or None if Claude declined."""
+    """Returns (reply, model that answered, seconds spent), or (None, None, None) if Claude declined."""
     content = pdfs + [{"type": "text", "text": f"{discussion}\n\n{task}"}]
+    started = time.monotonic()
     # Streaming avoids HTTP timeouts on long, high-effort answers.
     with client.beta.messages.stream(
         model=MODEL,
@@ -154,12 +159,14 @@ def ask_claude(client, context_text: str, discussion: str, pdfs: list, task: str
         messages=[{"role": "user", "content": content}],
     ) as stream:
         msg = stream.get_final_message()
+    seconds = round(time.monotonic() - started, 3)
     if msg.stop_reason == "refusal":
-        return None
+        return None, None, None
     text = "".join(b.text for b in msg.content if b.type == "text").strip()
     if msg.stop_reason == "max_tokens":
         text += "\n\n*(answer truncated)*"
-    return text or None
+    # With fallbacks the answering model can differ from MODEL: record the real one.
+    return (text, msg.model, seconds) if text else (None, None, None)
 
 
 def handle(platform: Platform, client, ctx: dict, notif: dict, dry_run: bool) -> None:
@@ -169,7 +176,7 @@ def handle(platform: Platform, client, ctx: dict, notif: dict, dry_run: bool) ->
     context_text = project_context(ctx)
 
     if comment_id:  # a comment thread on a conversation, file or bibliography entry
-        ttype = {"conversations": "conversation", "files": "document", "bib": "bib"}[view]
+        ttype = {"conversations": "conversation", "files": "document", "bib": "bib", "facts": "fact"}[view]
         threads = platform.get("api/comments", type=ttype, id=target_id)["threads"]
         thread = next((t for t in threads if t["id"] == comment_id), None)
         if not thread:
@@ -178,10 +185,15 @@ def handle(platform: Platform, client, ctx: dict, notif: dict, dry_run: bool) ->
         if ttype == "document":
             target = f"@{{document:{target_id}}}"
         discussion = thread_transcript(thread, me, target)
+        if ttype == "fact":
+            f = platform.get(f"api/facts/{target_id}")
+            discussion = (f"# Fact {f['label']} ({f['kind']}, status: {f['status']})\n## Statement\n{f['statement_text']}\n"
+                          f"## Proof\n{f['proof_text']}\n## Intuition\n{f['intuition_text']}\n\n{discussion}")
         task = "Write your reply to this comment thread."
         mention_text = discussion + (f" @{{document:{target_id}}}" if ttype == "document" else "")
-        post = lambda body: platform.post("api/comments", {
-            "target_type": ttype, "target_id": target_id, "parent_id": thread["id"], "body_text": body})
+        post = lambda body, model, seconds: platform.post("api/comments", {
+            "target_type": ttype, "target_id": target_id, "parent_id": thread["id"], "body_text": body,
+            "ai_model": model, "generation_seconds": seconds})
     elif view == "conversations" and target_id:
         conv = platform.get(f"api/conversations/{target_id}")
         if conv["messages"] and conv["messages"][-1]["author_id"] == me:
@@ -189,7 +201,8 @@ def handle(platform: Platform, client, ctx: dict, notif: dict, dry_run: bool) ->
         discussion = conversation_transcript(conv, me)
         task = "Write your next message in this conversation, answering what was asked of you."
         mention_text = discussion
-        post = lambda body: platform.post(f"api/conversations/{target_id}/messages", {"body_text": body})
+        post = lambda body, model, seconds: platform.post(f"api/conversations/{target_id}/messages", {
+            "body_text": body, "ai_model": model, "generation_seconds": seconds})
     else:
         return
 
@@ -197,9 +210,9 @@ def handle(platform: Platform, client, ctx: dict, notif: dict, dry_run: bool) ->
     if dry_run:
         print(f"\n===== notification {notif['id']} ({notif['kind']}) — {len(pdfs)} PDF(s) =====\n{discussion}\n[{task}]")
         return
-    reply = ask_claude(client, context_text, discussion, pdfs, task)
+    reply, model, seconds = ask_claude(client, context_text, discussion, pdfs, task)
     if reply:
-        post(reply)
+        post(reply, model, seconds)
         print(f"answered notification {notif['id']} ({view} {target_id})")
     else:
         print(f"declined to answer notification {notif['id']}", file=sys.stderr)

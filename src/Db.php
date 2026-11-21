@@ -120,9 +120,45 @@ final class Db
         $migrations = [
             "ALTER TABLE users ADD COLUMN kind VARCHAR(10) NOT NULL DEFAULT 'human'",
             'ALTER TABLE users ADD COLUMN ai_model VARCHAR(120) NULL',
+            'ALTER TABLE messages ADD COLUMN ai_model VARCHAR(120) NULL',
+            'ALTER TABLE comments ADD COLUMN ai_model VARCHAR(120) NULL',
+            'ALTER TABLE document_versions ADD COLUMN ai_model VARCHAR(120) NULL',
+            'ALTER TABLE bib_entries ADD COLUMN ai_model VARCHAR(120) NULL',
         ];
+        foreach (['messages', 'comments', 'document_versions', 'bib_entries', 'fact_revisions', 'fact_reviews', 'fact_lean'] as $t) {
+            $migrations[] = "ALTER TABLE $t ADD COLUMN ai_user_id INT UNSIGNED NULL";
+            $migrations[] = "ALTER TABLE $t ADD COLUMN ai_generation_ms INT UNSIGNED NULL";
+        }
+        $migrations[] = 'ALTER TABLE fact_lean ADD COLUMN check_user_id INT UNSIGNED NULL';
+        $migrations[] = 'ALTER TABLE fact_lean ADD COLUMN check_generation_ms INT UNSIGNED NULL';
         foreach ($migrations as $m) {
             try { self::pdo()->exec($m); } catch (\PDOException) { /* already applied */ }
+        }
+        // Existing AI content gets its author's model, or an explicit "unspecified".
+        $agentModel = fn(string $col) => "COALESCE((SELECT u.ai_model FROM users u WHERE u.id = $col), 'unspecified')";
+        $agents = "(SELECT id FROM users WHERE kind = 'agent')";
+        foreach ([
+            "UPDATE messages SET ai_model = {$agentModel('messages.author_id')} WHERE ai_model IS NULL AND author_id IN $agents",
+            "UPDATE comments SET ai_model = {$agentModel('comments.author_id')} WHERE ai_model IS NULL AND author_id IN $agents",
+            "UPDATE bib_entries SET ai_model = {$agentModel('bib_entries.created_by')} WHERE ai_model IS NULL AND created_by IN $agents",
+            "UPDATE documents SET ai_model = {$agentModel('documents.created_by')} WHERE origin = 'ai' AND (ai_model IS NULL OR ai_model = '')",
+            "UPDATE document_versions SET ai_model = (SELECT d.ai_model FROM documents d WHERE d.id = document_versions.document_id)
+             WHERE ai_model IS NULL AND document_id IN (SELECT id FROM documents WHERE origin = 'ai')",
+        ] as $backfill) {
+            self::pdo()->exec($backfill);
+        }
+        // Bibliography display fields are derived from the BibTeX fields: refresh them.
+        foreach (self::pdo()->query('SELECT id, title, authors, venue, fields_json FROM bib_entries')->fetchAll() as $b) {
+            $c = BibTex::columns(json_decode($b['fields_json'], true) ?: []);
+            if ($c['title'] !== $b['title'] || $c['authors'] !== $b['authors'] || $c['venue'] !== $b['venue']) {
+                self::update('bib_entries', ['title' => $c['title'], 'authors' => $c['authors'], 'venue' => $c['venue']], 'id = :id', ['id' => $b['id']]);
+            }
+        }
+        // Existing AI content is attributed to the owner who issued the agent's token, or to its author.
+        foreach (['messages' => 'author_id', 'comments' => 'author_id', 'bib_entries' => 'created_by', 'document_versions' => 'uploaded_by',
+                  'fact_revisions' => 'author_id', 'fact_reviews' => 'reviewer_id', 'fact_lean' => 'created_by'] as $t => $col) {
+            self::pdo()->exec("UPDATE $t SET ai_user_id = COALESCE((SELECT MAX(k.created_by) FROM api_tokens k WHERE k.agent_user_id = $t.$col), $t.$col)
+                               WHERE ai_user_id IS NULL AND ai_model IS NOT NULL");
         }
     }
 }

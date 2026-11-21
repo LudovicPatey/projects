@@ -13,7 +13,7 @@ final class Sanitizer
         'p', 'br', 'strong', 'b', 'em', 'i', 'u', 's', 'a', 'ul', 'ol', 'li', 'blockquote',
         'pre', 'code', 'h1', 'h2', 'h3', 'span', 'sub', 'sup',
     ];
-    private const MENTION_TYPES = ['user', 'document', 'bib'];
+    private const MENTION_TYPES = ['user', 'document', 'bib', 'fact'];
 
     /** @return array{html:string, mentions:list<array{type:string,id:int}>, text:string} */
     public static function clean(string $html): array
@@ -54,7 +54,8 @@ final class Sanitizer
     /**
      * Converts plain text to HTML. Supports blank-line paragraphs, line breaks,
      * **bold**, *italic*, `code`, and mentions written @{user:3}, @{document:5}, @{bib:2}
-     * (or @{bib:citekey}). LaTeX ($...$) is left untouched and rendered by the browser.
+     * (or @{bib:citekey}), @{fact:4} (or @{fact:label}). LaTeX ($...$) is left untouched
+     * and rendered by the browser.
      */
     public static function textToHtml(string $text, int $projectId): string
     {
@@ -65,7 +66,7 @@ final class Sanitizer
             $p = preg_replace('/`([^`\n]+)`/', '<code>$1</code>', $p);
             $p = preg_replace('/\*\*([^*\n]+)\*\*/', '<strong>$1</strong>', $p);
             $p = preg_replace('/(?<![*\w$\\\\])\*([^*\n$]+)\*(?![*\w])/', '<em>$1</em>', $p);
-            $p = preg_replace_callback('/@\{(user|document|bib):([^}\s]+)\}/', fn($m) => self::mentionSpan($m[1], $m[2], $projectId), $p);
+            $p = preg_replace_callback('/@\{(user|document|bib|fact):([^}\s]+)\}/', fn($m) => self::mentionSpan($m[1], $m[2], $projectId), $p);
             $html .= '<p>' . nl2br($p, false) . '</p>';
         }
         return $html;
@@ -79,6 +80,9 @@ final class Sanitizer
             'bib' => ctype_digit($ref)
                 ? Db::one('SELECT id, cite_key AS label FROM bib_entries WHERE project_id = ? AND id = ?', [$projectId, (int)$ref])
                 : Db::one('SELECT id, cite_key AS label FROM bib_entries WHERE project_id = ? AND cite_key = ?', [$projectId, $ref]),
+            'fact' => ctype_digit($ref)
+                ? Db::one('SELECT id, label FROM facts WHERE project_id = ? AND id = ? AND deleted_at IS NULL', [$projectId, (int)$ref])
+                : Db::one('SELECT id, label FROM facts WHERE project_id = ? AND label = ? AND deleted_at IS NULL', [$projectId, html_entity_decode($ref, ENT_QUOTES | ENT_HTML5, 'UTF-8')]),
         };
         if (!$row) return '@{' . $type . ':' . htmlspecialchars($ref) . '}';
         $label = htmlspecialchars($row['label'], ENT_QUOTES | ENT_HTML5, 'UTF-8');
@@ -88,7 +92,7 @@ final class Sanitizer
     /** Plain-text rendering of stored rich text (for agents); mentions become @{type:id}. */
     public static function toText(string $html): string
     {
-        $html = preg_replace('#<span class="mention" data-type="bib" data-id="\d+" data-label="([^"]*)">[^<]*</span>#', '@{bib:$1}', $html);
+        $html = preg_replace('#<span class="mention" data-type="(bib|fact)" data-id="\d+" data-label="([^"]*)">[^<]*</span>#', '@{$1:$2}', $html);
         $html = preg_replace('#<span class="mention" data-type="(\w+)" data-id="(\d+)"[^>]*>[^<]*</span>#', '@{$1:$2}', $html);
         $html = preg_replace('#<br\s*/?>#i', "\n", $html);
         $html = preg_replace('#</(p|li|h\d|blockquote|pre)>#i', "\n", $html);

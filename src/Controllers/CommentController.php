@@ -3,26 +3,26 @@ declare(strict_types=1);
 
 namespace App\Controllers;
 
-use App\{Access, Auth, Db, HttpError, Notify, Request, Response, Sanitizer};
+use App\{Access, Activity, Auth, Db, HttpError, Notify, Provenance, Request, Response, Sanitizer};
 
 /**
- * Comment threads (root + replies) attached to a conversation, a document or a
- * bibliography entry. Root comments may carry an anchor: a text selection in a
+ * Comment threads (root + replies) attached to a conversation, a document, a
+ * bibliography entry or a fact. Root comments may carry an anchor: a text selection in a
  * PDF, or a message (optionally with a quoted passage).
  */
 final class CommentController
 {
-    private const VIEWS = ['conversation' => 'conversations', 'document' => 'files', 'bib' => 'bib'];
+    private const VIEWS = ['conversation' => 'conversations', 'document' => 'files', 'bib' => 'bib', 'fact' => 'facts'];
 
     public static function list(Request $r): never
     {
         $type = (string)($r->query['type'] ?? '');
         $id = (int)($r->query['id'] ?? 0);
-        Access::commentTarget($type, $id);
-        $asText = Auth::isAgent() || isset($r->query['text']);
+        $pid = Access::commentTarget($type, $id);
+        $asText = Auth::isAi() || isset($r->query['text']);
         $rows = Db::all(
-            'SELECT c.id, c.parent_id, c.author_id, u.name AS author_name, u.kind AS author_kind, c.body_html, c.anchor_json, c.resolved, c.created_at, c.edited_at
-             FROM comments c JOIN users u ON u.id = c.author_id
+            'SELECT c.id, c.parent_id, c.author_id, u.name AS author_name, u.kind AS author_kind, c.ai_model AS author_model, c.ai_user_id, au.name AS ai_user_name, c.ai_generation_ms, c.body_html, c.anchor_json, c.resolved, c.created_at, c.edited_at
+             FROM comments c JOIN users u ON u.id = c.author_id LEFT JOIN users au ON au.id = c.ai_user_id
              WHERE c.target_type = ? AND c.target_id = ? ORDER BY c.created_at, c.id', [$type, $id]);
         $threads = []; $replies = [];
         foreach ($rows as $c) {
@@ -33,7 +33,8 @@ final class CommentController
             if ($c['parent_id']) $replies[$c['parent_id']][] = $c; else $threads[] = $c;
         }
         foreach ($threads as &$t) $t['replies'] = $replies[$t['id']] ?? [];
-        Response::json(['threads' => $threads]);
+        Response::json(['threads' => $threads, 'last_activity_id' => Activity::latest($pid, $type, $id),
+            'fresh_ids' => Activity::freshComments($pid, Auth::id(), $type, $id)]);
     }
 
     public static function create(Request $r): never
@@ -54,11 +55,13 @@ final class CommentController
             $anchor = self::anchor($r->input('anchor'));
         }
 
-        $id = Db::insert('comments', [
+        $model = Provenance::agentModel($r);
+        $id = Db::insert('comments', Provenance::stamp($model, $r->input('generation_seconds')) + [
             'project_id' => $pid, 'target_type' => $type, 'target_id' => $tid, 'parent_id' => $parentId,
-            'author_id' => Auth::id(), 'body_html' => $body['html'],
+            'author_id' => Auth::id(), 'ai_model' => $model, 'body_html' => $body['html'],
             'anchor_json' => $anchor ? json_encode($anchor, JSON_UNESCAPED_UNICODE) : null, 'created_at' => Db::now(),
         ]);
+        Activity::touch($pid, $type, $tid, 'comment', $id);
         $link = ['view' => self::VIEWS[$type], 'id' => $tid, 'comment' => $parentId ?: $id];
         $audience = Access::audience($type, $tid);
         Notify::mentions($pid, 'comment', $id, $body['mentions'], $link, $body['text'], $audience);
@@ -88,6 +91,9 @@ final class CommentController
             $body = Sanitizer::fromRequest($r, (int)$c['project_id']);
             if ($body['text'] === '' && !$body['mentions']) throw new HttpError(422, 'The comment is empty.');
             $data['body_html'] = $body['html'];
+            $data['ai_model'] = Provenance::agentModel($r);
+            $data += Provenance::stamp($data['ai_model'], $r->input('generation_seconds'));
+            Activity::touch((int)$c['project_id'], $c['target_type'], (int)$c['target_id'], 'comment_edit', (int)$c['id']);
             $data['edited_at'] = Db::now();
             Notify::mentions((int)$c['project_id'], 'comment', (int)$c['id'], $body['mentions'],
                 ['view' => self::VIEWS[$c['target_type']], 'id' => (int)$c['target_id'], 'comment' => (int)($c['parent_id'] ?: $c['id'])],
