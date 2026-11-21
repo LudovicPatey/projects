@@ -38,4 +38,7 @@ return [
 
     // Optional: restrict who may create new projects (list of ORCID iDs). Empty = any logged-in user.
     'project_creators' => [],
+
+    // ORCID iDs of the people who read and answer bug reports and feature requests.
+    'feedback_admins' => [],
 ];

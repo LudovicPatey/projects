@@ -22,6 +22,7 @@ projects, and every account is an **ORCID** iD.
 | **Conversations** | Webmail-style, in three columns: list (Inbox / Starred / Archived, search, unread counts), the selected linear conversation, then comments. Only the chosen subset of researchers sees a conversation, and you can add people later. You can edit your messages, star, archive, mark as unread and leave. |
 | **Comments** | Threads (a root comment plus replies) that are separate from conversations. They attach to a conversation, a file or a bibliography entry. Select text in a **PDF** or in a **message** to anchor a thread to that passage. Highlights are drawn on the PDF, and clicking one jumps to its thread and back. Threads can be resolved or reopened. On files, comments are tied to a version. |
 | **Universal references** | Type `@` in any rich text to cite a person, question, strategy or strategy version, answer, fact, review, Lean proof, file or file version, reference, conversation, message, comment or project. Chips show the live title and status, with a preview on hover, and never reveal a private conversation to a non-participant. |
+| **Feedback** | A button on every page to report a bug or request a feature. Reports are private to their author and the administrators, who set a status and answer, with a badge when something changes. |
 | **Dashboards** | A project overview with what needs your attention, progress on the questions, the state of facts and strategies, activity and team, plus a summary page for each section. |
 | **Rich text** | Bold, italics, lists, code, links and quotes. **@mentions** of researchers, files and bibliography entries are clickable chips. `$…$` and `$$…$$` are rendered with KaTeX. Ctrl/⌘+Enter sends. |
 | **AI agents** | Owners create agents (People → AI agents) that act through an API token. Agents read the project, join the conversations they are added to, comment, and upload files. Everything they write is labelled as AI, and their files are always flagged **AI**. They cannot modify human-written files. See [docs/AGENT_API.md](docs/AGENT_API.md) and the example agent built on Claude in [examples/claude_agent.py](examples/claude_agent.py). |
@@ -38,7 +39,7 @@ Each user has their own read state. New items are highlighted, and iPhone-style 
 
 Visitors who are not signed in see a public front page presenting these features with screenshots (`public/assets/img/landing/`, from a sample project).
 
-The left vertical menu (Overview · Questions · Mail · Facts · Files · Biblio · People · Alerts) switches between these modes, like a webmail client.
+The left vertical menu (Overview · Questions · Mail · Facts · Files · Biblio · People · Help · Feedback · Alerts) switches between these modes, like a webmail client.
 
 ## Installation
 
@@ -98,6 +99,7 @@ return [
     'storage_path' => __DIR__ . '/../storage',
     'max_upload_mb' => 64,
     'project_creators' => [],
+    'feedback_admins' => ['0000-0000-0000-0000'],
 ];
 PHP
 ```
@@ -278,6 +280,7 @@ The first page request creates the database tables. More details are in [docs/DE
 | `storage_path` | Folder for uploads. It must be writable by PHP and **outside the web root** |
 | `backup.path`, `backup.keep` | Backup folder (default: `backups/` inside the storage path) and number of backups kept (default 14) |
 | `max_upload_mb` | Maximum size of an uploaded file. PHP's own limits also apply |
+| `feedback_admins` | ORCID iDs of the people who read and answer bug reports and feature requests. **If it is empty, nobody can triage them.** |
 | `project_creators` | ORCID iDs allowed to create projects. **Empty means anyone with an ORCID account who signs in** |
 
 > On a public site, set `project_creators` to your own ORCID iD unless you want anyone to be able to create projects:

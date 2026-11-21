@@ -55,7 +55,7 @@ test('articles are well formed', () => {
 });
 
 test('every link of the help points somewhere real', () => {
-  const routes = new Set([...VIEWS, 'profile', 'projects']);
+  const routes = new Set([...VIEWS, 'profile', 'projects', 'feedback']);
   for (const a of ARTICLES) {
     for (const s of allInline(a)) {
       for (const t of inlineTokens(s).filter((x) => x.t === 'link')) {

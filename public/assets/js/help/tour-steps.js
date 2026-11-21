@@ -5,6 +5,7 @@ export const TOUR_KINDS = ['home', 'project'];
 
 const SHARED_END = [
   { id: 'search', target: 'search', side: 'bottom', title: 'Find anything', text: 'Search facts, messages, files, references, people and help from here. Press ⌘K or Ctrl K on any page.' },
+  { id: 'feedback', target: 'feedback', side: 'right', title: 'Tell us what to improve', text: 'Report a bug or request a feature from any page, then follow its status here. Reports are private.' },
   { id: 'alerts', target: 'alerts', side: 'right', title: 'Your alerts', text: 'You are told here when someone mentions you, replies to you, or reviews a fact you entered.' },
 ];
 

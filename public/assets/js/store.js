@@ -17,6 +17,7 @@ export const store = reactive({
   toasts: [],
   toursSeen: [],
   tourRequest: null,
+  feedbackRequest: null,
 });
 
 // ---------- routing (hash based: #/p/3/files/12?v=40) ----------
@@ -30,6 +31,7 @@ export function parseRoute() {
   }
   if (parts[0] === 'profile') return { name: 'profile', query };
   if (parts[0] === 'help') return { name: 'help', query };
+  if (parts[0] === 'feedback') return { name: 'feedback', id: parts[1] ? +parts[1] : null, query };
   return { name: 'projects', query };
 }
 window.addEventListener('hashchange', () => {

@@ -538,6 +538,24 @@ export const ARTICLES = [
     ],
     related: ['download-project', 'privacy'],
   },
+  {
+    slug: 'feedback', category: 'admin', title: 'Reporting a bug or requesting a feature', summary: 'Tell the administrators what breaks or what is missing.',
+    keywords: 'feedback bug report issue problem error feature request idea suggestion improvement support contact administrator',
+    blocks: [
+      p('The **Feedback** button, at the bottom of the left menu, is available on every page. It opens a short form without leaving what you are doing.'),
+      steps('Click **Feedback**.', 'Choose **Bug report** or **Feature request**.', 'Give a title and a description. For a bug, say what you did, what you expected and what happened.', 'Say how much it matters, and click **Send**.'),
+      tip('Leave **Include the page address** checked for a bug: it helps to reproduce it. Only the address and your browser are sent, never the content of the page.'),
+      h('Follow your reports'),
+      p('The [Feedback](app:feedback) page lists your reports with their status. A red badge on the menu tells you when one changes or gets an answer. You can edit or delete a report until it is being handled.'),
+      table(['Status', 'Meaning'], ['**Received**', 'Waiting to be read'], ['**Planned**', 'Accepted, to be done'], ['**In progress**', 'Being worked on'], ['**Done**', 'Fixed or added'], ['**Declined**', 'Will not be done, usually with an explanation']),
+      h('Privacy'),
+      p('A report can be read only by **you and the platform administrators**, and not by the other members of your projects. Avoid pasting unpublished results.'),
+      h('For administrators'),
+      p('The people whose ORCID iD is listed under `feedback_admins` in `config/config.php` also see **All reports**. They can change the status and answer the author.'),
+      warn('If `feedback_admins` is empty, reports are stored, but nobody can read them except their authors.'),
+    ],
+    related: ['welcome', 'privacy'],
+  },
 ];
 
 /** The article explaining each area of the application. */
@@ -545,7 +563,7 @@ export const VIEW_HELP = { overview: 'question', questions: 'open-questions', co
 
 /** The article covering each server feature. Adding a controller without help makes the tests fail. */
 export const CONTROLLER_HELP = {
-  AuthController: 'account', ProjectController: 'question', DashboardController: 'question', ReferenceController: 'references', QuestionController: 'open-questions', AgentController: 'project-agents', KeyController: 'ai-client', BibController: 'bibliography',
+  AuthController: 'account', FeedbackController: 'feedback', ProjectController: 'question', DashboardController: 'question', ReferenceController: 'references', QuestionController: 'open-questions', AgentController: 'project-agents', KeyController: 'ai-client', BibController: 'bibliography',
   DocumentController: 'files', FactController: 'facts-overview', ConversationController: 'conversations', CommentController: 'comments',
   NotificationController: 'notifications', ExportController: 'download-project', SearchController: 'search', HelpController: 'welcome',
 };
@@ -573,7 +591,7 @@ export function nextSteps(c) {
 }
 
 // ----- links -----
-const GLOBAL_VIEWS = { profile: '#/profile', projects: '#/projects' };
+const GLOBAL_VIEWS = { profile: '#/profile', projects: '#/projects', feedback: '#/feedback' };
 
 /** URL of a `help:slug` or `app:view` target, or null when it needs a project and there is none. */
 export function resolveTarget(target, pid) {

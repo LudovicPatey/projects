@@ -11,7 +11,7 @@ const freePort = () => new Promise((resolve, reject) => {
   s.listen(0, '127.0.0.1', () => { const { port } = s.address(); s.close(() => resolve(port)); });
 });
 
-export async function startApp() {
+export async function startApp({ feedbackAdmins = [] } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oq-test-'));
   for (const d of ['src', 'public', 'sql', 'bin']) fs.cpSync(d, path.join(dir, d), { recursive: true });
   fs.mkdirSync(path.join(dir, 'config'));
@@ -19,7 +19,7 @@ export async function startApp() {
   const port = await freePort();
   const base = `http://127.0.0.1:${port}`;
   fs.writeFileSync(path.join(dir, 'config/config.php'), `<?php return ['app_url' => '${base}', 'env' => 'dev', 'db' => ['dsn' => 'sqlite:' . __DIR__ . '/../storage/t.sqlite', 'user' => null, 'password' => null],
-    'orcid' => ['client_id' => '', 'client_secret' => '', 'sandbox' => true], 'storage_path' => __DIR__ . '/../storage', 'max_upload_mb' => 8, 'project_creators' => []];`);
+    'orcid' => ['client_id' => '', 'client_secret' => '', 'sandbox' => true], 'storage_path' => __DIR__ . '/../storage', 'max_upload_mb' => 8, 'project_creators' => [], 'feedback_admins' => ${JSON.stringify(feedbackAdmins)}];`);
   execFileSync('php', ['bin/install.php'], { cwd: dir });
   const server = spawn('php', ['-S', `127.0.0.1:${port}`, '-t', 'public', 'bin/dev-router.php'], { cwd: dir, stdio: 'ignore' });
   for (let i = 0; i < 100; i++) {

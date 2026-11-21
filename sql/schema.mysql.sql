@@ -480,3 +480,27 @@ CREATE TABLE IF NOT EXISTS question_answers (
   FOREIGN KEY (fact_id) REFERENCES facts(id) ON DELETE CASCADE,
   FOREIGN KEY (proposed_by) REFERENCES users(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS feedback_reports (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  user_id INT UNSIGNED NOT NULL,
+  kind VARCHAR(10) NOT NULL,              -- bug, feature
+  impact VARCHAR(10) NOT NULL DEFAULT 'normal',
+  title VARCHAR(160) NOT NULL,
+  body_text TEXT NOT NULL,
+  status VARCHAR(12) NOT NULL DEFAULT 'new',  -- new, planned, in_progress, done, declined
+  page VARCHAR(120) NULL,                 -- address of the page, without its query
+  project_id INT UNSIGNED NULL,
+  client_info VARCHAR(255) NULL,
+  response_text TEXT NULL,
+  responded_by INT UNSIGNED NULL,
+  responded_at DATETIME NULL,
+  author_unseen TINYINT(1) NOT NULL DEFAULT 0,
+  admin_unseen TINYINT(1) NOT NULL DEFAULT 1,
+  created_at DATETIME NOT NULL,
+  updated_at DATETIME NOT NULL,
+  KEY idx_feedback_user (user_id, updated_at),
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL,
+  FOREIGN KEY (responded_by) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

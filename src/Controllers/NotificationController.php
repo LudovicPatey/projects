@@ -42,6 +42,7 @@ final class NotificationController
         Response::json([
             'notifications' => (int)Db::value('SELECT COUNT(*) FROM notifications WHERE user_id = ? AND read_at IS NULL', [$me]),
             'conversations' => $state['totals']['conversation'] ?? 0,
+            'feedback' => FeedbackController::unseen($me),
             'totals' => (object)$state['totals'],
             'unread' => (object)array_map(fn($list) => (object)$list, $state['items']),
         ]);

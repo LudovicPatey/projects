@@ -5,7 +5,7 @@ require __DIR__ . '/../src/bootstrap.php';
 
 use App\{Auth, Config, HttpError, Request, Response};
 use App\Controllers\{AgentController, AuthController, BibController, CommentController, ConversationController, DashboardController,
-    DocumentController, ExportController, FactController, HelpController, KeyController, NotificationController, ProjectController, QuestionController, ReferenceController, SearchController};
+    DocumentController, ExportController, FactController, FeedbackController, HelpController, KeyController, NotificationController, ProjectController, QuestionController, ReferenceController, SearchController};
 
 $routes = [
     // auth
@@ -62,6 +62,12 @@ $routes = [
     ['POST',   '/api/documents/{id}/versions/{vid}/restore', [DocumentController::class, 'restore']],
     ['GET',    '/api/files/{fid}',                        [DocumentController::class, 'file']],
     ['GET',    '/api/versions/{vid}/zip',                 [DocumentController::class, 'zip']],
+    // bug reports and feature requests
+    ['GET',    '/api/feedback',                           [FeedbackController::class, 'list']],
+    ['POST',   '/api/feedback',                           [FeedbackController::class, 'create']],
+    ['PATCH',  '/api/feedback/{id}',                      [FeedbackController::class, 'update']],
+    ['DELETE', '/api/feedback/{id}',                      [FeedbackController::class, 'delete']],
+    ['POST',   '/api/feedback/{id}/seen',                 [FeedbackController::class, 'seen']],
     // open questions and proof strategies
     ['GET',    '/api/projects/{pid}/questions',           [QuestionController::class, 'list']],
     ['POST',   '/api/projects/{pid}/questions',           [QuestionController::class, 'create']],

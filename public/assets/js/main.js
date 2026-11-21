@@ -1,5 +1,5 @@
 import { api, setCsrf } from './api.js';
-import { store, loadProject, refreshCounters, link } from './store.js';
+import { store, go, loadProject, refreshCounters, link } from './store.js';
 import { registerCommon } from './components.js';
 import { RichEditor, RichContent, MathText } from './editor.js';
 import { PdfViewer } from './pdfviewer.js';
@@ -13,6 +13,7 @@ import { LandingPage } from './views/landing.js';
 import { GlobalSearch } from './search.js';
 import { HelpView } from './views/help.js';
 import { TourGuide } from './tour.js';
+import { FeedbackDialog, FeedbackView, openFeedback } from './views/feedback.js';
 import { RefPreview } from './refs-client.js';
 import { SectionActivity, SectionHome } from './dashboard.js';
 import { VIEW_HELP } from './help/content.js';
@@ -40,7 +41,7 @@ const App = {
     contextHelp() {
       const r = store.route;
       if (r.name === 'project') return `#/p/${r.pid}/help?a=${VIEW_HELP[r.view] || 'welcome'}`;
-      return `#/help?a=${r.name === 'profile' ? 'account' : 'create-project'}`;
+      return `#/help?a=${r.name === 'profile' ? 'account' : r.name === 'feedback' ? 'feedback' : 'create-project'}`;
     },
     listViews() { return ['questions', 'conversations', 'facts', 'files', 'bib']; },
     itemOpen() { const r = store.route; return !!(r.id || r.query?.compose || r.query?.upload); },
@@ -100,6 +101,7 @@ const App = {
       <a v-else class="rail-item" :class="{on: route.name === 'projects'}" href="#/projects" title="Projects" data-tour="nav-projects"><icon name="grid" :size="21"/><span>Projects</span></a>
       <div class="grow"></div>
       <a class="rail-item" :class="{on: isHelp}" :href="helpHome" title="Help center" data-tour="help"><icon name="help" :size="21"/><span>Help</span></a>
+      <a class="rail-item" :class="{on: route.name === 'feedback'}" href="#/feedback" title="Report a bug or request a feature" data-tour="feedback" @click.prevent="feedbackClick"><icon name="megaphone" :size="21"/><span>Feedback</span><b v-if="store.counters.feedback" class="badge">{{ store.counters.feedback }}</b></a>
       <button class="rail-item" :class="{on: showNotifs}" @click="showNotifs = !showNotifs" title="Notifications" data-tour="alerts">
         <icon name="bell" :size="21"/><span>Alerts</span><b v-if="store.counters.notifications" class="badge">{{ store.counters.notifications }}</b></button>
       <a class="rail-item" href="#/profile" :title="store.user.name" data-tour="profile"><avatar :name="store.user.name" :id="store.user.id" :size="30"/></a>
@@ -115,6 +117,7 @@ const App = {
       <projects-view v-if="route.name === 'projects'"/>
       <profile-view v-else-if="route.name === 'profile'"/>
       <help-view v-else-if="route.name === 'help'" :pid="null" :query="route.query"/>
+      <feedback-view v-else-if="route.name === 'feedback'" :id="route.id"/>
       <template v-else-if="route.name === 'project'">
         <div v-if="projectError" class="placeholder"><p>{{ projectError }}</p><a class="btn" href="#/projects">Back to projects</a></div>
         <template v-else-if="store.project && store.project.id === route.pid">
@@ -133,11 +136,14 @@ const App = {
     </div>
     <notifications-drawer v-if="showNotifs" @close="showNotifs = false"/>
     <tour-guide/>
+    <feedback-dialog/>
     <ref-preview/>
   </div>
   <div class="toasts"><div v-for="t in store.toasts" :key="t.id" class="toast" :class="t.type">{{ t.message }}</div></div>`,
   methods: {
     link,
+    /** From another page it opens the form, which remembers that page. On the Feedback page it stays there. */
+    feedbackClick() { if (store.route.name === 'feedback') go('/feedback'); else openFeedback(); },
     setTitle() {
       const t = store.project?.title;
       const n = t ? this.unreadTotal : 0;
@@ -162,6 +168,8 @@ app.component('landing-page', LandingPage);
 app.component('global-search', GlobalSearch);
 app.component('help-view', HelpView);
 app.component('tour-guide', TourGuide);
+app.component('feedback-view', FeedbackView);
+app.component('feedback-dialog', FeedbackDialog);
 app.component('ref-preview', RefPreview);
 app.component('section-home', SectionHome);
 app.component('section-activity', SectionActivity);
