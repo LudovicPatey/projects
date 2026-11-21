@@ -8,10 +8,13 @@ import { ConversationsView } from './views/conversations.js';
 import { FilesView } from './views/files.js';
 import { BibView } from './views/bib.js';
 import { FactsView } from './views/facts.js';
+import { QuestionsView } from './views/questions.js';
 import { LandingPage } from './views/landing.js';
 import { GlobalSearch } from './search.js';
 import { HelpView } from './views/help.js';
 import { TourGuide } from './tour.js';
+import { RefPreview } from './refs-client.js';
+import { SectionActivity, SectionHome } from './dashboard.js';
 import { VIEW_HELP } from './help/content.js';
 import { ProjectsView, OverviewView, MembersView, ProfileView, NotificationsDrawer } from './views/misc.js';
 
@@ -23,7 +26,8 @@ const App = {
     nav() {
       const t = store.counters.totals || {};
       return [
-        { view: 'overview', icon: 'home', label: 'Question', badge: t.question },
+        { view: 'overview', icon: 'home', label: 'Overview', badge: t.question },
+        { view: 'questions', icon: 'target', label: 'Questions', badge: (t.oquestion || 0) + (t.strategy || 0) },
         { view: 'conversations', icon: 'mail', label: 'Mail', badge: t.conversation },
         { view: 'facts', icon: 'graph', label: 'Facts', badge: t.fact },
         { view: 'files', icon: 'files', label: 'Files', badge: t.document },
@@ -38,7 +42,7 @@ const App = {
       if (r.name === 'project') return `#/p/${r.pid}/help?a=${VIEW_HELP[r.view] || 'welcome'}`;
       return `#/help?a=${r.name === 'profile' ? 'account' : 'create-project'}`;
     },
-    listViews() { return ['conversations', 'facts', 'files', 'bib']; },
+    listViews() { return ['questions', 'conversations', 'facts', 'files', 'bib']; },
     itemOpen() { const r = store.route; return !!(r.id || r.query?.compose || r.query?.upload); },
     backLink() { return link(store.route.view, null, store.route.query?.mode ? { mode: store.route.query.mode } : null); },
     unreadTotal() { return Object.values(store.counters.totals || {}).reduce((a, b) => a + b, 0); },
@@ -116,6 +120,7 @@ const App = {
         <template v-else-if="store.project && store.project.id === route.pid">
           <overview-view v-if="route.view === 'overview'"/>
           <help-view v-else-if="route.view === 'help'" :pid="route.pid" :query="route.query"/>
+          <questions-view v-else-if="route.view === 'questions'" :pid="route.pid" :id="route.id" :query="route.query"/>
           <conversations-view v-else-if="route.view === 'conversations'" :pid="route.pid" :id="route.id" :query="route.query"/>
           <facts-view v-else-if="route.view === 'facts'" :pid="route.pid" :id="route.id" :query="route.query"/>
           <files-view v-else-if="route.view === 'files'" :pid="route.pid" :id="route.id" :query="route.query"/>
@@ -128,6 +133,7 @@ const App = {
     </div>
     <notifications-drawer v-if="showNotifs" @close="showNotifs = false"/>
     <tour-guide/>
+    <ref-preview/>
   </div>
   <div class="toasts"><div v-for="t in store.toasts" :key="t.id" class="toast" :class="t.type">{{ t.message }}</div></div>`,
   methods: {
@@ -151,10 +157,14 @@ app.component('conversations-view', ConversationsView);
 app.component('files-view', FilesView);
 app.component('bib-view', BibView);
 app.component('facts-view', FactsView);
+app.component('questions-view', QuestionsView);
 app.component('landing-page', LandingPage);
 app.component('global-search', GlobalSearch);
 app.component('help-view', HelpView);
 app.component('tour-guide', TourGuide);
+app.component('ref-preview', RefPreview);
+app.component('section-home', SectionHome);
+app.component('section-activity', SectionActivity);
 app.component('projects-view', ProjectsView);
 app.component('overview-view', OverviewView);
 app.component('members-view', MembersView);

@@ -14,7 +14,19 @@ final class ProjectController
                     (SELECT COUNT(*) FROM project_members m WHERE m.project_id = p.id) AS members
              FROM projects p JOIN project_members pm ON pm.project_id = p.id AND pm.user_id = ?
              ORDER BY p.updated_at DESC', [Auth::id()]);
-        foreach ($rows as &$p) $p['unread'] = Activity::total((int)$p['id'], Auth::id());
+        foreach ($rows as &$p) {
+            $id = (int)$p['id'];
+            $p['unread'] = Activity::total($id, Auth::id());
+            $p['question_text'] = mb_substr(Sanitizer::toText((string)Db::value('SELECT question_html FROM projects WHERE id = ?', [$id])), 0, 260);
+            $p['counts'] = [
+                'questions' => (int)Db::value('SELECT COUNT(*) FROM open_questions WHERE project_id = ? AND deleted_at IS NULL', [$id]),
+                'settled' => (int)Db::value("SELECT COUNT(*) FROM open_questions WHERE project_id = ? AND deleted_at IS NULL AND status IN ('solved', 'refuted', 'abandoned')", [$id]),
+                'facts' => (int)Db::value('SELECT COUNT(*) FROM facts WHERE project_id = ? AND deleted_at IS NULL', [$id]),
+                'files' => (int)Db::value('SELECT COUNT(*) FROM documents WHERE project_id = ? AND deleted_at IS NULL', [$id]),
+                'references' => (int)Db::value('SELECT COUNT(*) FROM bib_entries WHERE project_id = ?', [$id]),
+            ];
+            $p['people'] = Db::all('SELECT u.id, u.name, u.kind FROM project_members m JOIN users u ON u.id = m.user_id WHERE m.project_id = ? ORDER BY m.joined_at, u.id LIMIT 5', [$id]);
+        }
         unset($p);
         Response::json(['projects' => $rows, 'can_create' => self::canCreate()]);
     }
@@ -160,6 +172,9 @@ final class ProjectController
             'documents' => Db::all('SELECT id, title, origin FROM documents WHERE project_id = ? AND deleted_at IS NULL ORDER BY title', [$id]),
             'bib' => Db::all('SELECT id, cite_key, title, authors, year FROM bib_entries WHERE project_id = ? ORDER BY cite_key', [$id]),
             'facts' => Db::all('SELECT id, label, title, kind, origin FROM facts WHERE project_id = ? AND deleted_at IS NULL ORDER BY label', [$id]),
+            'questions' => Db::all('SELECT id, title, status FROM open_questions WHERE project_id = ? AND deleted_at IS NULL ORDER BY id', [$id]),
+            'strategies' => Db::all('SELECT s.id, s.title, s.status, s.question_id, q.title AS question FROM proof_strategies s JOIN open_questions q ON q.id = s.question_id
+                                     WHERE s.project_id = ? AND s.deleted_at IS NULL AND q.deleted_at IS NULL ORDER BY s.id', [$id]),
         ]);
     }
 
@@ -181,8 +196,24 @@ final class ProjectController
                 $c = Db::one('SELECT target_type, target_id, created_at FROM comments WHERE id = ?', [$m['source_id']]);
                 if (!$c) continue;
                 if ($c['target_type'] === 'conversation' && !Db::value('SELECT 1 FROM conversation_participants WHERE conversation_id = ? AND user_id = ?', [$c['target_id'], Auth::id()])) continue;
-                $view = ['conversation' => 'conversations', 'document' => 'files', 'bib' => 'bib', 'fact' => 'facts'][$c['target_type']];
-                $out[] = ['kind' => 'comment', 'label' => 'Comment on ' . $c['target_type'], 'link' => ['view' => $view, 'id' => (int)$c['target_id']], 'at' => $c['created_at']];
+                if ($c['target_type'] === 'strategy') {
+                    $s = Db::one('SELECT s.question_id FROM proof_strategies s JOIN open_questions q ON q.id = s.question_id WHERE s.id = ? AND s.deleted_at IS NULL AND q.deleted_at IS NULL', [$c['target_id']]);
+                    if ($s) $out[] = ['kind' => 'comment', 'label' => 'Comment on a strategy', 'link' => ['view' => 'questions', 'id' => (int)$s['question_id'], 'query' => ['strategy' => (int)$c['target_id']]], 'at' => $c['created_at']];
+                    continue;
+                }
+                if ($c['target_type'] === 'oquestion' && !Db::value('SELECT 1 FROM open_questions WHERE id = ? AND deleted_at IS NULL', [$c['target_id']])) continue;
+                $view = ['conversation' => 'conversations', 'document' => 'files', 'bib' => 'bib', 'fact' => 'facts', 'oquestion' => 'questions'][$c['target_type']];
+                $names = ['oquestion' => 'question'];
+                $out[] = ['kind' => 'comment', 'label' => 'Comment on ' . ($names[$c['target_type']] ?? $c['target_type']), 'link' => ['view' => $view, 'id' => (int)$c['target_id']], 'at' => $c['created_at']];
+            } elseif ($m['source_type'] === 'oquestion') {
+                $q = Db::one('SELECT id, title, updated_at FROM open_questions WHERE id = ? AND deleted_at IS NULL', [$m['source_id']]);
+                if ($q) $out[] = ['kind' => 'question', 'label' => 'Question: ' . $q['title'], 'link' => ['view' => 'questions', 'id' => (int)$q['id']], 'at' => $q['updated_at']];
+            } elseif ($m['source_type'] === 'strategy') {
+                $s = Db::one('SELECT s.id, s.question_id, s.title, s.updated_at FROM proof_strategies s JOIN open_questions q ON q.id = s.question_id WHERE s.id = ? AND s.deleted_at IS NULL AND q.deleted_at IS NULL', [$m['source_id']]);
+                if ($s) $out[] = ['kind' => 'question', 'label' => 'Strategy: ' . $s['title'], 'link' => ['view' => 'questions', 'id' => (int)$s['question_id'], 'query' => ['strategy' => (int)$s['id']]], 'at' => $s['updated_at']];
+            } elseif ($m['source_type'] === 'answer') {
+                $q = Db::one('SELECT q.id, q.title, a.created_at FROM question_answers a JOIN open_questions q ON q.id = a.question_id WHERE a.id = ? AND q.deleted_at IS NULL', [$m['source_id']]);
+                if ($q) $out[] = ['kind' => 'question', 'label' => 'Proposed answer to: ' . $q['title'], 'link' => ['view' => 'questions', 'id' => (int)$q['id']], 'at' => $q['created_at']];
             } elseif ($m['source_type'] === 'fact') {
                 $f = Db::one('SELECT id, label, updated_at FROM facts WHERE id = ? AND deleted_at IS NULL', [$m['source_id']]);
                 if ($f) $out[] = ['kind' => 'fact', 'label' => 'Fact ' . $f['label'], 'link' => ['view' => 'facts', 'id' => (int)$f['id']], 'at' => $f['updated_at']];
@@ -190,6 +221,17 @@ final class ProjectController
                 $f = Db::one('SELECT f.id, f.label, v.updated_at FROM fact_reviews v JOIN facts f ON f.id = v.fact_id WHERE v.id = ? AND f.deleted_at IS NULL', [$m['source_id']]);
                 if ($f) $out[] = ['kind' => 'fact', 'label' => 'Review of ' . $f['label'], 'link' => ['view' => 'facts', 'id' => (int)$f['id']], 'at' => $f['updated_at']];
             }
+        }
+        if ($type === 'fact') {
+            foreach (Db::all("SELECT a.answer, a.state, a.created_at, q.id, q.title FROM question_answers a JOIN open_questions q ON q.id = a.question_id
+                              WHERE a.project_id = ? AND a.fact_id = ? AND a.state IN ('proposed', 'ratified') AND q.deleted_at IS NULL", [$id, (int)($r->query['target'] ?? 0)]) as $a) {
+                $out[] = ['kind' => 'question', 'label' => ucfirst($a['state']) . " {$a['answer']} answer to: {$a['title']}", 'link' => ['view' => 'questions', 'id' => (int)$a['id']], 'at' => $a['created_at']];
+            }
+        }
+        // Questions and strategies that are explicitly linked to this item.
+        foreach (Db::all('SELECT DISTINCT q.id, q.title, q.updated_at FROM question_links l JOIN open_questions q ON q.id = l.question_id
+                          WHERE l.project_id = ? AND l.target_type = ? AND l.target_id = ? AND q.deleted_at IS NULL', [$id, $type, (int)($r->query['target'] ?? 0)]) as $q) {
+            $out[] = ['kind' => 'question', 'label' => 'Question: ' . $q['title'], 'link' => ['view' => 'questions', 'id' => (int)$q['id']], 'at' => $q['updated_at']];
         }
         Response::json(['backlinks' => $out]);
     }

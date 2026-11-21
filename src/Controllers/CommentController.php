@@ -12,7 +12,17 @@ use App\{Access, Activity, Auth, Db, HttpError, Notify, Provenance, Request, Res
  */
 final class CommentController
 {
-    private const VIEWS = ['conversation' => 'conversations', 'document' => 'files', 'bib' => 'bib', 'fact' => 'facts'];
+    private const VIEWS = ['conversation' => 'conversations', 'document' => 'files', 'bib' => 'bib', 'fact' => 'facts', 'oquestion' => 'questions'];
+
+    /** Where a comment target opens. A strategy opens inside its question. */
+    private static function link(string $type, int $id, int $comment): array
+    {
+        if ($type === 'strategy') {
+            $qid = (int)Db::value('SELECT question_id FROM proof_strategies WHERE id = ?', [$id]);
+            return QuestionController::strategyLink($qid, $id) + ['comment' => $comment];
+        }
+        return ['view' => self::VIEWS[$type], 'id' => $id, 'comment' => $comment];
+    }
 
     public static function list(Request $r): never
     {
@@ -62,7 +72,7 @@ final class CommentController
             'anchor_json' => $anchor ? json_encode($anchor, JSON_UNESCAPED_UNICODE) : null, 'created_at' => Db::now(),
         ]);
         Activity::touch($pid, $type, $tid, 'comment', $id);
-        $link = ['view' => self::VIEWS[$type], 'id' => $tid, 'comment' => $parentId ?: $id];
+        $link = self::link($type, $tid, $parentId ?: $id);
         $audience = Access::audience($type, $tid);
         Notify::mentions($pid, 'comment', $id, $body['mentions'], $link, $body['text'], $audience);
 
@@ -96,7 +106,7 @@ final class CommentController
             Activity::touch((int)$c['project_id'], $c['target_type'], (int)$c['target_id'], 'comment_edit', (int)$c['id']);
             $data['edited_at'] = Db::now();
             Notify::mentions((int)$c['project_id'], 'comment', (int)$c['id'], $body['mentions'],
-                ['view' => self::VIEWS[$c['target_type']], 'id' => (int)$c['target_id'], 'comment' => (int)($c['parent_id'] ?: $c['id'])],
+                self::link($c['target_type'], (int)$c['target_id'], (int)($c['parent_id'] ?: $c['id'])),
                 $body['text'], Access::audience($c['target_type'], (int)$c['target_id']), false);
         }
         if ($data) Db::update('comments', $data, 'id = :id', ['id' => $c['id']]);

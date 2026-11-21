@@ -17,9 +17,12 @@ projects, and every account is an **ORCID** iD.
 | **Accounts** | Sign-in through ORCID OAuth (`/authenticate` scope). Owners add researchers by ORCID iD, even if they have never signed in. Their public ORCID name is fetched automatically. |
 | **Bibliography** | Add entries by DOI or arXiv id (doi.org content negotiation), by pasting BibTeX (several entries at once), or by hand. You can edit the BibTeX, export the whole project as `.bib`, and copy `\cite{…}`. Each entry can have **one PDF**: upload, replace or remove it, and view it in the app. |
 | **Files** | A versioned unit with **one PDF** plus optional **LaTeX sources** (`.tex`, `.bib`, figures, `.zip`). Each file is marked **Human** (teal) or **AI** (violet, with the model name). The mark shows in the list, in a filter, in a badge and as a banner on the file. You can upload a new version (optionally keeping the previous sources) and restore an old version. A restore creates a new version, so history is never lost. You can download a version as `.zip` and preview text sources in the app. |
+| **Open questions** | Several big questions per project, split into a tree of sub-questions, with status, priority, comments, unread badges and links to facts, files and references. Each question has **proof strategies** whose every change is a revision, with a timeline and restore. AI clients can propose a **positive or negative answer backed by a fact**, and a human ratifies it once a human has endorsed that fact. Questions and strategies can be commented on and **@mentioned** from messages and comments. |
 | **Facts** | A database of statements with proof and intuition, linked by dependencies, in the spirit of the Danus fact graph. Written only by AI clients through the API, so they follow one format: extracted from papers or conversations with a page and quote, or deduced (Danus graphs can be imported). Each fact has Danus labels (counterexample, conclusion, dead end…) and a trace: whether its proof comes from a human or an AI, who is credited, and what it builds on. Humans endorse facts in one click, and humans and AI can review them (correct / gap / incorrect), with optional Lean proofs. Shown as a filterable list or an interactive graph. Edits create revisions that need fresh reviews, and retracting a fact flags everything that depends on it. Facts have comment threads and can be @mentioned. The platform stores Lean proofs but does not run Lean. |
 | **Conversations** | Webmail-style, in three columns: list (Inbox / Starred / Archived, search, unread counts), the selected linear conversation, then comments. Only the chosen subset of researchers sees a conversation, and you can add people later. You can edit your messages, star, archive, mark as unread and leave. |
 | **Comments** | Threads (a root comment plus replies) that are separate from conversations. They attach to a conversation, a file or a bibliography entry. Select text in a **PDF** or in a **message** to anchor a thread to that passage. Highlights are drawn on the PDF, and clicking one jumps to its thread and back. Threads can be resolved or reopened. On files, comments are tied to a version. |
+| **Universal references** | Type `@` in any rich text to cite a person, question, strategy or strategy version, answer, fact, review, Lean proof, file or file version, reference, conversation, message, comment or project. Chips show the live title and status, with a preview on hover, and never reveal a private conversation to a non-participant. |
+| **Dashboards** | A project overview with what needs your attention, progress on the questions, the state of facts and strategies, activity and team, plus a summary page for each section. |
 | **Rich text** | Bold, italics, lists, code, links and quotes. **@mentions** of researchers, files and bibliography entries are clickable chips. `$…$` and `$$…$$` are rendered with KaTeX. Ctrl/⌘+Enter sends. |
 | **AI agents** | Owners create agents (People → AI agents) that act through an API token. Agents read the project, join the conversations they are added to, comment, and upload files. Everything they write is labelled as AI, and their files are always flagged **AI**. They cannot modify human-written files. See [docs/AGENT_API.md](docs/AGENT_API.md) and the example agent built on Claude in [examples/claude_agent.py](examples/claude_agent.py). |
 | **Personal API keys** | Each researcher creates keys on their profile page. Their AI client reads what they can read and submits facts, reviews and Lean proofs, labelled with its model. |
@@ -35,7 +38,7 @@ Each user has their own read state. New items are highlighted, and iPhone-style 
 
 Visitors who are not signed in see a public front page presenting these features with screenshots (`public/assets/img/landing/`, from a sample project).
 
-The left vertical menu (Question · Mail · Facts · Files · Biblio · People · Alerts) switches between these modes, like a webmail client.
+The left vertical menu (Overview · Questions · Mail · Facts · Files · Biblio · People · Alerts) switches between these modes, like a webmail client.
 
 ## Installation
 
@@ -367,9 +370,9 @@ The database schema is upgraded automatically on the next request.
 public/              ← web root
   index.php          front controller + route table
   app.html           SPA shell (served by index.php only)
-  assets/js/         main.js, store, api, editor (Quill+mentions), pdfviewer, comments, views/*
+  assets/js/         main.js, store, api, editor (Quill+references), references, refs-client, dashboard, pdfviewer, comments, views/*
   assets/css/app.css
-src/                 PHP classes (Db, Auth, Orcid, Storage, Sanitizer, BibTex, Access, Notify, Controllers/*)
+src/                 PHP classes (Db, Auth, Orcid, Storage, Sanitizer, References, BibTex, Access, Notify, Controllers/*)
 sql/schema.mysql.sql database schema (also auto-converted for SQLite)
 config/              config.example.php → config.php
 storage/blobs/       uploaded files (content-addressed, outside the web root)

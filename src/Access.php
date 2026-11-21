@@ -58,6 +58,23 @@ final class Access
         return $f;
     }
 
+    public static function question(int $id): array
+    {
+        $q = Db::one('SELECT * FROM open_questions WHERE id = ? AND deleted_at IS NULL', [$id]);
+        if (!$q) throw new HttpError(404, 'Question not found');
+        self::member((int)$q['project_id']);
+        return $q;
+    }
+
+    public static function strategy(int $id): array
+    {
+        $s = Db::one('SELECT s.* FROM proof_strategies s JOIN open_questions q ON q.id = s.question_id
+                      WHERE s.id = ? AND s.deleted_at IS NULL AND q.deleted_at IS NULL', [$id]);
+        if (!$s) throw new HttpError(404, 'Strategy not found');
+        self::member((int)$s['project_id']);
+        return $s;
+    }
+
     public static function isMember(int $projectId, int $userId): bool
     {
         return (bool)Db::value('SELECT 1 FROM project_members WHERE project_id = ? AND user_id = ?', [$projectId, $userId]);
@@ -71,6 +88,8 @@ final class Access
             'document' => self::document($id)['project_id'],
             'bib' => self::bib($id)['project_id'],
             'fact' => self::fact($id)['project_id'],
+            'oquestion' => self::question($id)['project_id'],
+            'strategy' => self::strategy($id)['project_id'],
             default => throw new HttpError(400, 'Invalid comment target'),
         };
     }

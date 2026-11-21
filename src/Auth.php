@@ -14,6 +14,9 @@ final class Auth
     private const CLIENT_WRITES = [
         'POST /api/projects/{pid}/facts', 'POST /api/projects/{pid}/facts/batch', 'PATCH /api/facts/{id}',
         'POST /api/facts/{id}/reviews', 'POST /api/facts/{id}/lean', 'POST /api/fact-lean/{lid}/check',
+        'POST /api/projects/{pid}/questions', 'PATCH /api/questions/{id}', 'POST /api/questions/{id}/strategies',
+        'POST /api/questions/{id}/links', 'PATCH /api/strategies/{id}',
+        'POST /api/questions/{id}/answers', 'POST /api/answers/{id}/withdraw',
     ];
     private const CLIENT_NO_READ = ['/api/me/keys', '/api/projects/{id}/agents', '/api/agent/context'];
 
@@ -102,7 +105,7 @@ final class Auth
         $ok = in_array($method, ['GET', 'HEAD'], true)
             ? !in_array($pattern, self::CLIENT_NO_READ, true)
             : in_array("$method $pattern", self::CLIENT_WRITES, true);
-        if (!$ok) throw new HttpError(403, 'A personal API key can read the project and submit facts, reviews and Lean proofs. It cannot do this.');
+        if (!$ok) throw new HttpError(403, 'A personal API key can read the project and submit facts, reviews, Lean proofs, questions, strategies and proposed answers. It cannot do this.');
     }
 
     /** Project the current agent token is bound to (null for humans). */

@@ -10,7 +10,7 @@ namespace App;
  */
 final class Activity
 {
-    public const TYPES = ['conversation', 'fact', 'document', 'bib', 'question', 'member'];
+    public const TYPES = ['conversation', 'fact', 'document', 'bib', 'question', 'oquestion', 'strategy', 'member'];
 
     /** Work done by a user's AI client stays "new" for that user: they have not read it yet. */
     public static function touch(int $pid, string $type, int $id, string $kind, ?int $ref = null): void
@@ -133,6 +133,9 @@ final class Activity
             'document' => $ids('SELECT id FROM documents WHERE project_id = ? AND deleted_at IS NULL', [$pid]),
             'bib' => $ids('SELECT id FROM bib_entries WHERE project_id = ?', [$pid]),
             'question' => [$pid => true],
+            'oquestion' => $ids('SELECT id FROM open_questions WHERE project_id = ? AND deleted_at IS NULL', [$pid]),
+            'strategy' => $ids('SELECT s.id FROM proof_strategies s JOIN open_questions q ON q.id = s.question_id
+                                WHERE s.project_id = ? AND s.deleted_at IS NULL AND q.deleted_at IS NULL', [$pid]),
             'member' => $ids('SELECT user_id AS id FROM project_members WHERE project_id = ?', [$pid]),
         ];
     }

@@ -4,8 +4,8 @@ declare(strict_types=1);
 require __DIR__ . '/../src/bootstrap.php';
 
 use App\{Auth, Config, HttpError, Request, Response};
-use App\Controllers\{AgentController, AuthController, BibController, CommentController, ConversationController,
-    DocumentController, ExportController, FactController, HelpController, KeyController, NotificationController, ProjectController, SearchController};
+use App\Controllers\{AgentController, AuthController, BibController, CommentController, ConversationController, DashboardController,
+    DocumentController, ExportController, FactController, HelpController, KeyController, NotificationController, ProjectController, QuestionController, ReferenceController, SearchController};
 
 $routes = [
     // auth
@@ -30,6 +30,10 @@ $routes = [
     ['GET',    '/api/projects/{id}/help-context',         [HelpController::class, 'context']],
     ['GET',    '/api/projects/{id}/export',               [ExportController::class, 'project']],
     ['GET',    '/api/projects/{id}/context',              [AgentController::class, 'projectContext']],
+    ['GET',    '/api/projects/{id}/dashboard',            [DashboardController::class, 'project']],
+    ['GET',    '/api/projects/{id}/activity',             [DashboardController::class, 'activityFeed']],
+    ['GET',    '/api/projects/{id}/refs',                 [ReferenceController::class, 'search']],
+    ['GET',    '/api/projects/{id}/refs/resolve',         [ReferenceController::class, 'resolve']],
     ['GET',    '/api/projects/{id}/backlinks',            [ProjectController::class, 'backlinks']],
     // AI agents
     ['GET',    '/api/projects/{id}/agents',               [AgentController::class, 'list']],
@@ -58,6 +62,24 @@ $routes = [
     ['POST',   '/api/documents/{id}/versions/{vid}/restore', [DocumentController::class, 'restore']],
     ['GET',    '/api/files/{fid}',                        [DocumentController::class, 'file']],
     ['GET',    '/api/versions/{vid}/zip',                 [DocumentController::class, 'zip']],
+    // open questions and proof strategies
+    ['GET',    '/api/projects/{pid}/questions',           [QuestionController::class, 'list']],
+    ['POST',   '/api/projects/{pid}/questions',           [QuestionController::class, 'create']],
+    ['GET',    '/api/questions/{id}',                     [QuestionController::class, 'show']],
+    ['PATCH',  '/api/questions/{id}',                     [QuestionController::class, 'update']],
+    ['DELETE', '/api/questions/{id}',                     [QuestionController::class, 'delete']],
+    ['POST',   '/api/questions/{id}/strategies',          [QuestionController::class, 'createStrategy']],
+    ['POST',   '/api/questions/{id}/links',               [QuestionController::class, 'addLink']],
+    ['DELETE', '/api/question-links/{id}',                [QuestionController::class, 'deleteLink']],
+    ['POST',   '/api/questions/{id}/answers',             [QuestionController::class, 'proposeAnswer']],
+    ['POST',   '/api/answers/{id}/ratify',                [QuestionController::class, 'ratifyAnswer']],
+    ['POST',   '/api/answers/{id}/reject',                [QuestionController::class, 'rejectAnswer']],
+    ['POST',   '/api/answers/{id}/revoke',                [QuestionController::class, 'revokeAnswer']],
+    ['POST',   '/api/answers/{id}/withdraw',              [QuestionController::class, 'withdrawAnswer']],
+    ['GET',    '/api/strategies/{id}',                    [QuestionController::class, 'showStrategy']],
+    ['PATCH',  '/api/strategies/{id}',                    [QuestionController::class, 'updateStrategy']],
+    ['DELETE', '/api/strategies/{id}',                    [QuestionController::class, 'deleteStrategy']],
+    ['POST',   '/api/strategies/{id}/restore',            [QuestionController::class, 'restoreStrategy']],
     // fact database
     ['GET',    '/api/projects/{pid}/facts',               [FactController::class, 'list']],
     ['POST',   '/api/projects/{pid}/facts',               [FactController::class, 'create']],

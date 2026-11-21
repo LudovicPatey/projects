@@ -46,7 +46,8 @@ export const ARTICLES = [
       live((c) => [line(`You are in **${c.project.title}** as **${c.project.role}**, with ${n(c.people.researchers, 'researcher')} and ${n(c.people.agents.length, 'AI agent')}. It holds ${n(c.facts.total, 'fact')}, ${n(c.files.total, 'file')}, ${n(c.bib.total, 'reference')}, and you take part in ${n(c.conversations.total, 'conversation')}.`)]),
       h('The main areas'),
       table(['Area', 'What it is for'],
-        ['[Question](app:overview)', 'The open problem, its status and a summary of the project'],
+        ['[Overview](app:overview)', 'The open problem, its status and a summary of the project'],
+        ['[Questions](app:questions)', 'Big questions, sub-questions and their proof strategies'],
         ['[Mail](app:conversations)', 'Discussions with the people you choose'],
         ['[Facts](app:facts)', 'Statements and proofs, linked by what they depend on'],
         ['[Files](app:files)', 'PDFs and LaTeX sources, with their versions'],
@@ -117,17 +118,78 @@ export const ARTICLES = [
 
   // ---------------------------------------------------------------- Your project
   {
-    slug: 'question', category: 'project', title: 'The question page', summary: 'The open problem, its status and the project overview.',
-    keywords: 'question overview status open solved archived edit title dashboard',
+    slug: 'question', category: 'project', title: 'The project overview', summary: 'The main problem, its status and a summary of the project.',
+    keywords: 'question overview status open solved archived edit title dashboard activity attention progress team',
     blocks: [
-      p('The [Question](app:overview) page states the open problem and summarizes the project: its files, facts, references, conversations and researchers.'),
+      p('The [Overview](app:overview) page is the dashboard of the project: the main problem, how many questions are settled, **what needs your attention**, the big questions, the state of the facts and strategies, recent activity and the team.'),
       live((c) => [line(`The status of this project is **${c.project.status}**.` + (isOwner(c) ? ' As an owner, you can edit the question and change the status.' : ' Only its owners can edit the question or change the status.'), c.people.owners.map(toPerson))]),
       h('Edit the question (owners)'),
-      steps('Click **Edit question**.', 'Change the title or the statement.', 'Click **Save**.'),
+      steps('Click **Edit** under the problem.', 'Change the title or the statement.', 'Click **Save**.'),
       h('Status'),
       table(['Status', 'Meaning'], ['**Open**', 'Work in progress'], ['**Solved**', 'The question is answered'], ['**Archived**', 'The project is no longer active']),
     ],
     related: ['people', 'download-project'],
+  },
+  {
+    slug: 'open-questions', category: 'project', title: 'Questions and sub-questions', summary: 'Organize the big questions of a project into a tree.',
+    keywords: 'questions open problems sub-questions subquestions tree hierarchy goal priority status solved refuted partial progress roadmap',
+    blocks: [
+      p('A project can pursue several **big questions**. In [Questions](app:questions), split each one into **sub-questions**, at any depth up to eight levels. Each question has a statement, a status, a priority, comments and links to facts, files and references.'),
+      live((c) => [
+        line(c.questions.total ? `This project has ${n(c.questions.big, 'big question')}, ${n(c.questions.total, 'question')} in total, ${c.questions.open} not settled, and ${n(c.questions.strategies, 'proof strategy', 'proof strategies')}.` : 'This project has no question yet. Open [Questions](app:questions) to state the first one.', c.questions.top.map((q) => ({ label: q.title, to: { view: 'questions', id: q.id } }))),
+        c.questions.without_strategy_count ? line(`${n(c.questions.without_strategy_count, 'unsettled question')} without a strategy:`, c.questions.without_strategy.map((q) => ({ label: q.title, to: { view: 'questions', id: q.id } }))) : null,
+      ]),
+      h('Add a question'),
+      steps('Open [Questions](app:questions) and click **Question**.', 'Give it a title and, if you wish, a statement with LaTeX and @mentions.', 'Under **Part of**, choose its parent question, or leave it as a big question.', 'Click **Save**.'),
+      tip('To add a sub-question directly, open the parent and click **Sub-question**.'),
+      h('Status'),
+      table(['Status', 'Meaning'], ['**Open**', 'Nobody is working on it yet'], ['**In progress**', 'Being worked on'], ['**Partial result**', 'Some progress is established'], ['**Solved**', 'Answered positively. Only a human can set this'], ['**Refuted**', 'Answered negatively. Only a human can set this'], ['**Abandoned**', 'No longer pursued']),
+      p('The bar on a question shows how many of its sub-questions are settled, meaning solved, refuted or abandoned. A parent is **never closed automatically**: whether its sub-questions answer it is a human judgment.'),
+      h('Reorganize'),
+      p('Click **Edit** and change **Part of** to move a question with all its sub-questions. A question cannot be placed under one of its own sub-questions. To delete a question, first move or delete its sub-questions. Its author or a project owner can delete it.'),
+    ],
+    related: ['answers', 'proof-strategies', 'question'],
+  },
+  {
+    slug: 'answers', category: 'project', title: 'Answering a question', summary: 'Propose an answer backed by a fact, then ratify it.',
+    keywords: 'answer positive negative yes no propose proposal ratify ratification reject revoke withdraw solved refuted',
+    blocks: [
+      p('An answer to a question is always **backed by a fact** of the database. A human or an AI client can propose it, but **only a human can ratify it**. Until then, the question does not change.'),
+      live((c) => [
+        c.questions.pending.length ? line(`${n(c.questions.pending_count, 'question')} with an answer to ratify:`, c.questions.pending.map((q) => ({ label: q.title, to: { view: 'questions', id: q.id } }))) : line('No answer is waiting for ratification in this project.'),
+        c.questions.at_risk.length ? line('Ratified answers whose fact needs attention:', c.questions.at_risk.map((q) => ({ label: q.title, to: { view: 'questions', id: q.id } }))) : null,
+      ]),
+      h('Propose an answer'),
+      steps('Open a question in [Questions](app:questions).', 'Under **Answer**, click **Propose an answer**.', 'Choose **Positive** or **Negative**, then the fact.', 'Explain why this fact answers the question, and click **Propose**.'),
+      h('Ratify an answer'),
+      steps('Read the fact and the explanation. Click the fact to open its proof.', 'If you checked it, click **Endorse fact**. If it is wrong, click **Deny fact** and say why.', 'Once a human has endorsed the fact, click **Ratify**.'),
+      p('A positive answer marks the question **Solved**, and a negative answer marks it **Refuted**. The status then stays locked to the ratified answer.'),
+      warn('Ratify is unavailable while the fact has no human endorsement, is denied, disputed or retracted, or relies on a denied, disputed or retracted fact.'),
+      h('If the fact changes later'),
+      p('If a ratified fact is revised, denied, retracted or loses an endorsement, or a fact it relies on is denied or retracted, the person who ratified it is alerted and the answer is flagged. The question **does not reopen by itself**: a human decides, with **Revoke ratification**, which returns it to In progress and keeps the record.'),
+      h('Other actions'),
+      table(['Action', 'Who', 'Effect'], ['**Reject**', 'Any human member, with a reason', 'Closes the proposal'], ['**Withdraw**', 'Its author', 'Takes the proposal back'], ['**Revoke ratification**', 'Any human member, with a reason', 'Reopens the question']),
+    ],
+    related: ['open-questions', 'reviews', 'proof-strategies'],
+  },
+  {
+    slug: 'proof-strategies', category: 'project', title: 'Proof strategies', summary: 'Track each approach to a question and how it evolves.',
+    keywords: 'proof strategy strategies approach plan attempt idea blocked failed succeeded revision history version evolve timeline restore',
+    blocks: [
+      p('Each question can have several **proof strategies**, the approaches being tried in parallel. A strategy has a name, a status, a description, comments, links, and a full history.'),
+      live((c) => [
+        c.questions.blocked.length ? line('Blocked strategies that could use a fresh look:', c.questions.blocked.map((s) => ({ label: s.title, to: { view: 'questions', id: s.id, query: { strategy: s.strategy } } }))) : line(c.questions.strategies ? `This project has ${n(c.questions.strategies, 'proof strategy', 'proof strategies')}, and none is blocked.` : 'No strategy has been written in this project yet.'),
+      ]),
+      h('Add a strategy'),
+      steps('Open a question in [Questions](app:questions).', 'Under **Proof strategies**, click **Strategy**.', 'Name it, choose a status and describe the approach.', 'Click **Add strategy**.'),
+      h('How a strategy evolves'),
+      p('Click **Revise** to change it, and say what changed and why. Each change of name, status or text creates a **new version**. The **How it evolved** timeline shows who changed what, and when, with the AI model if any.'),
+      list('**View** displays an earlier version.', '**Restore** brings it back as a new version, so nothing is lost.', 'If someone revised the strategy while you were editing, your save is refused instead of overwriting their work.'),
+      h('Status'),
+      table(['Status', 'Meaning'], ['**Idea**', 'Proposed, not tried yet'], ['**Being tried**', 'Work in progress'], ['**Blocked**', 'Stuck on an obstacle'], ['**Succeeded**', 'It works. Only a human can set this'], ['**Failed**', 'It cannot work, or was shown not to'], ['**Abandoned**', 'No longer pursued']),
+      tip('Keep failed strategies. Recording why an approach fails saves the group from trying it again.'),
+    ],
+    related: ['open-questions', 'answers', 'comments'],
   },
   {
     slug: 'people', category: 'project', title: 'Researchers and roles', summary: 'Add colleagues, change roles, or leave a project.',
@@ -154,7 +216,7 @@ export const ARTICLES = [
     keywords: 'download export copy zip archive backup offline save',
     blocks: [
       p('Any member can download a complete copy of what they can see.'),
-      steps('Open the [Question](app:overview) page.', 'Click **Download project**.', 'The download starts when the copy is ready.'),
+      steps('Open the [Overview](app:overview) page.', 'Click **Download project**.', 'The download starts when the copy is ready.'),
       live((c) => [line(`Your copy of **${c.project.title}** would contain ${n(c.facts.total, 'fact')}, ${n(c.files.total, 'file')} with all their versions, ${n(c.bib.total, 'reference')} and your ${n(c.conversations.total, 'conversation')}.`)]),
       h('What is inside'),
       table(['Folder', 'Content'], ['`facts/`', 'Readable facts and JSON, with reviews, Lean proofs and traceability'], ['`files/`', 'Every version, with its PDF and sources'], ['`bibliography/`', 'A `.bib` file, the PDFs and comments'], ['`conversations/`', 'The conversations you take part in'], ['`manifest.json`', 'The list of files with their SHA-256']),
@@ -198,13 +260,33 @@ export const ARTICLES = [
     related: ['pdf', 'writing'],
   },
   {
+    slug: 'references', category: 'talk', title: 'References to anything', summary: 'Cite any object of the project from any rich text.',
+    keywords: 'reference references cite citation mention link at @ chip preview object filter private backlink mentioned',
+    blocks: [
+      p('In any message, comment, statement, strategy or answer, type `@` and a few letters to cite **any object** of the project. It appears as a colored chip with a live title and status.'),
+      table(['You can cite', 'Filter'],
+        ['Question', '`q:`'], ['Strategy', '`s:`'], ['Strategy version', '`rev:`'], ['Answer', '`a:`'],
+        ['Fact', '`fact:`'], ['Fact review', '`review:`'], ['Lean proof', '`lean:`'],
+        ['File', '`file:`'], ['File version', '`version:`'], ['Reference', '`bib:`'],
+        ['Conversation', '`conv:`'], ['Message', '`msg:`'], ['Comment', '`comment:`'],
+        ['Person', '`who:`'], ['Project', '`project:`']),
+      tip('Type a filter to search one kind of object, for example `@lean:scale` or `@q:residue`.'),
+      h('Reading a reference'),
+      list('**Hover** a chip to preview it, with its status, author and AI model.', '**Click** it, or press **Enter**, to open exactly that object: a message scrolls into view, a version opens on that version.', 'The title and status are **always current**, even if the object was renamed after being cited.', 'A crossed-out chip means the object has been deleted.'),
+      h('Privacy'),
+      p('A reference never reveals a private conversation. Someone who does not take part in it sees a gray **Private** chip, with no subject and no content. This applies to the conversation, its messages and its comments.'),
+      live((c) => [line('Questions, strategies, facts, files and references list where they are cited under **Mentioned in**.', c.questions.top.slice(0, 1).map((q) => ({ label: q.title, to: { view: 'questions', id: q.id } })))]),
+    ],
+    related: ['writing', 'comments', 'open-questions'],
+  },
+  {
     slug: 'writing', category: 'talk', title: 'Writing: formatting, LaTeX and mentions', summary: 'Rich text, formulas and @mentions.',
     keywords: 'latex katex math formula equation mention at @ bold italic format editor rich text link',
     blocks: [
       h('LaTeX'),
       table(['You type', 'Result'], ['`$x^2 + y^2$`', 'A formula in the text'], ['`$$\\sum_i x_i$$`', 'A centered formula']),
       h('Mentions'),
-      p('Type `@` then a few letters to mention a **researcher**, an **AI agent**, a **fact**, a **file** or a **reference**. Mentions are clickable, and the person mentioned gets a notification.'),
+      p('Type `@` then a few letters to cite **anything in the project**: a person, question, strategy, answer, fact, Lean proof, file, reference, conversation, message or comment. See [References to anything](help:references).'),
       tip('Mentioning an AI agent is how you ask it to answer, if its owner runs it. See [project agents](help:project-agents).'),
       h('Formatting'),
       p('The toolbar offers bold, italics, code, links, quotes and lists. **⌘Enter** or **Ctrl Enter** sends.'),
@@ -289,11 +371,13 @@ export const ARTICLES = [
   },
   {
     slug: 'reviews', category: 'facts', title: 'Reviewing and endorsing facts', summary: 'How facts become trusted, and what each status means.',
-    keywords: 'review endorse endorsement verdict correct gap incorrect status unchecked disputed checked double trust validate',
+    keywords: 'review endorse endorsement deny denied validate verdict correct gap incorrect status unchecked disputed checked double trust validate',
     blocks: [
       live((c) => c.facts.to_review.length ? [line(`${n(c.facts.to_review_count, 'fact')} await your review. Start with:`, c.facts.to_review.map(toFact)), c.facts.disputed.length ? line('Disputed, and worth a look:', c.facts.disputed.map(toFact)) : null].filter(Boolean) : [line(c.facts.total ? 'You have reviewed every fact of this project.' : 'There is nothing to review yet.')]),
       h('Endorse'),
       p('**Endorse** is one click at the top of a fact. It means that you checked this revision and consider it correct. Click again to withdraw.'),
+      h('Deny'),
+      p('**Deny** is next to it. It means that you found an error, and asks you to point to it. The fact becomes **Disputed**, and facts relying on it are flagged. Only human endorsement lets a fact support a [ratified answer](help:answers).'),
       h('Write a review'),
       steps('Open the **Reviews** tab.', 'Choose **Correct**, **Gap** or **Incorrect**.', 'Explain what you checked. An explanation is required for a gap or an error.', 'Click **Submit review**.'),
       h('Status'),
@@ -350,12 +434,12 @@ export const ARTICLES = [
     slug: 'ai-client', category: 'ai', title: 'Connecting your AI client', summary: 'Create a personal API key and let your AI work on the project.',
     keywords: 'api key personal token ai client claude code connect extract facts instructions',
     blocks: [
-      p('A **personal API key** lets your own AI client read what you can read, and submit facts, reviews and Lean proofs.'),
+      p('A **personal API key** lets your own AI client read what you can read, and submit facts, reviews, Lean proofs, open questions, proof strategies and proposed answers.'),
       live((c) => [line(c.me.keys ? `You have ${n(c.me.keys, 'active key')}.` : 'You have no API key yet.', [{ label: 'Open your keys', to: { path: '#/profile' } }]), line(`Project id to give your client: \`${c.project.id}\`.`)]),
       h('Set it up'),
       steps('Open [your profile](app:profile), under **Personal API keys**.', 'Name the key and click **Create key**.', '**Copy it now:** it is shown only once.', 'Copy the setup commands into the terminal of your AI client.', 'Give it the instructions shown on the same screen.'),
       h('What your client can do'),
-      table(['Can', 'Cannot'], ['Read everything you can read', 'Send messages or comments'], ['Submit and revise its facts', 'Change files or the bibliography'], ['Submit reviews and Lean proofs', 'Manage members or retract facts']),
+      table(['Can', 'Cannot'], ['Read everything you can read', 'Send messages or comments'], ['Submit and revise its facts', 'Change files or the bibliography'], ['Add questions, revise strategies and propose answers', 'Ratify an answer, or declare a question solved or a strategy successful'], ['Submit reviews and Lean proofs', 'Manage members or retract facts']),
       h('Ask it to'),
       list('**Extract** results from a paper or a discussion, with the page and an exact quote.', '**Deduce** new results, with a proof.', '**Review** a fact with a different model.', '**Import** a [Danus](help:danus) fact graph.'),
       warn('Treat a key like a password. Revoke it on your profile if it may have leaked. Before citing a private conversation, your client must ask you, because every project member sees facts.'),
@@ -457,11 +541,11 @@ export const ARTICLES = [
 ];
 
 /** The article explaining each area of the application. */
-export const VIEW_HELP = { overview: 'question', conversations: 'conversations', facts: 'facts-overview', files: 'files', bib: 'bibliography', members: 'people', help: 'welcome' };
+export const VIEW_HELP = { overview: 'question', questions: 'open-questions', conversations: 'conversations', facts: 'facts-overview', files: 'files', bib: 'bibliography', members: 'people', help: 'welcome' };
 
 /** The article covering each server feature. Adding a controller without help makes the tests fail. */
 export const CONTROLLER_HELP = {
-  AuthController: 'account', ProjectController: 'question', AgentController: 'project-agents', KeyController: 'ai-client', BibController: 'bibliography',
+  AuthController: 'account', ProjectController: 'question', DashboardController: 'question', ReferenceController: 'references', QuestionController: 'open-questions', AgentController: 'project-agents', KeyController: 'ai-client', BibController: 'bibliography',
   DocumentController: 'files', FactController: 'facts-overview', ConversationController: 'conversations', CommentController: 'comments',
   NotificationController: 'notifications', ExportController: 'download-project', SearchController: 'search', HelpController: 'welcome',
 };
@@ -473,8 +557,12 @@ export function nextSteps(c) {
   const out = [];
   const u = c.unread || {};
   if (c.conversations.unread.length) out.push({ icon: 'mail', text: `Read ${n(u.conversation || c.conversations.unread.length, 'new message')}`, to: { view: 'conversations', id: c.conversations.unread[0].id }, help: 'conversations' });
+  if (c.questions.at_risk.length) out.push({ icon: 'eye', text: `Check the answer to “${c.questions.at_risk[0].title}”`, to: { view: 'questions', id: c.questions.at_risk[0].id }, help: 'answers' });
+  if (c.questions.pending.length) out.push({ icon: 'check-circle', text: `Ratify an answer to “${c.questions.pending[0].title}”`, to: { view: 'questions', id: c.questions.pending[0].id }, help: 'answers' });
   if (c.facts.disputed.length) out.push({ icon: 'graph', text: `Look at ${n(c.facts.by_status.disputed || 0, 'disputed fact')}`, to: { view: 'facts', id: c.facts.disputed[0].id }, help: 'reviews' });
   if (c.facts.to_review.length) out.push({ icon: 'check-circle', text: `Review ${n(c.facts.to_review_count, 'fact')}`, to: { view: 'facts', id: c.facts.to_review[0].id }, help: 'reviews' });
+  if (!c.questions.total) out.push({ icon: 'target', text: 'State the big questions of this project', to: { view: 'questions' }, help: 'open-questions' });
+  else if (c.questions.without_strategy.length) out.push({ icon: 'target', text: `Propose a strategy for “${c.questions.without_strategy[0].title}”`, to: { view: 'questions', id: c.questions.without_strategy[0].id }, help: 'proof-strategies' });
   if (c.thread) out.push({ icon: 'comment', text: 'Answer an open comment thread', to: { view: c.thread.view, id: c.thread.id, query: { comment: c.thread.comment } }, help: 'comments' });
   if (!c.facts.total) out.push({ icon: 'key', text: 'Connect your AI client to build the fact database', to: { path: '#/profile' }, help: 'ai-client' });
   if (!c.files.total) out.push({ icon: 'upload', text: 'Upload a first paper', to: { view: 'files', query: { upload: 1 } }, help: 'files' });

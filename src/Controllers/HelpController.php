@@ -25,6 +25,7 @@ final class HelpController
             'project' => ['id' => (int)$project['id'], 'title' => $project['title'], 'status' => $project['status'], 'role' => $role],
             'me' => ['id' => $me, 'name' => Auth::user()['name'], 'keys' => (int)Db::value('SELECT COUNT(*) FROM user_api_keys WHERE user_id = ? AND revoked_at IS NULL', [$me])],
             'unread' => (object)$state['totals'],
+            'questions' => self::questions($pid, $state['items']),
             'facts' => self::facts($pid, $me, $state['items']['fact']),
             'files' => self::files($pid, $state['items']['document']),
             'bib' => self::bibliography($pid),
@@ -32,6 +33,32 @@ final class HelpController
             'thread' => self::openThread($pid, $me),
             'people' => self::people($pid),
         ]);
+    }
+
+    private static function questions(int $pid, array $unread): array
+    {
+        $all = QuestionController::summary($pid);
+        $brief = fn($q) => ['id' => $q['id'], 'title' => $q['title']];
+        $closed = ['solved', 'refuted', 'abandoned'];
+        $open = array_values(array_filter($all, fn($q) => !in_array($q['status'], $closed, true)));
+        $without = array_values(array_filter($open, fn($q) => !$q['strategies']));
+        $blocked = [];
+        $strategies = 0;
+        foreach ($all as $q) {
+            $strategies += count($q['strategies']);
+            foreach ($q['strategies'] as $s) if ($s['status'] === 'blocked') $blocked[] = ['id' => $q['id'], 'strategy' => $s['id'], 'title' => $s['title']];
+        }
+        $new = array_values(array_filter($all, fn($q) => isset($unread['oquestion'][$q['id']])));
+        $pending = array_values(array_filter($all, fn($q) => $q['pending_answers'] > 0));
+        $risk = array_values(array_filter($all, fn($q) => $q['answer_at_risk']));
+        return [
+            'total' => count($all), 'big' => count(array_filter($all, fn($q) => $q['parent_id'] === null)), 'open' => count($open), 'strategies' => $strategies,
+            'top' => array_map($brief, array_slice(array_values(array_filter($open, fn($q) => $q['parent_id'] === null)), 0, self::SAMPLE)),
+            'without_strategy' => array_map($brief, array_slice($without, 0, self::SAMPLE)), 'without_strategy_count' => count($without),
+            'pending' => array_map($brief, array_slice($pending, 0, self::SAMPLE)), 'pending_count' => count($pending),
+            'at_risk' => array_map($brief, array_slice($risk, 0, self::SAMPLE)),
+            'blocked' => array_slice($blocked, 0, self::SAMPLE), 'unread' => array_map($brief, array_slice($new, 0, self::SAMPLE)),
+        ];
     }
 
     private static function facts(int $pid, int $me, array $unread): array
@@ -116,12 +143,13 @@ final class HelpController
                          LEFT JOIN conversation_participants p ON c.target_type = 'conversation' AND p.conversation_id = c.target_id AND p.user_id = ?
                          LEFT JOIN documents d ON c.target_type = 'document' AND d.id = c.target_id
                          LEFT JOIN facts f ON c.target_type = 'fact' AND f.id = c.target_id
+                         LEFT JOIN open_questions q ON c.target_type = 'oquestion' AND q.id = c.target_id
                          WHERE c.project_id = ? AND c.parent_id IS NULL AND c.resolved = 0
-                           AND (c.target_type = 'bib' OR p.user_id IS NOT NULL OR (d.id IS NOT NULL AND d.deleted_at IS NULL) OR (f.id IS NOT NULL AND f.deleted_at IS NULL))
+                           AND (c.target_type = 'bib' OR p.user_id IS NOT NULL OR (d.id IS NOT NULL AND d.deleted_at IS NULL) OR (f.id IS NOT NULL AND f.deleted_at IS NULL) OR (q.id IS NOT NULL AND q.deleted_at IS NULL))
                          ORDER BY c.id DESC LIMIT 1", [$me, $pid]);
         if (!$rows) return null;
         $c = $rows[0];
-        $views = ['fact' => 'facts', 'document' => 'files', 'bib' => 'bib', 'conversation' => 'conversations'];
+        $views = ['fact' => 'facts', 'document' => 'files', 'bib' => 'bib', 'conversation' => 'conversations', 'oquestion' => 'questions'];
         return ['view' => $views[$c['target_type']], 'id' => (int)$c['target_id'], 'comment' => (int)$c['id']];
     }
 

@@ -55,6 +55,7 @@ final class ExportController
         self::text($x, 'members.json', json_encode($members, self::JSON));
 
         $counts = [
+            'questions' => self::questions($x, $pid),
             'facts' => self::facts($x, $pid),
             'files' => self::documents($x, $pid),
             'references' => self::bibliography($x, $pid),
@@ -83,6 +84,45 @@ final class ExportController
         header('X-Content-Type-Options: nosniff');
         readfile($tmp);
         exit;
+    }
+
+    private static function questions(\stdClass $x, int $pid): int
+    {
+        $all = [];
+        foreach (Db::all('SELECT * FROM open_questions WHERE project_id = ? AND deleted_at IS NULL ORDER BY id', [$pid]) as $row) {
+            $q = QuestionController::present($row);
+            $q['comments'] = self::comments('oquestion', $q['id']);
+            foreach ($q['strategies'] as &$s) $s['comments'] = self::comments('strategy', $s['id']);
+            unset($s);
+            $all[$q['id']] = $q;
+        }
+        $children = [];
+        foreach ($all as $q) $children[$q['parent_id'] ?? 0][] = $q['id'];
+        $md = "# Open questions\n";
+        $walk = function (int $parent, int $level) use (&$walk, &$md, $all, $children) {
+            foreach ($children[$parent] ?? [] as $id) {
+                $q = $all[$id];
+                $md .= "\n" . str_repeat('#', min(6, $level)) . " {$q['title']} [{$q['status']}]\n\n" . ($q['statement_text'] !== '' ? $q['statement_text'] . "\n" : '');
+                if ($q['ai_model']) $md .= "\n_Written by AI: {$q['ai_model']}_\n";
+                foreach ($q['answers'] as $a) {
+                    $md .= "\n**" . ucfirst($a['state']) . " {$a['answer']} answer**, fact `" . ($a['fact']['label'] ?? 'deleted') . "`, proposed by {$a['proposer']}" . ($a['ai_model'] ? " (AI: {$a['ai_model']})" : '')
+                        . ($a['ratified_by_name'] ? ", ratified by {$a['ratified_by_name']}" : '') . ($a['closed_note'] ? ". Note: {$a['closed_note']}" : '') . "\n";
+                    if ($a['rationale_text'] !== '') $md .= "\n{$a['rationale_text']}\n";
+                }
+                foreach ($q['strategies'] as $s) {
+                    $md = "\n**Strategy: {$s['title']}** [{$s['status']}], revision {$s['current_revision']}\n\n" . ($s['body_text'] !== '' ? $s['body_text'] . "\n" : '');
+                    foreach ($s['revisions'] as $v) {
+                        $md .= "- r{$v['revision_no']} {$v['created_at']} UTC, {$v['author_name']}" . ($v['ai_model'] ? " (AI: {$v['ai_model']})" : '') . ": " . str_replace("\n", ' ', $v['change_note']) . "\n";
+                    }
+                }
+                $md .= self::commentsMarkdown($q['comments']);
+                $walk($id, $level + 1);
+            }
+        };
+        $walk(0, 2);
+        self::text($x, 'questions/questions.md', $md);
+        self::text($x, 'questions/questions.json', json_encode(array_values($all), self::JSON));
+        return count($all);
     }
 
     private static function facts(\stdClass $x, int $pid): int
@@ -247,6 +287,7 @@ final class ExportController
             . "| Content | Where |\n|---|---|\n"
             . "| The open question | `question.md` |\n"
             . "| Members | `members.json` |\n"
+            . "| {$counts['questions']} open questions and sub-questions, with proof strategies and their history | `questions/` |\n"
             . "| {$counts['facts']} facts, with reviews, Lean proofs and traceability | `facts/` |\n"
             . "| {$counts['files']} files, with every version and its LaTeX sources | `files/` |\n"
             . "| {$counts['references']} references, with BibTeX and PDFs | `bibliography/` |\n"

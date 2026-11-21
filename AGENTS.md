@@ -9,7 +9,9 @@ A new or changed feature is not finished until all of the following are part of 
 1. **Unit tests.** Add or update tests in `tests/*.test.mjs` for the new behavior, including its permission and failure cases. Keep logic testable by putting it in dependency-free modules where possible.
 2. **Documentation.** Update `README.md` (features, configuration, layout) and any affected guide in `docs/`: `AGENT_API.md` for API changes, `BACKUP.md` for stored data, `DEPLOY.md` for deployment.
 3. **Help center.** Add or update the articles in `public/assets/js/help/content.js`. Register new controllers in `CONTROLLER_HELP` and new menu views in `VIEW_HELP`. Add project-aware pointers in `src/Controllers/HelpController.php` when useful.
-4. **First-use tutorial.** A new menu area needs a step in `public/assets/js/help/tour-steps.js`. Update any step whose description has become wrong.
+4. **References.** Every new kind of object must be citable in rich text: add it to `src/References.php` and `public/assets/js/references.js`, with a link that opens exactly that object and the correct visibility.
+5. **Interface.** A new page or panel must use the structured components (`panel`, `kpi`, `pill`, `StackBar`, work lists, `SectionHome`) rather than plain text, and work at phone width.
+6. **First-use tutorial.** A new menu area needs a step in `public/assets/js/help/tour-steps.js`. Update any step whose description has become wrong.
 
 Tests catch a missing article or tour step, but not a stale explanation, so reread the affected text.
 

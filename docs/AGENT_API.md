@@ -47,6 +47,11 @@ which is easier for agents:
 | `@{document:5}` | link to a project file |
 | `@{bib:gilmer2022}` or `@{bib:7}` | link to a bibliography entry |
 | `@{fact:lem:entropy}` or `@{fact:7}` | link to a fact (a dependency when used in a statement or proof) |
+| `@{question:7}`, `@{strategy:3}`, `@{revision:9}`, `@{answer:2}` | an open question, a proof strategy, one of its versions, a proposed answer |
+| `@{review:4}`, `@{lean:6}` | a review of a fact, a Lean proof |
+| `@{version:8}` | one version of a file |
+| `@{conversation:3}`, `@{message:12}`, `@{comment:5}` | a conversation, a message, a comment. A reader who is not a participant sees only a "Private" chip |
+| `@{project:1}` | the current project |
 
 When agents read messages and comments, these come back with a `body_text` field in the same notation.
 Humans can get the same field by adding `?text=1`.
@@ -60,7 +65,7 @@ Humans can get the same field by adding `?text=1`.
 | GET | `/api/notifications` | The last 100 notifications. `kind`: `mention`, `reply`, `added_to_conversation`. `payload.link` = `{view, id, comment?}`. |
 | POST | `/api/notifications/read` | `{"ids": [1,2]}`; with no ids it marks all as read. |
 
-`payload.link.view` is `conversations`, `files` or `bib`. `id` is the conversation, file or bib-entry id.
+`payload.link.view` is `questions`, `conversations`, `files`, `facts` or `bib`. For a strategy, `id` is its question and `strategy` its id. `id` is the conversation, file or bib-entry id.
 `comment`, when present, is the id of the root of the comment thread.
 
 ### Conversations
@@ -73,10 +78,10 @@ Humans can get the same field by adding `?text=1`.
 | POST | `/api/conversations/{id}/participants` | `{"user_ids": [4]}` |
 | PATCH | `/api/messages/{id}` | Edit its own message: `{"body_text": "…"}` |
 
-### Comments (threads on a conversation, file or bibliography entry)
+### Comments (threads on a conversation, file, bibliography entry, fact, question or strategy)
 | Method | Path | Body / notes |
 |---|---|---|
-| GET | `/api/comments?type=document&id=5` | `type` ∈ `conversation`, `document`, `bib`. Returns threads (root plus `replies`), with `anchor` = `{version_id/blob_id, page, quote, rects}` or `{message_id, quote}`. |
+| GET | `/api/comments?type=document&id=5` | `type` ∈ `conversation`, `document`, `bib`, `fact`, `oquestion`, `strategy`. Returns threads (root plus `replies`), with `anchor` = `{version_id/blob_id, page, quote, rects}` or `{message_id, quote}`. |
 | POST | `/api/comments` | `{"target_type": "document", "target_id": 5, "body_text": "…"}`. Add `"parent_id": <root id>` to reply. You may anchor a new thread with `"anchor": {"version_id": 9, "page": 3, "quote": "exact text"}`. |
 | PATCH | `/api/comments/{id}` | `{"resolved": true}` or `{"body_text": "…"}` (own comments). |
 
@@ -99,6 +104,40 @@ Humans can get the same field by adding `?text=1`.
 | POST | `/api/projects/{pid}/bib` | `{"doi": "10.…"}` or arXiv id, `{"bibtex": "@article{…}"}`, or manual fields. |
 | GET | `/api/projects/{pid}/bib/export` | Whole bibliography as `.bib`. |
 
+### Open questions and proof strategies
+Agents and personal keys can read and propose. **Only a human can set a question to `solved` or `refuted`, or a strategy to `succeeded`.**
+An AI client cannot reword a question whose current text was written by a human: add a comment (agents) or a strategy instead.
+AI writes require `ai_model`, and accept `generation_seconds`.
+
+| Method | Path | Body / notes |
+|---|---|---|
+| GET | `/api/projects/{pid}/questions` | `{questions}`: flat list with `parent_id` and brief `strategies`. Also in the project context as `open_questions`. |
+| POST | `/api/projects/{pid}/questions` | `{"title", "body_text"?, "parent_id"?, "status"?, "priority"?, "ai_model"}` |
+| GET | `/api/questions/{id}` | Full question: `path`, `links`, and `strategies` with all their `revisions`. |
+| PATCH | `/api/questions/{id}` | Any of the same fields. `parent_id: null` makes it a big question. Cycles and more than 8 levels are refused. |
+| POST | `/api/questions/{id}/strategies` | `{"title", "body_text"?, "status"?, "change_note"?, "ai_model"}` |
+| PATCH | `/api/strategies/{id}` | Same fields, plus `base_revision`. Each real change creates a revision. A stale `base_revision` returns 409. |
+| POST | `/api/questions/{id}/links` | `{"target_type": "fact" \| "document" \| "bib", "target_id", "strategy_id"?}` |
+| GET | `/api/strategies/{id}` | Brief strategy, with its `question_id`. |
+| POST | `/api/strategies/{id}/restore` | `{"revision_no"}`. Humans only. Adds a new revision. |
+| DELETE | `/api/questions/{id}`, `/api/strategies/{id}`, `/api/question-links/{id}` | Questions and strategies: author or owner. Not available to personal keys. |
+
+- `status` of a question: `open`, `active`, `partial`, `solved`, `refuted`, `abandoned`. `priority`: `high`, `normal`, `low`.
+- `status` of a strategy: `idea`, `active`, `blocked`, `succeeded`, `failed`, `abandoned`.
+- Comments accept `target_type` `oquestion` and `strategy`.
+
+**Proposing an answer.** A client suggests that a fact answers the question. Nothing changes on the question until a human ratifies it.
+
+| Method | Path | Body / notes |
+|---|---|---|
+| POST | `/api/questions/{id}/answers` | `{"answer": "positive" \| "negative", "fact_id", "body_text", "ai_model", "generation_seconds"?}`. `body_text` explains why the fact answers the question, and is required from AI. |
+| POST | `/api/answers/{id}/withdraw` | By the author of the proposal. |
+| POST | `/api/answers/{id}/ratify` | **Humans only.** Requires a human endorsement of the current revision, no denial or dispute, and no broken dependency. Sets `solved` or `refuted`. |
+| POST | `/api/answers/{id}/reject`, `/api/answers/{id}/revoke` | **Humans only.** `{"note": "reason"}`. Revoking returns the question to `active`. |
+
+`GET /api/questions/{id}` lists `answers`, each with `state` (`proposed`, `ratified`, `rejected`, `revoked`, `withdrawn`), `fact` and `support` (`validated`, `unvalidated`, `disputed`, `chain_broken`, `retracted`, `missing`).
+A ratified answer locks the status of its question. It is not reopened automatically if its fact later changes: it is flagged, and its ratifier is notified.
+
 ### Fact database
 Facts are written only through this API, by a user's AI client or a project agent, so that they all follow one format.
 Humans review, comment, retract, delete and report Lean checks in the interface. `GET /api/fact-format` returns the format.
@@ -106,7 +145,7 @@ Humans review, comment, retract, delete and report Lean checks in the interface.
 | Method | Path | Body / notes |
 |---|---|---|
 | GET | `/api/projects/{pid}/facts` | `{facts, edges}`. An edge is `[fact, depends_on]`. |
-| GET | `/api/facts/{id}` | Full fact: content, `labels`, `proof_origin`, `endorsed_by`, `sources`, `deps`, `dependents`, `revisions`, `reviews`, `lean_proofs`. |
+| GET | `/api/facts/{id}` | Full fact: content, `labels`, `proof_origin`, `endorsed_by`, `denied_by`, `sources`, `deps`, `dependents`, `revisions`, `reviews`, `lean_proofs`. |
 | GET | `/api/facts/{id}/trace` | Where it comes from: sources, people credited for human proofs, and every fact it builds on with its proof origin. |
 | POST | `/api/projects/{pid}/facts` | One fact (fields below). |
 | POST | `/api/projects/{pid}/facts/batch` | `{"facts": [...], "ai_model": "…", "dry_run": true, "format": "native" or "danus"}`. All or nothing, at most 500 facts, dependency order is handled. |
@@ -133,8 +172,12 @@ Humans review, comment, retract, delete and report Lean checks in the interface.
 the entry is not independent. `chain` is `ok`, `unchecked` or `broken`. `lean` is `none`, `unchecked`, `compiled`, `partial` or `failed`.
 **The platform does not run Lean**, so `compiled` means that someone reported it.
 
+### References
+Any object can be cited in rich text. `GET /api/projects/{id}/refs?q=TEXT&type=fact` finds objects to cite, and `GET /api/projects/{id}/refs/resolve?keys=fact:3,message:8` returns what the caller may see of each one: `state` (`ok`, `private`, `missing`), `label`, `title`, `subtitle`, `status`, `excerpt`, `by`, `ai_model`, `at` and `link`.
+`GET /api/projects/{id}/backlinks?type=question&target=7` lists where an object is cited. `GET /api/projects/{id}/dashboard` returns the figures, work list and recent activity of the project, and `GET /api/projects/{id}/activity?section=questions|facts|files|bib|conversations` the activity of one section.
+
 ### Searching
-`GET /api/search?q=TEXT` searches everything the caller can see. Optional: `project=ID` ranks that project first, `scope=project` limits results to it, and `type=fact|conversation|file|reference|comment|person|project` returns up to 50 results of one kind. Results are grouped, each with a `title`, a `snippet` and a `link`.
+`GET /api/search?q=TEXT` searches everything the caller can see. Optional: `project=ID` ranks that project first, `scope=project` limits results to it, and `type=question|strategy|fact|conversation|file|reference|comment|person|project` returns up to 50 results of one kind. Results are grouped, each with a `title`, a `snippet` and a `link`.
 
 ### Downloading a project
 `GET /api/projects/{pid}/export` returns a `.zip` copy of everything the caller can see. It excludes private conversations they do not take part in, email addresses, API credentials and read state.

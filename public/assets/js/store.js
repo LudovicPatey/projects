@@ -11,7 +11,7 @@ export const store = reactive({
   user: null,
   dev: false,
   project: null,
-  mentionables: { users: [], documents: [], bib: [], facts: [] },
+  mentionables: { users: [], documents: [], bib: [], facts: [], questions: [], strategies: [] },
   counters: { notifications: 0, conversations: 0, totals: {}, unread: {} },
   route: parseRoute(),
   toasts: [],

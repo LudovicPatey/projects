@@ -82,6 +82,8 @@ final class FactController
             unset($f['labels_json']);
             $f['endorsed_by'] = array_values(array_map(fn($v) => ['id' => (int)$v['reviewer_id'], 'name' => $v['reviewer_name']],
                 array_filter($reviews[$id] ?? [], fn($v) => $v['reviewer_kind'] === 'human' && $v['verdict'] === 'correct')));
+            $f['denied_by'] = array_values(array_map(fn($v) => ['id' => (int)$v['reviewer_id'], 'name' => $v['reviewer_name']],
+                array_filter($reviews[$id] ?? [], fn($v) => $v['reviewer_kind'] === 'human' && $v['verdict'] === 'incorrect')));
             $f['statement_text'] = Sanitizer::toText($f['statement_html']);
             unset($f['statement_html']);
             $f['deps'] = [];
@@ -349,6 +351,7 @@ final class FactController
                 Activity::touch($pid, 'fact', $id, $changed ? 'revision' : 'updated');
             }
         });
+        if ($changed) QuestionController::factChanged($pid, $id, "{$f['label']} was revised and needs a new endorsement");
         Response::json(self::present(Access::fact($id)));
     }
 
@@ -358,6 +361,9 @@ final class FactController
         if ((int)$f['created_by'] !== Auth::id()) Access::owner((int)$f['project_id']);
         if (Db::value('SELECT 1 FROM fact_deps d JOIN facts a ON a.id = d.fact_id WHERE d.depends_on_id = ? AND a.deleted_at IS NULL', [$f['id']])) {
             throw new HttpError(409, 'Other facts depend on this one. Retract it instead, so that they are flagged.');
+        }
+        if (QuestionController::hasRatifiedAnswer((int)$f['id'])) {
+            throw new HttpError(409, 'This fact supports a ratified answer. Retract it instead, so that the question is flagged.');
         }
         Db::tx(function () use ($f) {
             Db::run('DELETE FROM fact_deps WHERE fact_id = ?', [$f['id']]);
@@ -374,6 +380,7 @@ final class FactController
         if ($reason === '') throw new HttpError(422, 'Please give a reason for retracting this fact.');
         Db::update('facts', ['retracted_at' => Db::now(), 'retracted_by' => Auth::id(), 'retract_reason' => $reason, 'updated_at' => Db::now()], 'id = :id', ['id' => $f['id']]);
         Activity::touch((int)$f['project_id'], 'fact', (int)$f['id'], 'retracted');
+        QuestionController::factChanged((int)$f['project_id'], (int)$f['id'], "{$f['label']} was retracted");
 
         $g = self::graph((int)$f['project_id']);
         $byId = array_column($g['facts'], null, 'id');
@@ -434,6 +441,7 @@ final class FactController
             ]);
         }
         Activity::touch((int)$f['project_id'], 'fact', (int)$f['id'], 'review', $rid);
+        if ($verdict !== 'correct') QuestionController::factChanged((int)$f['project_id'], (int)$f['id'], "{$f['label']} was " . ($verdict === 'incorrect' ? 'denied' : 'reported with a gap'));
         $link = ['view' => 'facts', 'id' => (int)$f['id']];
         if ($body) Notify::mentions((int)$f['project_id'], 'fact_review', $rid, $body['mentions'], $link, $body['text'], null, !$old);
         if ((int)$rev['author_id'] !== Auth::id() && Access::isMember((int)$f['project_id'], (int)$rev['author_id'])) {
@@ -450,6 +458,7 @@ final class FactController
         if ((int)$v['reviewer_id'] !== Auth::id()) throw new HttpError(403, 'You can only withdraw your own review.');
         Db::run('DELETE FROM fact_reviews WHERE id = ?', [$v['id']]);
         Db::run("DELETE FROM mentions WHERE source_type = 'fact_review' AND source_id = ?", [$v['id']]);
+        if ($v['verdict'] === 'correct') QuestionController::factChanged((int)$f['project_id'], (int)$f['id'], "An endorsement of {$f['label']} was withdrawn");
         Response::json(self::present($f));
     }
 

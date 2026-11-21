@@ -1,7 +1,10 @@
 // Rich-text editor (Quill 2) with @mentions of researchers, files and bibliography entries,
 // and a renderer for stored rich text (KaTeX for $...$ math, clickable mentions).
-import { store, go } from './store.js';
+import { store } from './store.js';
+import { REF_TYPES, parseRefQuery, sortRefs } from './references.js';
+import { hydrateChips, openChip, searchRefs } from './refs-client.js';
 import { escapeHtml, markTerms } from './util.js';
+import { mentionMatches, mentionQuery } from './questions-model.js';
 
 const Embed = Quill.import('blots/embed');
 
@@ -16,6 +19,7 @@ class MentionBlot extends Embed {
     node.setAttribute('data-id', value.id);
     node.setAttribute('data-label', value.label);
     node.textContent = '@' + value.label;
+    if (String(value.label).includes('$') && window.renderMathInElement) window.renderMathInElement(node, { delimiters: [{ left: '$', right: '$', display: false }], throwOnError: false });
     return node;
   }
 
@@ -32,7 +36,6 @@ Quill.register(MentionBlot);
 
 const FORMATS = ['bold', 'italic', 'underline', 'strike', 'link', 'blockquote', 'code-block', 'code', 'list', 'header', 'indent', 'mention', 'script'];
 
-const MENTION_ICONS = { user: 'user', document: 'files', bib: 'book', fact: 'graph' };
 
 export const RichEditor = {
   props: {
@@ -49,14 +52,16 @@ export const RichEditor = {
   template: `<div class="rte" :class="{compact}">
     <div ref="editor" :style="minHeight ? {minHeight: minHeight + 'px'} : null"></div>
     <div v-if="menu.open" class="mention-menu" :style="{top: menu.top + 'px', left: menu.left + 'px'}">
-      <div v-for="(it, i) in menu.items" :key="it.type + it.id" class="mi" :class="{active: i === menu.index}"
+      <template v-for="(it, i) in menu.items" :key="it.type + it.id"><div v-if="!i || menu.items[i - 1].type !== it.type" class="mi-group">{{ types[it.type].plural }}</div>
+      <div class="mi" :class="{active: i === menu.index}"
            @mousedown.prevent="pick(it)" @mouseenter="menu.index = i">
-        <icon :name="it.agent ? 'bot' : icons[it.type]" :size="14"/><span class="mi-label">{{ it.label }}</span><small>{{ it.sub }}</small>
-      </div>
+        <icon :name="it.agent ? 'bot' : types[it.type].icon" :size="14"/><span class="mi-label"><math-text :text="it.label"/></span><small>{{ it.sub }}</small>
+      </div></template>
       <div v-if="!menu.items.length" class="mi empty">No match for “{{ menu.query }}”</div>
+      <div class="mi-hint">Narrow with <code>fact:</code> <code>q:</code> <code>file:</code> <code>msg:</code> <code>lean:</code></div>
     </div>
   </div>`,
-  created() { this.icons = MENTION_ICONS; },
+  created() { this.types = REF_TYPES; },
   mounted() {
     const toolbar = this.compact
       ? [['bold', 'italic', 'code'], ['link', 'blockquote'], [{ list: 'bullet' }]]
@@ -85,8 +90,8 @@ export const RichEditor = {
     onKey(e) {
       if (this.menu.open) {
         const n = this.menu.items.length;
-        if (e.key === 'ArrowDown' && n) { this.menu.index = (this.menu.index + 1) % n; this.stop(e); return; }
-        if (e.key === 'ArrowUp' && n) { this.menu.index = (this.menu.index - 1 + n) % n; this.stop(e); return; }
+        if (e.key === 'ArrowDown' && n) { this.menu.index = (this.menu.index + 1) % n; this.reveal(); this.stop(e); return; }
+        if (e.key === 'ArrowUp' && n) { this.menu.index = (this.menu.index - 1 + n) % n; this.reveal(); this.stop(e); return; }
         if ((e.key === 'Enter' || e.key === 'Tab') && n) { this.pick(this.menu.items[this.menu.index]); this.stop(e); return; }
         if (e.key === 'Escape') { this.close(); this.stop(e); return; }
       }
@@ -97,20 +102,41 @@ export const RichEditor = {
     checkMention() {
       const sel = this.q.getSelection();
       if (!sel) return this.close();
-      const start = Math.max(0, sel.index - 60);
+      const start = Math.max(0, sel.index - 80);
       const before = this.q.getText(start, sel.index - start);
-      const m = before.match(/(?:^|\s)@([^\s@]{0,40})$/u);
-      if (!m) return this.close();
-      this.menu.query = m[1];
-      this.menu.start = sel.index - m[1].length - 1;
-      this.menu.items = this.search(m[1]);
+      const query = mentionQuery(before);
+      if (query === null) return this.close();
+      const parsed = parseRefQuery(query);
+      const local = this.search(parsed.term).filter((x) => !parsed.type || x.type === parsed.type);
+      const items = mentionMatches(query, sortRefs(local));
+      if (items === null) return this.close();
+      this.menu.query = query;
+      this.menu.start = sel.index - query.length - 1;
+      this.menu.items = items;
       this.menu.index = 0;
       const b = this.q.getBounds(this.menu.start);
       const c = this.$refs.editor;
       this.menu.top = c.offsetTop + b.top + b.height + 4;
       this.menu.left = Math.max(0, Math.min(c.offsetLeft + b.left, c.clientWidth - 260));
       this.menu.open = true;
+      this.fetchRefs(query, parsed);
     },
+    /** Every other kind of object comes from the server, which applies the reader's access. */
+    fetchRefs(query, parsed) {
+      clearTimeout(this.refTimer);
+      this.refTimer = setTimeout(async () => {
+        const found = await searchRefs(parsed.term, parsed.type);
+        if (!this.menu.open || this.menu.query !== query) return;
+        const rows = found.filter((x) => x.state === 'ok').map((x) => ({ type: x.type, id: x.id, label: x.label, sub: x.type === 'user' ? x.subtitle : (x.subtitle || x.title), agent: x.status === 'agent' }));
+        const items = mentionMatches(query, sortRefs(rows));
+        if (items === null) return this.close();
+        const current = this.menu.items[this.menu.index];
+        this.menu.items = items;
+        const at = current ? items.findIndex((x) => x.type === current.type && x.id === current.id) : 0;
+        this.menu.index = Math.max(0, at);
+      }, 130);
+    },
+    reveal() { this.$nextTick(() => this.$el.querySelector('.mi.active')?.scrollIntoView({ block: 'nearest' })); },
     search(query) {
       const q = query.toLowerCase();
       const has = (...xs) => xs.some((x) => String(x || '').toLowerCase().includes(q));
@@ -118,6 +144,10 @@ export const RichEditor = {
       return [
         ...mm.users.filter((u) => has(u.name, u.orcid)).slice(0, 6)
           .map((u) => ({ type: 'user', id: u.id, label: u.name, sub: u.kind === 'agent' ? 'AI agent' : u.orcid, agent: u.kind === 'agent' })),
+        ...(mm.questions || []).filter((x) => has(x.title)).slice(0, 5)
+          .map((x) => ({ type: 'question', id: x.id, label: x.title, sub: 'Question' })),
+        ...(mm.strategies || []).filter((x) => has(x.title, x.question)).slice(0, 5)
+          .map((x) => ({ type: 'strategy', id: x.id, label: x.title, sub: 'Strategy' })),
         ...(mm.facts || []).filter((f) => has(f.label, f.title)).slice(0, 6)
           .map((f) => ({ type: 'fact', id: f.id, label: f.label, sub: f.title })),
         ...mm.documents.filter((d) => has(d.title)).slice(0, 5)
@@ -188,7 +218,7 @@ export const MathText = {
 /** Displays sanitized rich text coming from the server. */
 export const RichContent = {
   props: { html: String },
-  template: `<div class="rich" v-html="html" @click="onClick"></div>`,
+  template: `<div class="rich" v-html="html" @click="onClick" @keydown.enter="onClick"></div>`,
   mounted() { this.decorate(); },
   watch: { html() { this.$nextTick(() => this.decorate()); } },
   methods: {
@@ -198,18 +228,15 @@ export const RichContent = {
         n.classList.add('mention-' + n.dataset.type);
         if (n.dataset.type === 'user' && +n.dataset.id === store.user?.id) n.classList.add('me');
       });
+      hydrateChips(el);
       if (window.renderMathInElement) renderMath(el);
       else setTimeout(() => renderMath(el), 500); // KaTeX is loaded with defer
     },
     onClick(e) {
       const m = e.target.closest('.mention');
       if (!m) return;
-      const pid = store.project?.id;
-      const { type, id } = m.dataset;
-      if (type === 'document') go(`/p/${pid}/files/${id}`);
-      else if (type === 'bib') go(`/p/${pid}/bib/${id}`);
-      else if (type === 'fact') go(`/p/${pid}/facts/${id}`);
-      else if (type === 'user') go(`/p/${pid}/members?user=${id}`);
+      e.preventDefault();
+      openChip(m);
     },
   },
 };

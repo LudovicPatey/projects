@@ -12,7 +12,7 @@ use App\{Access, Auth, Db, HttpError, Request, Response};
  */
 final class SearchController
 {
-    private const GROUPS = ['fact' => 'Facts', 'conversation' => 'Conversations', 'file' => 'Files', 'reference' => 'Bibliography',
+    private const GROUPS = ['question' => 'Questions', 'strategy' => 'Strategies', 'fact' => 'Facts', 'conversation' => 'Conversations', 'file' => 'Files', 'reference' => 'Bibliography',
         'comment' => 'Comments', 'person' => 'People', 'project' => 'Projects'];
     private const PREVIEW = 5;
     private const FULL = 50;
@@ -49,6 +49,8 @@ final class SearchController
         foreach (array_keys(self::GROUPS) as $type) {
             if ($wanted !== '' && $wanted !== $type) continue;
             $found[$type] = match ($type) {
+                'question' => self::questions($x),
+                'strategy' => self::strategies($x),
                 'fact' => self::facts($x),
                 'conversation' => self::conversations($x),
                 'file' => self::files($x),
@@ -79,6 +81,32 @@ final class SearchController
     }
 
     // ---------------------------------------------------------------------
+
+    private static function questions(object $x): array
+    {
+        [$in, $params] = Db::in($x->pids);
+        $out = [];
+        foreach (Db::all("SELECT id, project_id, title, statement_html, status, ai_model, updated_at FROM open_questions WHERE project_id IN $in AND deleted_at IS NULL", $params) as $q) {
+            $m = self::match($q['title'], ['statement' => self::plain((string)$q['statement_html']), 'details' => trim($q['status'] . ' ' . $q['ai_model'])], $x->terms);
+            if ($m) $out[] = self::item((int)$q['id'], (int)$q['project_id'], $q['title'], $m, $q['updated_at'], ['view' => 'questions', 'id' => (int)$q['id']], $q['status']);
+        }
+        return $out;
+    }
+
+    /** The current text of each strategy. */
+    private static function strategies(object $x): array
+    {
+        [$in, $params] = Db::in($x->pids);
+        $out = [];
+        foreach (Db::all("SELECT s.id, s.project_id, s.question_id, s.title, s.status, s.updated_at, r.body_html, r.change_note, r.ai_model, q.title AS question
+                          FROM proof_strategies s JOIN strategy_revisions r ON r.strategy_id = s.id AND r.revision_no = s.current_revision
+                          JOIN open_questions q ON q.id = s.question_id
+                          WHERE s.project_id IN $in AND s.deleted_at IS NULL AND q.deleted_at IS NULL", $params) as $s) {
+            $m = self::match($s['title'], ['strategy' => self::plain((string)$s['body_html']), 'question' => $s['question'], 'details' => trim($s['status'] . ' ' . $s['change_note'] . ' ' . $s['ai_model'])], $x->terms);
+            if ($m) $out[] = self::item((int)$s['id'], (int)$s['project_id'], $s['title'], $m, $s['updated_at'], ['view' => 'questions', 'id' => (int)$s['question_id'], 'query' => ['strategy' => (int)$s['id']]], $s['status']);
+        }
+        return $out;
+    }
 
     private static function facts(object $x): array
     {
@@ -167,13 +195,20 @@ final class SearchController
     private static function comments(object $x): array
     {
         [$in, $params] = Db::in($x->pids);
-        $targets = ['fact' => [], 'document' => [], 'bib' => [], 'conversation' => []];
+        $targets = ['fact' => [], 'document' => [], 'bib' => [], 'conversation' => [], 'oquestion' => [], 'strategy' => []];
+        $strategyQuestion = [];
+        foreach (Db::all("SELECT id, title AS t FROM open_questions WHERE project_id IN $in AND deleted_at IS NULL", $params) as $t) $targets['oquestion'][(int)$t['id']] = $t['t'];
+        foreach (Db::all("SELECT s.id, s.title AS t, s.question_id FROM proof_strategies s JOIN open_questions q ON q.id = s.question_id
+                          WHERE s.project_id IN $in AND s.deleted_at IS NULL AND q.deleted_at IS NULL", $params) as $t) {
+            $targets['strategy'][(int)$t['id']] = $t['t'];
+            $strategyQuestion[(int)$t['id']] = (int)$t['question_id'];
+        }
         foreach (Db::all("SELECT id, label AS t FROM facts WHERE project_id IN $in AND deleted_at IS NULL", $params) as $t) $targets['fact'][(int)$t['id']] = $t['t'];
         foreach (Db::all("SELECT id, title AS t FROM documents WHERE project_id IN $in AND deleted_at IS NULL", $params) as $t) $targets['document'][(int)$t['id']] = $t['t'];
         foreach (Db::all("SELECT id, cite_key AS t FROM bib_entries WHERE project_id IN $in", $params) as $t) $targets['bib'][(int)$t['id']] = $t['t'];
         foreach (Db::all("SELECT c.id, c.subject AS t FROM conversations c JOIN conversation_participants p ON p.conversation_id = c.id AND p.user_id = ? WHERE c.project_id IN $in",
             array_merge([$x->me], $params)) as $t) $targets['conversation'][(int)$t['id']] = $t['t'];
-        $views = ['fact' => 'facts', 'document' => 'files', 'bib' => 'bib', 'conversation' => 'conversations'];
+        $views = ['fact' => 'facts', 'document' => 'files', 'bib' => 'bib', 'conversation' => 'conversations', 'oquestion' => 'questions', 'strategy' => 'questions'];
         $out = [];
         foreach (Db::all("SELECT c.id, c.project_id, c.target_type, c.target_id, c.parent_id, c.body_html, c.anchor_json, c.created_at, u.name AS author
                           FROM comments c JOIN users u ON u.id = c.author_id WHERE c.project_id IN $in", $params) as $c) {
@@ -183,6 +218,10 @@ final class SearchController
             $m = self::match('', ['comment' => self::plain($c['body_html']), 'passage' => (string)$anchor, 'author' => $c['author']], $x->terms);
             if (!$m) continue;
             $link = ['view' => $views[$c['target_type']], 'id' => (int)$c['target_id'], 'query' => ['comment' => (int)($c['parent_id'] ?: $c['id'])]];
+            if ($c['target_type'] === 'strategy') {
+                $link['id'] = $strategyQuestion[(int)$c['target_id']];
+                $link['query']['strategy'] = (int)$c['target_id'];
+            }
             $out[] = self::item((int)$c['id'], (int)$c['project_id'], 'On ' . $target, $m, $c['created_at'], $link, $c['author']);
         }
         return $out;

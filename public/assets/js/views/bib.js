@@ -112,13 +112,12 @@ export const BibView = {
       </div>
       <div v-if="tab==='links'" class="pad scroll">
         <div v-if="!backlinks.length" class="empty">This reference has not been @mentioned yet.</div>
-        <a v-for="(b, i) in backlinks" :key="i" class="backlink" :href="link(b.link.view, b.link.id)">
-          <icon :name="b.kind === 'message' ? 'mail' : 'comment'" :size="14"/> {{ b.label }} <span class="muted small">{{ timeAgo(b.at) }}</span></a>
+        <a v-for="(b, i) in backlinks" :key="i" class="backlink" :href="link(b.link.view, b.link.id, b.link.query)">
+          <icon :name="b.kind === 'message' ? 'mail' : b.kind === 'question' ? 'target' : 'comment'" :size="14"/> {{ b.label }} <span class="muted small">{{ timeAgo(b.at) }}</span></a>
       </div>
     </template>
     <div v-else-if="entryError" class="placeholder">{{ entryError }}</div>
-    <div v-else class="placeholder"><icon name="book" :size="40"/><p>Select a reference, or add new ones.</p>
-      <button class="btn primary" @click="adding = true">Add references</button></div>
+    <section-home v-else kind="bib"><button class="btn primary" @click="adding = true"><icon name="plus" :size="15"/> Add references</button></section-home>
   </section>
 
   <section class="col col-comments">
@@ -127,7 +126,7 @@ export const BibView = {
         :filter="threadFilter" :describe="describe"
         @threads="threads = $event" @anchor-click="onThreadClick" @cancel-pending="pending = null" @created="pending = null" @activity="onActivity"/>
     </template>
-    <div v-else class="placeholder small"><icon name="comment" :size="28"/><p>Comments on the selected reference appear here.</p></div>
+    <section-activity v-else kind="bib"/>
   </section>
 
   <modal v-if="adding" title="Add references" @close="adding=false" wide>

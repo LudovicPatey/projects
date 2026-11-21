@@ -53,7 +53,7 @@ export const FactsView = {
     return {
       facts: [], edges: [], loaded: false, search: '', fStatus: 'all', fOrigin: 'all', fLabel: 'all', fLean: 'all', sort: 'recent', lineage: false, showFilters: false,
       fact: null, factError: null, tab: 'content', activeThread: null, backlinks: [],
-      reviewVerdict: 'correct', checkForm: null, trace: null, retracting: null, revView: null,
+      reviewVerdict: 'correct', checkForm: null, trace: null, retracting: null, revView: null, denying: null,
     };
   },
   computed: {
@@ -88,6 +88,7 @@ export const FactsView = {
     },
     labelOptions() { return Object.keys(this.labelCounts).sort(); },
     endorsed() { return this.myReview?.verdict === 'correct'; },
+    denied() { return this.myReview?.verdict === 'incorrect'; },
     banner() {
       const f = this.fact, by = f.ai_model, tool = f.tool ? ` with ${f.tool}` : '';
       if (f.method === 'deduced') return { head: 'AI-deduced', rest: `by ${by}${tool}. Check carefully before relying on it.` };
@@ -116,7 +117,7 @@ export const FactsView = {
       return this.fact || this.factError ? 'facts-graph has-detail' : 'facts-graph';
     },
   },
-  watch: { id: { immediate: true, handler() { this.onRoute(); } } },
+  watch: { id: { immediate: true, handler() { this.onRoute(); } }, 'query.tab'(t) { if (t) { this.tab = t; if (t === 'trace') this.loadTrace(); } } },
   mounted() {
     this.loadList();
     this.timer = setInterval(() => { if (!this.checkForm && !this.retracting) this.loadList(); }, 30000);
@@ -198,10 +199,13 @@ export const FactsView = {
           <div class="fact-byline"><ai-meta :model="fact.ai_model" :user="fact.ai_user_name" :ms="fact.ai_generation_ms"/><span class="muted small">added by {{ fact.author }} · updated {{ timeAgo(fact.updated_at) }}</span></div>
           <div v-if="fact.endorsed_by.length" class="endorsers"><icon name="check-circle" :size="14"/> Endorsed by
             <a v-for="(e, i) in fact.endorsed_by" :key="e.id" :href="link('members', null, {user: e.id})">{{ e.name }}{{ i < fact.endorsed_by.length - 1 ? ', ' : '' }}</a></div>
+          <div v-if="fact.denied_by.length" class="endorsers denied"><icon name="x" :size="14"/> Denied by
+            <a v-for="(e, i) in fact.denied_by" :key="e.id" :href="link('members', null, {user: e.id})">{{ e.name }}{{ i < fact.denied_by.length - 1 ? ', ' : '' }}</a></div>
         </div>
         <div class="doc-actions">
           <button v-if="!fact.retracted_at" class="btn sm endorse" :class="{on: endorsed}" :aria-pressed="endorsed" :title="endorsed ? 'Withdraw your endorsement' : 'Endorse this revision: you checked it and consider it correct'" @click="toggleEndorse">
             <icon name="check" :size="14"/> {{ endorsed ? 'Endorsed' : 'Endorse' }}</button>
+          <button v-if="!fact.retracted_at" class="btn sm deny" :class="{on: denied}" :aria-pressed="denied" :title="denied ? 'Withdraw your denial' : 'Deny this revision: you found an error'" @click="toggleDeny"><icon name="x" :size="14"/> {{ denied ? 'Denied' : 'Deny' }}</button>
           <button v-if="!fact.retracted_at" class="btn sm warn" @click="retracting = {reason: ''}">Retract</button>
           <button v-else class="btn sm" @click="reinstate">Reinstate</button>
           <button class="icon-btn" title="Mark as unread" @click="markItemUnread('fact', fact.id)"><icon name="mail-unread"/></button>
@@ -209,6 +213,10 @@ export const FactsView = {
           <button v-if="mode === 'graph'" class="icon-btn" title="Close" @click="closeFact"><icon name="x"/></button>
         </div>
       </header>
+      <modal v-if="denying" title="Deny this fact" @close="denying = null">
+        <label class="field"><span>What is wrong? Point to the exact step.</span><textarea v-model="denying.reason" rows="4" autofocus></textarea></label>
+        <template #footer><button class="btn ghost" @click="denying = null">Cancel</button><button class="btn danger" :disabled="!denying.reason.trim()" @click="submitDeny">Deny fact</button></template>
+      </modal>
       <nav class="tabs">
         <button :class="{on: tab==='content'}" @click="tab='content'"><icon name="eye" :size="14"/> Fact</button>
         <button :class="{on: tab==='reviews'}" @click="tab='reviews'"><icon name="check-circle" :size="14"/> Reviews <span class="count">{{ currentReviews.length }}</span></button>
@@ -300,8 +308,8 @@ export const FactsView = {
         <a v-for="d in fact.dependents" :key="d.id" class="row-link" :href="factLink(d.id)"><code class="key">{{ d.label }}</code><span class="ellipsis">{{ d.title }}</span><span class="grow"></span><status-tag :status="d.status"/></a>
         <h4 class="mt">Mentioned in</h4>
         <div v-if="!backlinks.length" class="muted small">No mention yet.</div>
-        <a v-for="(b, i) in backlinks" :key="i" class="backlink" :href="link(b.link.view, b.link.id)">
-          <icon :name="b.kind === 'message' ? 'mail' : 'comment'" :size="14"/> {{ b.label }} <span class="muted small">{{ timeAgo(b.at) }}</span></a>
+        <a v-for="(b, i) in backlinks" :key="i" class="backlink" :href="link(b.link.view, b.link.id, b.link.query)">
+          <icon :name="b.kind === 'message' ? 'mail' : b.kind === 'question' ? 'target' : 'comment'" :size="14"/> {{ b.label }} <span class="muted small">{{ timeAgo(b.at) }}</span></a>
       </div>
 
       <div v-if="tab==='trace'" class="pad scroll">
@@ -346,13 +354,12 @@ export const FactsView = {
       </div>
     </template>
     <div v-else-if="factError" class="placeholder">{{ factError }}</div>
-    <div v-else class="placeholder"><icon name="graph" :size="40"/><p>Select a fact. Facts are added by AI clients, so that they all follow the same format.</p>
-      <a class="btn" href="#/profile"><icon name="key" :size="14"/> Personal API keys</a></div>
+    <section-home v-else kind="facts"/>
   </section>
 
   <section v-if="mode === 'list' || fact" class="col col-comments">
     <comments-panel v-if="fact" target-type="fact" :target-id="fact.id" v-model:active-id="activeThread" @created="loadList" @activity="onActivity"/>
-    <div v-else class="placeholder small"><icon name="comment" :size="28"/><p>Comments on the selected fact appear here.</p></div>
+    <section-activity v-else kind="facts"/>
   </section>
 
   <modal v-if="checkForm" title="Report a Lean check" @close="checkForm = null">
@@ -409,6 +416,7 @@ export const FactsView = {
     onRoute() {
       this.activeThread = this.query?.comment ? +this.query.comment : null;
       this.revView = null; this.backlinks = []; this.trace = null;
+      if (['content', 'reviews', 'lean', 'links', 'trace'].includes(this.query?.tab)) this.tab = this.query.tab;
       if (this.id) this.loadFact(); else { this.fact = null; this.factError = null; }
     },
     async loadFact() {
@@ -447,6 +455,14 @@ export const FactsView = {
       this.backlinks = (await attempt(() => api.get(`api/projects/${this.pid}/backlinks?type=fact&target=${this.fact.id}`)))?.backlinks || [];
     },
     async refresh(f) { if (f) this.setFact(f); await this.loadList(); },
+    async toggleDeny() {
+      if (!this.denied) { this.denying = { reason: '' }; return; }
+      await this.refresh(await attempt(() => api.del(`api/facts/${this.fact.id}/reviews/${this.myReview.id}`), 'Denial withdrawn'));
+    },
+    async submitDeny() {
+      const f = await attempt(() => api.post(`api/facts/${this.fact.id}/reviews`, { verdict: 'incorrect', body_text: this.denying.reason }), 'Fact denied');
+      if (f) { this.denying = null; await this.refresh(f); }
+    },
     async submitReview() {
       const body_html = this.$refs.reviewEd?.getHTML() || '';
       await this.refresh(await attempt(() => api.post(`api/facts/${this.fact.id}/reviews`, { verdict: this.reviewVerdict, body_html }), 'Review saved'));

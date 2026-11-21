@@ -135,6 +135,7 @@ final class AgentController
                  FROM bib_entries WHERE project_id = ? ORDER BY cite_key', [$pid]),
             'facts' => array_map(fn($f) => array_intersect_key($f, array_flip(['id', 'label', 'kind', 'title', 'origin', 'ai_model', 'status', 'chain', 'lean', 'current_revision', 'statement_text', 'deps', 'method', 'tool', 'external_id', 'labels', 'proof_origin', 'endorsed_by'])),
                 FactController::graph($pid)['facts']),
+            'open_questions' => QuestionController::summary($pid),
             'conversations' => $convs,
             'unread_notifications' => $notifs,
             'fact_format' => FactController::formatSpec(),

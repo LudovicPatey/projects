@@ -4,7 +4,7 @@ import { store, go } from './store.js';
 import { foldText } from './util.js';
 import { resolveTarget, searchHelp } from './help/content.js';
 
-const ICONS = { fact: 'graph', conversation: 'mail', file: 'files', reference: 'book', comment: 'comment', person: 'user', project: 'home', help: 'help' };
+const ICONS = { question: 'target', strategy: 'route', fact: 'graph', conversation: 'mail', file: 'files', reference: 'book', comment: 'comment', person: 'user', project: 'home', help: 'help' };
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform || '');
 
 export const GlobalSearch = {
@@ -101,7 +101,7 @@ export const GlobalSearch = {
   </div>`,
   methods: {
     optionId(r) { return `gs-${r.type}-${r.project_id}-${r.id}`; },
-    showField(r) { return !['message', 'comment', 'statement', 'question'].includes(r.field); },
+    showField(r) { return !['message', 'comment', 'statement', 'question', 'strategy'].includes(r.field); },
     href(r) {
       if (r.type === 'help') return resolveTarget(`help:${r.id}`, this.pid);
       const l = r.link;

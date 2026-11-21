@@ -156,7 +156,7 @@ CREATE TABLE IF NOT EXISTS messages (
 CREATE TABLE IF NOT EXISTS comments (
   id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   project_id INT UNSIGNED NOT NULL,
-  target_type VARCHAR(20) NOT NULL,       -- 'conversation' | 'document' | 'bib' | 'fact'
+  target_type VARCHAR(20) NOT NULL,       -- 'conversation' | 'document' | 'bib' | 'fact' | 'oquestion' | 'strategy'
   target_id INT UNSIGNED NOT NULL,
   parent_id INT UNSIGNED NULL,
   author_id INT UNSIGNED NOT NULL,
@@ -179,7 +179,7 @@ CREATE TABLE IF NOT EXISTS mentions (
   project_id INT UNSIGNED NOT NULL,
   source_type VARCHAR(20) NOT NULL,       -- 'message' | 'comment' | 'project'
   source_id INT UNSIGNED NOT NULL,
-  mentioned_type VARCHAR(20) NOT NULL,    -- 'user' | 'document' | 'bib'
+  mentioned_type VARCHAR(20) NOT NULL,    -- 'user' | 'document' | 'bib' | 'fact' | 'question' | 'strategy'
   mentioned_id INT UNSIGNED NOT NULL,
   KEY idx_mention_source (source_type, source_id),
   KEY idx_mention_target (mentioned_type, mentioned_id),
@@ -358,7 +358,7 @@ CREATE TABLE IF NOT EXISTS user_api_keys (
 CREATE TABLE IF NOT EXISTS activity (
   id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   project_id INT UNSIGNED NOT NULL,
-  item_type VARCHAR(12) NOT NULL,         -- conversation, fact, document, bib, question, member
+  item_type VARCHAR(12) NOT NULL,         -- conversation, fact, document, bib, question, oquestion, strategy, member
   item_id INT UNSIGNED NOT NULL,
   actor_id INT UNSIGNED NULL,             -- NULL for a user's AI client: its work is new to that user
   kind VARCHAR(20) NOT NULL,
@@ -379,4 +379,104 @@ CREATE TABLE IF NOT EXISTS read_marks (
   PRIMARY KEY (user_id, project_id, item_type, item_id),
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
   FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS open_questions (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  project_id INT UNSIGNED NOT NULL,
+  parent_id INT UNSIGNED NULL,            -- NULL for a big question
+  title VARCHAR(255) NOT NULL,
+  statement_html MEDIUMTEXT NOT NULL,
+  status VARCHAR(12) NOT NULL DEFAULT 'open',
+  priority VARCHAR(8) NOT NULL DEFAULT 'normal',
+  ai_model VARCHAR(120) NULL,             -- model behind the current wording, NULL if human
+  ai_user_id INT UNSIGNED NULL,
+  ai_generation_ms INT UNSIGNED NULL,
+  created_by INT UNSIGNED NOT NULL,
+  updated_by INT UNSIGNED NULL,
+  created_at DATETIME NOT NULL,
+  updated_at DATETIME NOT NULL,
+  deleted_at DATETIME NULL,
+  KEY idx_question_project (project_id, parent_id),
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+  FOREIGN KEY (parent_id) REFERENCES open_questions(id) ON DELETE CASCADE,
+  FOREIGN KEY (created_by) REFERENCES users(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS proof_strategies (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  project_id INT UNSIGNED NOT NULL,
+  question_id INT UNSIGNED NOT NULL,
+  title VARCHAR(255) NOT NULL,
+  status VARCHAR(12) NOT NULL DEFAULT 'idea',
+  current_revision INT UNSIGNED NOT NULL DEFAULT 1,
+  created_by INT UNSIGNED NOT NULL,
+  created_at DATETIME NOT NULL,
+  updated_at DATETIME NOT NULL,
+  deleted_at DATETIME NULL,
+  KEY idx_strategy_question (question_id),
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+  FOREIGN KEY (question_id) REFERENCES open_questions(id) ON DELETE CASCADE,
+  FOREIGN KEY (created_by) REFERENCES users(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS strategy_revisions (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  strategy_id INT UNSIGNED NOT NULL,
+  revision_no INT UNSIGNED NOT NULL,
+  title VARCHAR(255) NOT NULL,
+  status VARCHAR(12) NOT NULL,
+  body_html MEDIUMTEXT NOT NULL,
+  change_note VARCHAR(500) NOT NULL,
+  author_id INT UNSIGNED NOT NULL,
+  ai_model VARCHAR(120) NULL,
+  ai_user_id INT UNSIGNED NULL,
+  ai_generation_ms INT UNSIGNED NULL,
+  created_at DATETIME NOT NULL,
+  UNIQUE KEY uq_strategy_revision (strategy_id, revision_no),
+  FOREIGN KEY (strategy_id) REFERENCES proof_strategies(id) ON DELETE CASCADE,
+  FOREIGN KEY (author_id) REFERENCES users(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS question_links (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  project_id INT UNSIGNED NOT NULL,
+  question_id INT UNSIGNED NOT NULL,
+  strategy_id INT UNSIGNED NOT NULL DEFAULT 0,  -- 0 when the link is on the question itself
+  target_type VARCHAR(12) NOT NULL,       -- fact, document, bib
+  target_id INT UNSIGNED NOT NULL,
+  created_by INT UNSIGNED NOT NULL,
+  created_at DATETIME NOT NULL,
+  UNIQUE KEY uq_question_link (question_id, strategy_id, target_type, target_id),
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+  FOREIGN KEY (question_id) REFERENCES open_questions(id) ON DELETE CASCADE,
+  FOREIGN KEY (created_by) REFERENCES users(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS question_answers (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  project_id INT UNSIGNED NOT NULL,
+  question_id INT UNSIGNED NOT NULL,
+  fact_id INT UNSIGNED NOT NULL,          -- the fact that would answer the question
+  fact_revision INT UNSIGNED NOT NULL,    -- revision of the fact when it was proposed
+  answer VARCHAR(8) NOT NULL,             -- positive, negative
+  state VARCHAR(10) NOT NULL DEFAULT 'proposed',  -- proposed, ratified, rejected, revoked, withdrawn
+  rationale_html MEDIUMTEXT NOT NULL,
+  proposed_by INT UNSIGNED NOT NULL,
+  ai_model VARCHAR(120) NULL,
+  ai_user_id INT UNSIGNED NULL,
+  ai_generation_ms INT UNSIGNED NULL,
+  ratified_by INT UNSIGNED NULL,          -- always a human
+  ratified_at DATETIME NULL,
+  ratified_revision INT UNSIGNED NULL,    -- revision of the fact that was ratified
+  closed_by INT UNSIGNED NULL,            -- who rejected, revoked or withdrew it
+  closed_at DATETIME NULL,
+  closed_note VARCHAR(1000) NULL,
+  created_at DATETIME NOT NULL,
+  KEY idx_answer_question (question_id, state),
+  KEY idx_answer_fact (fact_id),
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+  FOREIGN KEY (question_id) REFERENCES open_questions(id) ON DELETE CASCADE,
+  FOREIGN KEY (fact_id) REFERENCES facts(id) ON DELETE CASCADE,
+  FOREIGN KEY (proposed_by) REFERENCES users(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

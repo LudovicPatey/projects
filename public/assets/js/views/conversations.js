@@ -50,6 +50,7 @@ export const ConversationsView = {
   },
   watch: {
     id: { immediate: true, handler() { this.onRoute(); } },
+    'query.message'(m) { if (m && this.conv) this.showMessage(+m); },
     'query.compose': { immediate: true, handler(v) { if (v) this.startCompose(); } },
   },
   mounted() {
@@ -171,16 +172,14 @@ export const ConversationsView = {
         <icon name="comment" :size="14"/> Comment</button>
     </template>
     <div v-else-if="convError" class="placeholder">{{ convError }}</div>
-    <div v-else class="placeholder">
-      <icon name="mail" :size="40"/><p>Select a conversation, or start a new one.</p>
-      <button class="btn primary" @click="startCompose">New conversation</button></div>
+    <section-home v-else kind="conversations"><button class="btn primary" @click="startCompose"><icon name="plus" :size="15"/> New conversation</button></section-home>
   </section>
 
   <section class="col col-comments">
     <comments-panel v-if="conv" target-type="conversation" :target-id="conv.id" :pending="pending"
       v-model:active-id="activeThread" :describe="describe"
       @threads="threads = $event" @anchor-click="onThreadClick" @cancel-pending="pending = null" @created="pending = null" @activity="loadConv(true)"/>
-    <div v-else class="placeholder small"><icon name="comment" :size="28"/><p>Comments on the selected conversation appear here.</p></div>
+    <section-activity v-else kind="conversations"/>
   </section>
 </div>`,
   methods: {
@@ -199,6 +198,14 @@ export const ConversationsView = {
     isNew(m) {
       if (!this.conv?.last_read_at) return m.author_id !== this.me;
       return m.author_id !== this.me && parseDate(m.created_at) > parseDate(this.conv.last_read_at);
+    },
+    /** Opens the message a reference points to. */
+    showMessage(mid) {
+      this.$nextTick(() => {
+        this.$refs.msgs?.querySelector(`[data-mid="${mid}"]`)?.scrollIntoView({ block: 'center' });
+        this.flashId = mid;
+        setTimeout(() => { this.flashId = null; }, 1600);
+      });
     },
     onRoute() {
       this.pending = null; this.selBtn = null; this.editingMsg = null; this.adding = false;
@@ -224,7 +231,10 @@ export const ConversationsView = {
         const item = this.list.find((x) => x.id === id);
         if (item) item.unread = 0;
         markRead('conversation', c.id, c.last_activity_id);
-        if (grew) this.$nextTick(() => this.scrollToEnd(!silent));
+        if (this.query?.message && this.seenMessage !== `${id}:${this.query.message}`) {
+          this.seenMessage = `${id}:${this.query.message}`;
+          this.showMessage(+this.query.message);
+        } else if (grew) this.$nextTick(() => this.scrollToEnd(!silent));
       } catch (e) {
         this.conv = null;
         this.convError = e.message;

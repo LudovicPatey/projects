@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import test from 'node:test';
 import { ARTICLES, CATEGORIES, CONTROLLER_HELP, VIEW_HELP, articleBySlug, articleText, inlineTokens, nextSteps, pointerHref, resolveTarget, searchHelp } from '../public/assets/js/help/content.js';
 
-const VIEWS = ['overview', 'conversations', 'facts', 'files', 'bib', 'members', 'help'];
+const VIEWS = ['overview', 'questions', 'conversations', 'facts', 'files', 'bib', 'members', 'help'];
 
 function allInline(a) {
   const out = [a.summary];
@@ -19,11 +19,13 @@ function allInline(a) {
 const empty = { project: { id: 7, title: 'Empty', status: 'open', role: 'member' }, me: { id: 1, name: 'A', keys: 0 }, unread: {},
   facts: { total: 0, by_status: {}, labels: {}, to_review: [], to_review_count: 0, disputed: [], retracted: [], broken: [], broken_count: 0, human_proofs: [], ai_proofs: [], endorsed: [], lean: [], danus: [], counterexamples: [], most_used: null, unread: [] },
   files: { total: 0, human: null, ai: null, versioned: null, latest: null, unread: null }, bib: { total: 0, without_pdf_count: 0, without_pdf: [], sample: null },
+  questions: { total: 0, big: 0, open: 0, strategies: 0, top: [], without_strategy: [], without_strategy_count: 0, pending: [], pending_count: 0, at_risk: [], blocked: [], unread: [] },
   conversations: { total: 0, latest: null, unread: [] }, thread: null, people: { researchers: 1, owners: [], agents: [] } };
 const f = { id: 3, label: 'lem:x', title: 'X' }; const d = { id: 4, title: 'D' };
 const full = { ...empty, project: { ...empty.project, role: 'owner' }, me: { id: 1, name: 'A', keys: 2 }, unread: { conversation: 2, fact: 1, document: 1, bib: 1, member: 1 },
   facts: { total: 5, by_status: { disputed: 1 }, labels: { dead_end: 2 }, to_review: [f], to_review_count: 1, disputed: [f], retracted: [f], broken: [f], broken_count: 1, human_proofs: [f], ai_proofs: [f], endorsed: [f], lean: [f], danus: [f], counterexamples: [f], most_used: { ...f, used_by: 2 }, unread: [f] },
   files: { total: 2, human: d, ai: d, versioned: d, latest: d, unread: d }, bib: { total: 1, without_pdf_count: 1, without_pdf: [{ id: 5, label: 'k', title: 'T' }], sample: { id: 5, label: 'k', title: 'T' } },
+  questions: { total: 3, big: 1, open: 2, strategies: 2, top: [d], without_strategy: [d], without_strategy_count: 1, pending: [d], pending_count: 1, at_risk: [d], blocked: [{ id: 4, strategy: 8, title: 'S' }], unread: [d] },
   conversations: { total: 1, latest: d, unread: [d] }, thread: { view: 'files', id: 4, comment: 9 }, people: { researchers: 3, owners: [{ id: 1, title: 'O' }], agents: [{ id: 2, title: 'P', model: 'm' }] } };
 
 test('every server feature has a help article', () => {

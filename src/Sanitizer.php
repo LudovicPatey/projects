@@ -13,7 +13,6 @@ final class Sanitizer
         'p', 'br', 'strong', 'b', 'em', 'i', 'u', 's', 'a', 'ul', 'ol', 'li', 'blockquote',
         'pre', 'code', 'h1', 'h2', 'h3', 'span', 'sub', 'sup',
     ];
-    private const MENTION_TYPES = ['user', 'document', 'bib', 'fact'];
 
     /** @return array{html:string, mentions:list<array{type:string,id:int}>, text:string} */
     public static function clean(string $html): array
@@ -54,7 +53,7 @@ final class Sanitizer
     /**
      * Converts plain text to HTML. Supports blank-line paragraphs, line breaks,
      * **bold**, *italic*, `code`, and mentions written @{user:3}, @{document:5}, @{bib:2}
-     * (or @{bib:citekey}), @{fact:4} (or @{fact:label}). LaTeX ($...$) is left untouched
+     * (or @{bib:citekey}), @{fact:4} (or @{fact:label}), and @{type:id} for every type of References::TYPES. LaTeX ($...$) is left untouched
      * and rendered by the browser.
      */
     public static function textToHtml(string $text, int $projectId): string
@@ -66,7 +65,7 @@ final class Sanitizer
             $p = preg_replace('/`([^`\n]+)`/', '<code>$1</code>', $p);
             $p = preg_replace('/\*\*([^*\n]+)\*\*/', '<strong>$1</strong>', $p);
             $p = preg_replace('/(?<![*\w$\\\\])\*([^*\n$]+)\*(?![*\w])/', '<em>$1</em>', $p);
-            $p = preg_replace_callback('/@\{(user|document|bib|fact):([^}\s]+)\}/', fn($m) => self::mentionSpan($m[1], $m[2], $projectId), $p);
+            $p = preg_replace_callback('/@\{(' . implode('|', References::TYPES) . '):([^}\s]+)\}/', fn($m) => self::mentionSpan($m[1], $m[2], $projectId), $p);
             $html .= '<p>' . nl2br($p, false) . '</p>';
         }
         return $html;
@@ -74,7 +73,18 @@ final class Sanitizer
 
     private static function mentionSpan(string $type, string $ref, int $projectId): string
     {
+        if (in_array($type, References::PRIVATE, true)) {
+            // Never reveals whether it exists: what a reader sees is decided when it is displayed.
+            if (!ctype_digit($ref)) return '@{' . $type . ':' . htmlspecialchars($ref) . '}';
+            $label = References::safeLabel($type, (int)$ref, '');
+            return '<span class="mention" data-type="' . $type . '" data-id="' . (int)$ref . '" data-label="' . $label . '">@' . $label . '</span>';
+        }
         $row = match ($type) {
+            'project' => (int)$ref === $projectId ? Db::one('SELECT id, title AS label FROM projects WHERE id = ?', [$projectId]) : null,
+            'revision', 'answer', 'review', 'lean', 'version' => self::referenceRow($projectId, $type, $ref),
+            'question' => Db::one('SELECT id, title AS label FROM open_questions WHERE project_id = ? AND id = ? AND deleted_at IS NULL', [$projectId, (int)$ref]),
+            'strategy' => Db::one('SELECT s.id, s.title AS label FROM proof_strategies s JOIN open_questions q ON q.id = s.question_id
+                                   WHERE s.project_id = ? AND s.id = ? AND s.deleted_at IS NULL AND q.deleted_at IS NULL', [$projectId, (int)$ref]),
             'user' => Db::one('SELECT u.id, u.name AS label FROM users u JOIN project_members pm ON pm.user_id = u.id AND pm.project_id = ? WHERE u.id = ?', [$projectId, (int)$ref]),
             'document' => Db::one('SELECT id, title AS label FROM documents WHERE project_id = ? AND id = ? AND deleted_at IS NULL', [$projectId, (int)$ref]),
             'bib' => ctype_digit($ref)
@@ -87,6 +97,13 @@ final class Sanitizer
         if (!$row) return '@{' . $type . ':' . htmlspecialchars($ref) . '}';
         $label = htmlspecialchars($row['label'], ENT_QUOTES | ENT_HTML5, 'UTF-8');
         return '<span class="mention" data-type="' . $type . '" data-id="' . (int)$row['id'] . '" data-label="' . $label . '">@' . $label . '</span>';
+    }
+
+    private static function referenceRow(int $projectId, string $type, string $ref): ?array
+    {
+        if (!ctype_digit($ref)) return null;
+        $item = References::resolve($projectId, Auth::id(), ["$type:$ref"])["$type:$ref"] ?? null;
+        return $item && $item['state'] === 'ok' ? ['id' => $item['id'], 'label' => $item['label']] : null;
     }
 
     /** Plain-text rendering of stored rich text (for agents); mentions become @{type:id}. */
@@ -125,13 +142,14 @@ final class Sanitizer
                 $type = $child->getAttribute('data-type');
                 $id = (int)$child->getAttribute('data-id');
                 $label = $child->getAttribute('data-label') ?: ltrim($child->textContent, '@');
-                if (in_array($type, self::MENTION_TYPES, true) && $id > 0) {
+                if (in_array($type, References::TYPES, true) && $id > 0) {
                     $span = $doc->createElement('span');
                     $span->setAttribute('class', 'mention');
                     $span->setAttribute('data-type', $type);
                     $span->setAttribute('data-id', (string)$id);
-                    $span->setAttribute('data-label', mb_substr($label, 0, 200));
-                    $span->appendChild($doc->createTextNode('@' . mb_substr($label, 0, 200)));
+                    $label = References::safeLabel($type, $id, $label);
+                    $span->setAttribute('data-label', $label);
+                    $span->appendChild($doc->createTextNode('@' . $label));
                     $node->replaceChild($span, $child);
                     $mentions[] = ['type' => $type, 'id' => $id];
                 } else {

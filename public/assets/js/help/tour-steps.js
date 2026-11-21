@@ -11,7 +11,7 @@ const SHARED_END = [
 export function buildSteps(kind, ctx = {}) {
   if (kind === 'home') {
     return [
-      { id: 'welcome', target: null, title: 'Welcome to Open Questions', text: 'Each project gathers researchers and AI around one open problem. This short tour shows you where things are.' },
+      { id: 'welcome', target: null, title: 'Welcome to Open Questions', text: 'Each project gathers researchers and AI around open problems. This short tour shows you where things are.' },
       { id: 'projects', target: 'nav-projects', side: 'right', title: 'Your projects', text: 'Every project you belong to is listed on this page. Open one and a second short tour will present its areas.' },
       { id: 'new-project', target: 'new-project', side: 'bottom', title: 'Start a project', text: 'Create a project by stating an open question. You become its owner and can invite colleagues with their ORCID iD.' },
       ...SHARED_END,
@@ -23,9 +23,10 @@ export function buildSteps(kind, ctx = {}) {
   const owner = ctx.role === 'owner';
   return [
     { id: 'welcome', target: null, title: `Welcome to ${title}`, text: `You are ${owner ? 'an owner' : 'a member'} of this project. Here is a quick look at its areas. Nothing will be changed or marked as read.` },
-    { id: 'overview', target: 'nav-overview', side: 'right', title: 'The question', text: owner ? 'The open problem and a summary of the project. As an owner, you can edit it and change its status.' : 'The open problem and a summary of the project. You can also download a full copy from this page.' },
-    { id: 'conversations', target: 'nav-conversations', side: 'right', title: 'Mail', text: 'Linear discussions, like a webmail. Only the people you include can read them.' },
-    { id: 'facts', target: 'nav-facts', side: 'right', title: 'Facts', text: 'A graph of statements and proofs. AI clients add them, and humans review, endorse or dispute them.' },
+    { id: 'overview', target: 'nav-overview', side: 'right', title: 'Overview', text: owner ? 'The dashboard: the main problem, what needs your attention, progress and recent activity. As an owner, you can edit the problem.' : 'The dashboard: the main problem, what needs your attention, progress and recent activity. You can also download a full copy.' },
+    { id: 'questions', target: 'nav-questions', side: 'right', title: 'Questions', text: 'Big questions split into sub-questions. Each one can have several proof strategies. AI can propose an answer backed by a fact, and a human ratifies it.' },
+    { id: 'conversations', target: 'nav-conversations', side: 'right', title: 'Mail', text: 'Linear discussions, like a webmail. Only the people you include can read them. Type @ in any text to cite any object of the project.' },
+    { id: 'facts', target: 'nav-facts', side: 'right', title: 'Facts', text: 'A graph of statements and proofs. AI clients add them, and humans endorse or deny them.' },
     { id: 'files', target: 'nav-files', side: 'right', title: 'Files', text: 'PDFs and LaTeX sources with their versions, clearly marked as written by a human or by AI. Select text in a PDF to comment on it.' },
     { id: 'bib', target: 'nav-bib', side: 'right', title: 'Bibliography', text: 'References added by DOI, arXiv or BibTeX, with optional PDFs.' },
     { id: 'members', target: 'nav-members', side: 'right', title: 'People', text: owner ? 'Add researchers by ORCID iD and create AI agents for this project.' : 'The researchers and AI agents of this project.' },
