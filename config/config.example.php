@@ -30,6 +30,12 @@ return [
     // Maximum size of a single uploaded file, in MB (also bounded by PHP's upload_max_filesize).
     'max_upload_mb' => 64,
 
+    // Backups (see docs/BACKUP.md). 'path' must NOT be inside the public web root.
+    'backup' => [
+        'path' => __DIR__ . '/../storage/backups',
+        'keep' => 14, // number of regular backups to keep
+    ],
+
     // Optional: restrict who may create new projects (list of ORCID iDs). Empty = any logged-in user.
     'project_creators' => [],
 ];

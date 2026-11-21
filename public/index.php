@@ -98,6 +98,15 @@ $routes = [
 $req = new Request();
 $isApi = str_starts_with($req->path, '/api/');
 
+// A restore is running: refuse requests so that nothing is written meanwhile.
+if (is_file(App\Backup::maintenanceFile())) {
+    header('Retry-After: 120');
+    if ($isApi) Response::json(['error' => 'The platform is being restored. Please try again in a few minutes.'], 503);
+    http_response_code(503);
+    header('Content-Type: text/html; charset=utf-8');
+    exit('<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Maintenance</title><p style="font-family:sans-serif;text-align:center;margin-top:20vh">Open Questions is being restored.<br>Please try again in a few minutes.</p>');
+}
+
 try {
     if (Auth::bearer() === null) Auth::startSession();
     // Browsers may only send GET/POST from forms; allow method override for PATCH/DELETE.

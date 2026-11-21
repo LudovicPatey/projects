@@ -11,7 +11,7 @@ final class Storage
         return rtrim((string)Config::get('storage_path'), '/') . '/blobs';
     }
 
-    private static function pathFor(string $sha): string
+    public static function pathFor(string $sha): string
     {
         return self::root() . '/' . substr($sha, 0, 2) . '/' . substr($sha, 2, 2) . '/' . $sha;
     }

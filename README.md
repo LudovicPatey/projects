@@ -68,6 +68,16 @@ bin/dev-router.php   router for `php -S` in local development
 The first person to sign in creates a project and becomes its owner. They then add colleagues by ORCID iD.
 To restrict who may create projects, list ORCID iDs in `project_creators`.
 
+## Backup and restoration
+
+```bash
+php bin/backup.php                 # verified archive of the database and uploaded files
+php bin/backup.php --list
+php bin/restore.php ARCHIVE.zip    # checks it, saves the current data, then restores
+```
+
+Schedule `bin/backup.php` daily in the OVH panel and keep a copy off the server. The full procedure is in [docs/BACKUP.md](docs/BACKUP.md).
+
 ## Local development
 
 ```bash

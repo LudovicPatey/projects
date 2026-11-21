@@ -2,6 +2,9 @@ config/config.php
 storage/blobs/*
 !storage/blobs/.gitkeep
 storage/*.sqlite
+storage/backups/
+storage/.backup.lock
+storage/maintenance.flag
 .DS_Store
 __pycache__/
 *.pyc
