@@ -538,7 +538,7 @@ export const ARTICLES = [
   },
   {
     slug: 'ai-app', category: 'ai', title: 'The AI client app and your usage limits', summary: 'Start, stop and limit what the client uses of your subscription.',
-    keywords: 'app desktop graphic interface limit limits usage quota subscription budget percent pause hours tokens stop command line billing cost price pay api key credits extra',
+    keywords: 'update updates upgrade new version latest app desktop graphic interface limit limits usage quota subscription budget percent pause hours tokens stop command line billing cost price pay api key credits extra',
     blocks: [
       p('The AI client has a **graphic interface** and a **command line**. Both use the same engine and the same limits.'),
       h('Install the Mac app'),
@@ -557,7 +557,12 @@ export const ARTICLES = [
       h('Who pays'),
       p('By default the client uses **your subscription only**. It ignores API keys found on your computer, and stops with an explanation if your AI tool is set to use a paid key. To use a paid API key on purpose, choose it on the **Accounts** page, or run `python3 oq.py limits --billing api`.'),
       warn('The client cannot see whether **usage credits** are on in your Claude account. Keep them off, or set a monthly cap, to be sure nothing is charged past your plan limit.'),
+      h('Keep it up to date'),
+      p('The client looks for the latest release on [GitHub](https://github.com/LudovicPatey/projects/releases), and on your platform, when it starts and every few hours. Its menu shows your version, and **Check for updates** checks at once. A release that needs a newer platform is not offered.'),
+      list('**Command-line version:** click **Update now**, or run `python3 oq.py update`. The file is verified with a checksum before it replaces the old one, and the client restarts.', '**Installed app:** when a new app is released, a **Download** button appears. Install it over the old one.'),
+      p('An update never starts while work is running, and your settings and limits are kept.'),
       h('From the command line'),
+      cmd('python3 oq.py update --check', 'Check for a new version'),
       cmd('python3 oq.py app', 'Open the graphic interface'),
       cmd('python3 oq.py limits --max-session-percent 30 --max-weekly-percent 40 --hours 22-7', 'Change the limits'),
       cmd('python3 oq.py limits --pause', 'Pause'),
@@ -583,6 +588,7 @@ export const ARTICLES = [
       h('Step 3: Sign in to Claude'),
       cmd('claude'),
       steps('Your browser opens. Sign in with your Claude account and approve.', 'Back in the terminal, answer the first questions.', 'Type `/exit` and press **Enter**.'),
+      p('To read long PDFs, also install **Poppler**: `brew install poppler` on a Mac, or `sudo apt install poppler-utils` on Debian and Ubuntu.'),
       ...clientSteps('claude'),
     ],
     related: ['ai-work', 'ai-setup-chatgpt', 'danus'],
@@ -671,6 +677,17 @@ export const ARTICLES = [
       warn('Imported facts arrive as **unchecked**. The Danus verifier is itself an AI, and the platform cannot confirm that it ran.'),
     ],
     related: ['ai-client', 'fact-labels'],
+  },
+
+  {
+    slug: 'license', category: 'admin', title: 'Source code and license', summary: 'The platform and its client are free software under the AGPL-3.0.',
+    keywords: 'license licence agpl open source free software code github copyright modify contribute',
+    blocks: [
+      p('Open Questions and its AI client are **free software**, under the [GNU AGPL-3.0](https://github.com/LudovicPatey/projects/blob/master/LICENSE). The [source code](https://github.com/LudovicPatey/projects) is on GitHub.'),
+      list('You may use, study, modify and share it.', 'If you distribute it, you must keep the license and provide the source code.', 'If you run a **modified version** as a service, you must offer its users the source of that version.'),
+      p('The research in a project is not covered by this license. It belongs to its authors and stays private to the project.'),
+    ],
+    related: ['download-project', 'ai-app'],
   },
 
   // ---------------------------------------------------------------- Staying up to date

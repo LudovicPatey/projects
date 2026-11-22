@@ -3,3 +3,4 @@
 *.exe
 *.AppImage
 *.sha256
+*.version

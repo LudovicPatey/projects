@@ -37,3 +37,37 @@ export function formatSize(bytes) {
   if (!bytes) return '';
   return bytes >= 1048576 ? `${Math.round(bytes / 1048576)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
 }
+
+export const GITHUB_REPO = 'LudovicPatey/projects';
+// If you run a modified version as a service, the AGPL requires offering its source: point this to your copy.
+export const SOURCE_URL = `https://github.com/${GITHUB_REPO}`;
+export const RELEASES_URL = `https://github.com/${GITHUB_REPO}/releases`;
+export const INSTALLER_NAMES = { 'mac-arm64': 'open-questions-ai-mac-arm64.dmg', 'mac-x64': 'open-questions-ai-mac-x64.dmg', windows: 'open-questions-ai-windows.exe', linux: 'open-questions-ai-linux.AppImage' };
+
+const newer = (a, b) => {
+  const x = String(a || '').split('.').map(Number); const y = String(b || '').split('.').map(Number);
+  if (x.length !== 3 || x.some(Number.isNaN)) return false;
+  if (y.length !== 3 || y.some(Number.isNaN)) return true;
+  for (let i = 0; i < 3; i += 1) if (x[i] !== y[i]) return x[i] > y[i];
+  return false;
+};
+
+/** Adds the installers of the latest GitHub release, unless it needs a newer server than this platform. */
+export function mergeRelease(info, release) {
+  const out = { ...info, installers: [...(info?.installers || [])] };
+  if (!release || release.draft || release.prerelease) return out;
+  const version = String(release.tag_name || '').replace(/^v/, '');
+  if (!/^\d+\.\d+\.\d+$/.test(version)) return out;
+  const needs = Number(String(release.body || '').match(/requires-api:\s*(\d+)/i)?.[1] || 1);
+  if (needs > Number(info?.api_level || 1)) return out;
+  const prefix = `${RELEASES_URL}/download/`;
+  for (const [system, name] of Object.entries(INSTALLER_NAMES)) {
+    const asset = (release.assets || []).find((a) => a.name === name && String(a.browser_download_url || '').startsWith(prefix));
+    if (!asset) continue;
+    const entry = { system, file: name, size: asset.size, version, url: asset.browser_download_url, sha256: String(asset.digest || '').replace(/^sha256:/, '') || null };
+    const at = out.installers.findIndex((x) => x.system === system);
+    if (at < 0) out.installers.push(entry);
+    else if (newer(version, out.installers[at].version)) out.installers[at] = entry;
+  }
+  return out;
+}

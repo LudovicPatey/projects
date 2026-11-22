@@ -58,7 +58,9 @@ python3 oq.py doctor
 python3 oq.py run
 ```
 
-`python3 oq.py app` opens the graphic interface, and `client/desktop` packages it as a desktop app with the engine included (`cd client/desktop && npm install && npm run dist`). The Mac build is ad-hoc signed until a Developer ID certificate is configured. To publish an installer, place it in `client/releases` as `open-questions-ai-mac-arm64.dmg`, `-mac-x64.dmg`, `-windows.exe` or `-linux.AppImage`, optionally with a `.sha256` file. These files are currently excluded from Git and from deployment. Users set how much of their subscription the client may use (`oq.py limits`). Its **Prove new facts** feature installs and runs Danus in an isolated machine, only when a user presses Start (`oq.py danus setup`, `oq.py danus run`).
+`python3 oq.py app` opens the graphic interface, and `client/desktop` packages it as a desktop app with the engine included (`cd client/desktop && npm install && npm run dist`). The Mac build is ad-hoc signed until a Developer ID certificate is configured. To publish an installer, place it in `client/releases` as `open-questions-ai-mac-arm64.dmg`, `-mac-x64.dmg`, `-windows.exe` or `-linux.AppImage`, with its version in a `.version` file (required for update notices) and optionally a `.sha256` file. Clients check GitHub Releases and the connected platform for updates. These files are currently excluded from Git and from deployment. Users set how much of their subscription the client may use (`oq.py limits`). Its **Prove new facts** feature installs and runs Danus in an isolated machine, only when a user presses Start (`oq.py danus setup`, `oq.py danus run`).
+
+**Publishing a client release.** Raise the version in `client/oq.py` and `client/desktop/package.json`, then create a GitHub Release tagged `vX.Y.Z` with the assets `oq.py` and any of `open-questions-ai-mac-arm64.dmg`, `open-questions-ai-mac-x64.dmg`, `open-questions-ai-windows.exe` and `open-questions-ai-linux.AppImage`. If the release needs new server features, raise `API_LEVEL` on both sides and write `requires-api: N` in the release notes, so that older platforms are not offered it. Drafts and pre-releases are ignored, which allows testing an installer before publishing it.
 
 The AI runs read-only and does not receive the platform key. The content of a task is sent to the AI provider of the member whose client processes it.
 
@@ -419,3 +421,11 @@ scripts/deploy.mjs   upload to the live site (docs/DEPLOY.md)
 
 - Email digests of notifications (OVH provides `mail()`).
 - Self-hosting the JS libraries (copy them from jsDelivr into `public/vendor/`) if you prefer no CDN.
+
+## License
+
+Copyright (C) 2026 Ludovic Patey.
+
+This program is free software: you can redistribute it and/or modify it under the terms of the [GNU Affero General Public License, version 3](LICENSE), as published by the Free Software Foundation. It is distributed without any warranty.
+
+If you run a modified version as a network service, the license requires you to offer its users the corresponding source code. Point `SOURCE_URL` in `public/assets/js/client-download.js` to your copy. Research data stored in a deployment is not covered by this license.

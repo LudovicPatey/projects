@@ -1,6 +1,7 @@
 // Public front page, shown to visitors who are not signed in.
 import { store } from '../store.js';
 import { ArchitectureDiagram } from './client.js';
+import { SOURCE_URL } from '../client-download.js';
 
 const IMG = 'assets/img/landing/';
 const FEATURES = [
@@ -58,7 +59,7 @@ export const LandingPage = {
     };
   },
   computed: { dev() { return store.dev; } },
-  created() { this.features = FEATURES; this.IMG = IMG; },
+  created() { this.features = FEATURES; this.IMG = IMG; this.sourceUrl = SOURCE_URL; },
   mounted() {
     this.onKey = (e) => { if (e.key === 'Escape') this.zoom = null; };
     window.addEventListener('keydown', this.onKey);
@@ -122,7 +123,7 @@ export const LandingPage = {
       <p>Sign in with your ORCID iD to join a project, start one, and download the AI client.</p>
       <a class="btn orcid" href="auth/login"><span class="lp-id">iD</span> Sign in with ORCID</a>
     </section>
-    <footer class="lp-foot">Screenshots show a sample project with fictional researchers.</footer>
+    <footer class="lp-foot">Free software under the <a :href="sourceUrl + '/blob/master/LICENSE'" rel="noopener noreferrer">AGPL-3.0 license</a> · <a :href="sourceUrl" rel="noopener noreferrer">Source code</a><br>Screenshots show a sample project with fictional researchers.</footer>
 
     <div v-if="zoom" class="lp-zoom" role="dialog" aria-modal="true" :aria-label="zoom.title" @click="zoom = null">
       <button class="icon-btn" aria-label="Close"><icon name="x" :size="22"/></button>

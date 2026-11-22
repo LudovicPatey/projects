@@ -18,6 +18,8 @@ final class AiTaskController
     private const ONLINE_SECONDS = 180;
     private const ASSISTANT = 'ai-assistant';
     private const SOURCES = ['document', 'question', 'strategy', 'fact'];
+    /** Raise it when a client release needs new server features: older platforms are then not offered that release. */
+    public const API_LEVEL = 1;
 
     // ----- created by the platform -----
 
@@ -308,10 +310,12 @@ final class AiTaskController
         foreach (self::installers() as $system => $file) {
             if (!is_file($dir . $file)) continue;
             $hash = is_file($dir . $file . '.sha256') ? strtok(trim((string)file_get_contents($dir . $file . '.sha256')), " \n") : null;
-            $list[] = ['system' => $system, 'file' => $file, 'size' => filesize($dir . $file), 'version' => $m[1] ?? null,
+            // An installer states its own version: it can be older than the command-line client.
+            $own = is_file($dir . $file . '.version') ? trim((string)file_get_contents($dir . $file . '.version')) : '';
+            $list[] = ['system' => $system, 'file' => $file, 'size' => filesize($dir . $file), 'version' => preg_match('/^\d+\.\d+\.\d+$/', $own) ? $own : null,
                 'sha256' => is_string($hash) && preg_match('/^[0-9a-f]{64}$/', $hash) ? $hash : null];
         }
-        Response::json(['version' => $m[1] ?? null, 'script' => 'api/client/oq.py', 'installers' => $list]);
+        Response::json(['api_level' => self::API_LEVEL, 'version' => $m[1] ?? null, 'script' => 'api/client/oq.py', 'script_sha256' => hash_file('sha256', __DIR__ . '/../../client/oq.py'), 'installers' => $list]);
     }
 
     public static function clientDownload(Request $r): never

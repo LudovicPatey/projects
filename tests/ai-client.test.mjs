@@ -1,7 +1,9 @@
 // The AI queue and the local client, end to end, with a stand-in for the AI command.
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { after, before, test } from 'node:test';
@@ -143,6 +145,8 @@ if argv[:1] == ["app-server"]:
         if m.get("id") == 1: print(json.dumps({"id": 1, "result": {}}), flush=True)
         if m.get("id") == 2: print(json.dumps({"id": 2, "result": {"rateLimits": {"primary": {"usedPercent": int(os.environ.get("FAKE_USED", "5")), "windowDurationMins": 300, "resetsAt": 4102444800}, "secondary": {"usedPercent": 1, "windowDurationMins": 10080}}}}), flush=True); sys.exit()
     sys.exit()
+if argv[:2] == ["auth", "status"]:
+    print(json.dumps({"authMethod": os.environ.get("FAKE_CLAUDE_AUTH", "claude.ai")})); sys.exit()
 if argv[:2] == ["login", "status"]:
     print(os.environ.get("FAKE_AUTH", "Logged in using ChatGPT")); sys.exit()
 if os.environ.get("FAKE_LIMIT"):
@@ -372,10 +376,10 @@ function fakeMachine(name) {
   fs.writeFileSync(path.join(facts, `${(name + 'dddddddddddddddd').replace(/[^0-9a-f]/g, 'd').slice(0, 16)}.md`), `---\nfact_id: ${(name + 'dddddddddddddddd').replace(/[^0-9a-f]/g, 'd').slice(0, 16)}\npredecessors: []\n---\n\n## statement\n\nFound by Danus in ${name}.\n\n## proof\n\nVerified.\n`);
   fs.writeFileSync(path.join(bin, 'docker'), `#!/bin/bash
 echo "$*" >> "${log}"
-case "$1" in inspect) [ -f "${dir}/exists" ]; exit $?;; run) touch "${dir}/exists"; echo id; exit 0;; start|stop|rm) exit 0;; esac
+case "$1" in inspect) if [ "$2" = "-f" ]; then [ -f "${dir}/mounted" ] && echo 1 || echo 0; exit 0; fi; [ -f "${dir}/exists" ]; exit $?;; run) touch "${dir}/exists"; echo id; exit 0;; start|stop|rm) exit 0;; esac
 s="\${@: -1}"
 [ -p /dev/stdin ] && cat >/dev/null
-case "$s" in *"status"*"--json"*) echo '{"workers":[{"name":"w1"}]}';; *"tar -cf"*) COPYFILE_DISABLE=1 tar -C "${dir}/data" -cf - fact_graph;; esac
+case "$s" in *"[ -f "*) if [ -f "${dir}/lost" ]; then rm -f "${dir}/lost"; exit 1; fi;; *"findmnt"*) [ ! -f "${dir}/mounted" ]; exit $?;; *"danus status"*"--json"*) [[ "$s" == *"|| bin/danus new"* ]] && exit 0; echo '[{"worker":"w1","alive":true}]';; *"tar -cf"*) COPYFILE_DISABLE=1 tar -C "${dir}/data" -cf - fact_graph;; esac
 exit 0
 `, { mode: 0o755 });
   return log;
@@ -534,6 +538,96 @@ test('Danus safety: after a crash, a run ends unless it was set to continue', as
   } finally { py.kill(); }
 });
 
+test('audit: the macOS machine has no mount of the home folder, and a machine that can see files is refused', async () => {
+  const code = `import importlib.util,sys
+s=importlib.util.spec_from_file_location('oq',sys.argv[1]);m=importlib.util.module_from_spec(s);s.loader.exec_module(m)
+print(m.LIMA_SPEC)`;
+  const spec = spawnSync('python3', ['-c', code, CLIENT], { encoding: 'utf8' }).stdout;
+  assert.match(spec, /^base: template:_images\/ubuntu-26\.04$/m, 'the image only, not a template with mounts');
+  assert.doesNotMatch(spec, /ubuntu-lts|_default\/mounts|location:/);
+  assert.match(fs.readFileSync(CLIENT, 'utf8'), /"--tty=false", "--mount-none"/);
+  await drain(annKey); useFake('codex'); const log = fakeMachine('aaa9'); const env = danusEnv('mounted');
+  usageCodex(path.join(tmp, 'u-mounted')); fs.mkdirSync(env.OQ_CONFIG_DIR, { recursive: true }); fs.writeFileSync(path.join(env.OQ_CONFIG_DIR, 'danus.json'), '{"ready":true}');
+  fs.writeFileSync(path.join(path.dirname(log), 'mounted'), '');
+  const r = await launch(env, ['--minutes', '0']);
+  assert.match(r.out, /can see files of this computer/);
+  assert.doesNotMatch(fs.readFileSync(log, 'utf8'), /bin\/danus start/, 'Danus never started');
+  await drain(annKey);
+});
+
+test('audit: workers stopped during a computer sleep are restarted', async () => {
+  await drain(annKey); useFake('codex'); const log = fakeMachine('bbb9'); const env = danusEnv('sleep');
+  usageCodex(path.join(tmp, 'u-sleep')); fs.mkdirSync(env.OQ_CONFIG_DIR, { recursive: true }); fs.writeFileSync(path.join(env.OQ_CONFIG_DIR, 'danus.json'), '{"ready":true}');
+  const started = launch(env, ['--minutes', '0']);
+  const starts = () => (fs.existsSync(log) ? fs.readFileSync(log, 'utf8').match(/bin\/danus start oq/g) || [] : []).length;
+  assert.ok(await until(() => starts() === 1));
+  fs.writeFileSync(path.join(path.dirname(log), 'lost'), '');
+  assert.ok(await until(() => starts() === 2, 20000), 'it restarts');
+  assert.equal(oq(['danus', 'stop'], env).status, 0); assert.equal((await started).code, 0);
+});
+
+test('audit: a Danus glossary the small reader cannot parse does not corrupt a fact', () => {
+  const dir = path.join(tmp, 'glossary'); fs.mkdirSync(dir, { recursive: true }); const f = path.join(dir, 'abcdabcdabcdabcd.md');
+  fs.writeFileSync(f, '---\nfact_id: abcdabcdabcdabcd\npredecessors: [1111111111111111, 2222222222222222]\nglossary_introduces: {}\nexternal_refs: []\n---\n\n## statement\nS\n\n## proof\nP\n');
+  const code = `import importlib.util,json,pathlib,sys
+s=importlib.util.spec_from_file_location('oq',sys.argv[1]);m=importlib.util.module_from_spec(s);s.loader.exec_module(m)
+print(json.dumps(m.parse_danus(pathlib.Path(sys.argv[2]))))`;
+  const r = JSON.parse(spawnSync('python3', ['-c', code, CLIENT, f], { encoding: 'utf8' }).stdout);
+  assert.deepEqual(r.predecessors, ['1111111111111111', '2222222222222222']);
+  assert.equal(r.glossary_introduces, null); assert.equal(r.external_refs, null);
+});
+
+test('audit: a paid Claude sign-in is put on hold', async () => {
+  await drain(annKey); useFake('claude');
+  const c = await waiting('paid method');
+  const out = oq(['run', '--once', '--provider', 'claude', '--project', String(pid)], limitEnv('paid-method', { FAKE_CLAUDE_AUTH: 'api_key' })).stdout;
+  assert.match(out, /signed in with a paid API method/);
+  assert.equal(aiCalls(), 0); assert.equal((await taskById(c.id)).status, 'pending');
+  await drain(annKey);
+});
+
+test('audit: Danus labels come from the status log, and the verification trace is not a label', () => {
+  const root = path.join(tmp, 'labels'); const mem = path.join(root, 'global_memory'); fs.mkdirSync(path.join(root, 'fact_graph'), { recursive: true }); fs.mkdirSync(mem, { recursive: true });
+  fs.writeFileSync(path.join(mem, 'counterexample.jsonl'), `${JSON.stringify({ id: 'e1', kind: 'counterexample', fact_id: null })}\n`);
+  fs.writeFileSync(path.join(mem, 'verification.jsonl'), `${JSON.stringify({ id: 'v1', kind: 'verification', fact_id: 'f1' })}\n${JSON.stringify({ id: 'v2', kind: 'verification', fact_id: 'f2' })}\n`);
+  fs.writeFileSync(path.join(mem, '_status.jsonl'), `${JSON.stringify({ id: 'e1', status: 'verified', fact_id: 'f1' })}\n`);
+  const code = `import importlib.util,json,pathlib,sys
+s=importlib.util.spec_from_file_location('oq',sys.argv[1]);m=importlib.util.module_from_spec(s);s.loader.exec_module(m)
+print(json.dumps({k:sorted(v) for k,v in m.danus_labels(pathlib.Path(sys.argv[2])).items()}))`;
+  assert.deepEqual(JSON.parse(spawnSync('python3', ['-c', code, CLIENT, path.join(root, 'fact_graph')], { encoding: 'utf8' }).stdout), { f1: ['counterexample'] });
+});
+
+test('audit: outsiders and API keys cannot reach what is not theirs', async () => {
+  const outsider = await app.signIn('0000-0003-1415-9269');
+  const outKey = { token: (await app.call(outsider, 'POST', '/api/me/keys', { name: 'k' })).data.token };
+  const t = await waiting('audit task');
+  const s = (await app.call(annKey, 'POST', `/api/projects/${pid}/ai/suggestions`, { ai_model: 'm', suggestions: [{ title: 'Audit reference', url: 'https://example.org/a', reason_text: 'r' }] })).data.created[0];
+  assert.equal((await app.call(outsider, 'GET', `/api/projects/${pid}/ai`)).status, 403);
+  assert.equal((await app.call(outsider, 'POST', `/api/projects/${pid}/ai/tasks`, { kind: 'bib' })).status, 403);
+  assert.equal((await app.call(outKey, 'POST', `/api/projects/${pid}/ai/tasks`, { kind: 'derive' })).status, 403);
+  assert.equal((await app.call(outKey, 'POST', `/api/projects/${pid}/ai/suggestions`, { ai_model: 'm', suggestions: [{ title: 'x', url: 'https://example.org', reason_text: 'r' }] })).status, 403);
+  assert.equal((await claim(outKey, { project_id: pid, task_id: t.id })).data.task, null);
+  for (const u of [`/api/ai/tasks/${t.id}/cancel`, `/api/ai/tasks/${t.id}/retry`, `/api/bib-suggestions/${s}/accept`, `/api/bib-suggestions/${s}/reject`]) assert.equal((await app.call(outsider, 'POST', u, {})).status, 404, u);
+  assert.equal((await fetch(`${base}/api/projects/${pid}/ai`, { headers: { Accept: 'application/json' } })).status, 401);
+  assert.equal((await app.call(annKey, 'POST', `/api/conversations/1/messages`, { body_text: 'x' })).status, 403, 'a key cannot write as a person');
+  assert.equal((await app.call(annKey, 'POST', '/api/me/keys', { name: 'x' })).status, 403);
+  await app.call(ann, 'POST', `/api/bib-suggestions/${s}/reject`, {});
+  await drain(annKey);
+});
+
+test('audit: a backup restores the AI queue and suggestions', async () => {
+  const count = (table) => execFileSync('php', ['-r', `$d=new PDO("sqlite:storage/t.sqlite");echo $d->query("SELECT COUNT(*) FROM ${table}")->fetchColumn();`], { cwd: app.dir, encoding: 'utf8' });
+  const before = ['ai_tasks', 'bib_suggestions', 'ai_clients'].map(count);
+  assert.ok(before.every((n) => +n > 0));
+  const out = execFileSync('php', ['bin/backup.php'], { cwd: app.dir, encoding: 'utf8' });
+  const file = out.match(/\S+\.(?:zip|tar\.gz|tgz)/)?.[0] ?? fs.readdirSync(path.join(app.dir, 'storage/backups')).map((f) => path.join(app.dir, 'storage/backups', f))[0];
+  assert.equal(spawnSync('php', ['bin/backup.php', '--verify', file], { cwd: app.dir }).status, 0);
+  execFileSync('php', ['-r', '$d=new PDO("sqlite:storage/t.sqlite");$d->exec("DELETE FROM bib_suggestions");$d->exec("DELETE FROM ai_clients");'], { cwd: app.dir });
+  const r = spawnSync('php', ['bin/restore.php', file, '--yes'], { cwd: app.dir, encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.deepEqual(['ai_tasks', 'bib_suggestions', 'ai_clients'].map(count), before);
+});
+
 test('a hostile archive from the machine cannot write outside its folder', () => {
   const dir = path.join(tmp, 'tarcheck'); fs.mkdirSync(dir, { recursive: true });
   const code = `import importlib.util,io,tarfile,sys
@@ -553,6 +647,136 @@ test('installers: the public list is empty until one is published, and a missing
   const info = await (await fetch(`${base}/api/client/info`)).json();
   assert.equal(info.installers.length, 0); assert.match(info.version, /^\d+\.\d+\.\d+$/);
   for (const q of ['mac-arm64', '../../config/config.php', '']) assert.equal((await fetch(`${base}/api/client/download?system=${encodeURIComponent(q)}`)).status, 404);
+});
+
+// ----- updates -----
+
+const copyClient = (name, version) => {
+  const dir = path.join(tmp, `update-${name}`); fs.mkdirSync(dir, { recursive: true }); const file = path.join(dir, 'oq.py');
+  fs.writeFileSync(file, fs.readFileSync(CLIENT, 'utf8').replace(/^VERSION = "[^"]+"/m, `VERSION = "${version}"`), { mode: 0o755 });
+  return file;
+};
+const runCopy = (file, args, env) => spawnSync('python3', [file, ...args], { encoding: 'utf8', timeout: 30000, env: { PATH: '/usr/bin:/bin:/usr/local/bin', HOME: tmp, ...env } });
+const runCopyAsync = (file, args, env) => new Promise((resolve) => {
+  const c = spawn('python3', [file, ...args], { env: { PATH: '/usr/bin:/bin:/usr/local/bin', HOME: tmp, ...env } });
+  let out = ''; c.stdout.on('data', (d) => { out += d; }); c.stderr.on('data', (d) => { out += d; }); c.on('close', (code) => resolve({ code, out }));
+});
+const fakeRelease = (handler) => new Promise((resolve) => { const s = http.createServer(handler); s.listen(0, '127.0.0.1', () => resolve(s)); });
+
+test('update: an older client finds the new version, installs it, and keeps its previous file', async () => {
+  const file = copyClient('old', '0.9.0'); const env = limitEnv('update-old');
+  const check = runCopy(file, ['update', '--check'], env);
+  assert.equal(check.status, 0, check.stderr); assert.match(check.stdout, /is available\. You have 0\.9\.0/);
+  assert.match(fs.readFileSync(file, 'utf8'), /VERSION = "0\.9\.0"/, 'checking changes nothing');
+  const up = runCopy(file, ['update'], env);
+  assert.equal(up.status, 0, up.stderr); assert.match(up.stdout, /Updated to version/);
+  assert.equal(fs.readFileSync(file, 'utf8'), fs.readFileSync(CLIENT, 'utf8'));
+  assert.match(fs.readFileSync(`${file}.previous`, 'utf8'), /VERSION = "0\.9\.0"/);
+  assert.match(runCopy(file, ['update', '--check'], env).stdout, /up to date/);
+});
+
+test('update: a current or newer client is left alone', async () => {
+  const file = copyClient('newer', '99.0.0'); const before = fs.readFileSync(file, 'utf8');
+  assert.match(runCopy(file, ['update'], limitEnv('update-newer')).stdout, /up to date/);
+  assert.equal(fs.readFileSync(file, 'utf8'), before, 'it never downgrades');
+});
+
+test('update: a tampered, invalid or mislabelled file is refused and nothing changes', async () => {
+  const good = fs.readFileSync(CLIENT, 'utf8');
+  const sha = (t) => crypto.createHash('sha256').update(t).digest('hex');
+  const cases = [
+    ['tampered', `${good}\n# changed`, sha(good), '5.0.0', /integrity/],
+    ['invalid', 'def broken(:', sha('def broken(:'), '5.0.0', /not valid/],
+    ['label', good, sha(good), '5.0.0', /expected version/],
+  ];
+  for (const [name, body, hash, version, expected] of cases) {
+    const s = await fakeRelease((q, r) => { if (q.url.endsWith('/info')) r.end(JSON.stringify({ version, script_sha256: hash, installers: [] })); else r.end(body); });
+    const file = copyClient(`bad-${name}`, '0.9.0'); const before = fs.readFileSync(file, 'utf8');
+    const res = await new Promise((resolve) => {
+      const c = spawn('python3', [file, 'update'], { env: { PATH: '/usr/bin:/bin:/usr/local/bin', HOME: tmp, OQ_CONFIG_DIR: path.join(tmp, `bad-${name}`), OQ_URL: `http://127.0.0.1:${s.address().port}`, OQ_KEY: 'ouk_test' } });
+      let out = ''; c.stdout.on('data', (d) => { out += d; }); c.stderr.on('data', (d) => { out += d; }); c.on('close', (code) => resolve({ code, out }));
+    });
+    s.close();
+    assert.equal(res.code, 2, res.out); assert.match(res.out, expected);
+    assert.equal(fs.readFileSync(file, 'utf8'), before, name); assert.ok(!fs.existsSync(`${file}.new`));
+  }
+});
+
+test('update: code is never fetched over plain HTTP from another machine, and the key is not sent', async () => {
+  const code = `import importlib.util,sys
+s=importlib.util.spec_from_file_location('oq',sys.argv[1]);m=importlib.util.module_from_spec(s);s.loader.exec_module(m)
+print([m.safe_update_url(u) for u in ['https://a.example','http://a.example','http://127.0.0.1:8080','ftp://a.example','']])
+print(m.evaluate_update('1.0.0',{'version':'2.0.0','script_sha256':'a'*64,'installers':[]},True,'mac-arm64')['available'], m.evaluate_update('1.0.0',{'version':'2.0.0','installers':[{'system':'mac-arm64','version':'1.5.0'}]},True,'mac-arm64')['latest'], m.evaluate_update('1.0.0',{'version':'2.0.0','installers':[{'system':'windows','version':'3.0.0'}]},True,'mac-arm64')['available'])
+print(m.is_newer('1.10.0','1.9.0'), m.is_newer('1.0.0','1.0.0'), m.is_newer('x','1.0.0'))`;
+  const r = spawnSync('python3', ['-c', code, CLIENT], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(r.stdout.trim().split('\n'), ['[True, False, True, False, False]', 'False 1.5.0 False', 'True False False']);
+  let auth = null;
+  const s = await fakeRelease((q, res) => { auth = q.headers.authorization ?? q.headers['x-api-key'] ?? 'none'; res.end(JSON.stringify({ version: '0.1.0', installers: [] })); });
+  const check = await new Promise((resolve) => { const c = spawn('python3', [CLIENT, 'update', '--check'], { env: { PATH: '/usr/bin:/bin:/usr/local/bin', HOME: tmp, OQ_CONFIG_DIR: path.join(tmp, 'nokey'), OQ_URL: `http://127.0.0.1:${s.address().port}`, OQ_KEY: 'ouk_secret' } }); c.on('close', resolve); });
+  s.close(); assert.equal(check, 0); assert.equal(auth, 'none');
+});
+
+test('update: a failed check never stops the client, and versions stay in sync', async () => {
+  const env = { OQ_URL: 'http://127.0.0.1:9', OQ_KEY: annKey.token, OQ_CONFIG_DIR: path.join(tmp, 'offline') };
+  assert.equal(runCopy(CLIENT, ['update', '--check'], env).status, 1);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(env.OQ_CONFIG_DIR, 'update.json'))).available, false);
+  const version = fs.readFileSync(CLIENT, 'utf8').match(/^VERSION = "([^"]+)"/m)[1];
+  assert.equal(JSON.parse(fs.readFileSync('client/desktop/package.json')).version, version);
+  const info = await (await fetch(`${base}/api/client/info`)).json();
+  assert.equal(info.version, version); assert.match(info.script_sha256, /^[0-9a-f]{64}$/);
+});
+
+test('update: a GitHub release is verified, installed, and skipped if it needs a newer platform', async () => {
+  const body = fs.readFileSync(CLIENT, 'utf8').replace(/^VERSION = "[^"]+"/m, 'VERSION = "7.0.0"');
+  const digest = `sha256:${crypto.createHash('sha256').update(body).digest('hex')}`;
+  let notes = 'A release'; let sum = digest; let draft = false;
+  const s = await fakeRelease((q, r) => {
+    const o = `http://127.0.0.1:${s.address().port}`;
+    if (q.url === '/latest') r.end(JSON.stringify({ tag_name: 'v7.0.0', draft, prerelease: false, body: notes, assets: [{ name: 'oq.py', size: body.length, digest: sum, browser_download_url: `${o}/oq.py` }, { name: 'evil.py', digest, browser_download_url: 'https://example.org/x' }] }));
+    else r.end(body);
+  });
+  const env = { ...limitEnv('github'), OQ_RELEASE_URL: `http://127.0.0.1:${s.address().port}/latest` };
+  try {
+    notes = 'requires-api: 99';
+    let file = copyClient('gh-api', '0.9.0');
+    assert.doesNotMatch((await runCopyAsync(file, ['update', '--check'], env)).out, /7\.0\.0/, 'it needs a newer platform');
+    notes = 'A release'; draft = true;
+    assert.doesNotMatch((await runCopyAsync(file, ['update', '--check'], env)).out, /7\.0\.0/, 'a draft is ignored');
+    draft = false; sum = `sha256:${'0'.repeat(64)}`;
+    file = copyClient('gh-bad', '0.9.0'); const before = fs.readFileSync(file, 'utf8');
+    const bad = await runCopyAsync(file, ['update'], env);
+    assert.equal(bad.code, 2, bad.out); assert.match(bad.out, /integrity/); assert.equal(fs.readFileSync(file, 'utf8'), before);
+    sum = digest; file = copyClient('gh-good', '0.9.0');
+    const good = await runCopyAsync(file, ['update'], env);
+    assert.equal(good.code, 0, good.out); assert.match(good.out, /Updated to version 7\.0\.0/);
+    assert.equal(fs.readFileSync(file, 'utf8'), body);
+  } finally { s.close(); }
+});
+
+test('update: a repository without any release is up to date, not a failed check', async () => {
+  const s = await fakeRelease((q, r) => { r.statusCode = 404; r.end('{"message":"Not Found"}'); });
+  try {
+    const res = await runCopyAsync(CLIENT, ['update', '--check'], { OQ_CONFIG_DIR: path.join(tmp, 'norelease'), OQ_RELEASE_URL: `http://127.0.0.1:${s.address().port}/latest` });
+    assert.equal(res.code, 0, res.out); assert.match(res.out, /up to date/);
+  } finally { s.close(); }
+});
+
+test('update: the graphic client updates, restarts on the same page, and refuses while working', async () => {
+  const file = copyClient('ui', '0.9.0'); const env = limitEnv('update-ui');
+  const py = spawn('python3', [file, 'app', '--no-open'], { env: { PATH: '/usr/bin:/bin:/usr/local/bin', HOME: tmp, ...env } });
+  try {
+    const url = await new Promise((res, rej) => { py.stdout.on('data', (d) => { const m = String(d).match(/OQ_APP_URL=(\S+)/); if (m) res(m[1]); }); setTimeout(() => rej(new Error('no url')), 8000); });
+    const u = new URL(url); const h = { 'X-OQ-Token': u.searchParams.get('t'), 'Content-Type': 'application/json' };
+    const state = async () => (await fetch(`${u.origin}/api/state`, { headers: h })).json();
+    assert.equal((await fetch(`${u.origin}/api/update/check`, { method: 'POST', headers: h, body: '{}' })).status, 200);
+    const before = await state(); assert.equal(before.update.available, true); assert.equal(before.update.mode, 'script');
+    const res = await (await fetch(`${u.origin}/api/update/apply`, { method: 'POST', headers: h, body: '{}' })).json();
+    assert.equal(res.restarting, true);
+    let after = null;
+    assert.ok(await until(async () => { try { after = await state(); return after.version !== '0.9.0'; } catch { return false; } }), 'the new version answers at the same address');
+    assert.equal(after.update.available, false);
+  } finally { py.kill(); }
 });
 
 test('the client is served, and deployed', async () => {

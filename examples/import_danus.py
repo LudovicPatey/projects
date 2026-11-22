@@ -55,16 +55,29 @@ def parse_fact(path: pathlib.Path) -> dict:
 def memory_labels(fact_graph: pathlib.Path) -> dict:
     """{fact_id: labels} from the Danus global memory, next to the fact graph."""
     labels = {}
-    for path in (fact_graph.parent / "global_memory").glob("*.jsonl"):
-        if path.stem not in LABELS:
+    memory = fact_graph.parent / "global_memory"
+    # A finding is linked to its fact in the status log. "verification" is only the trace of the check, present for every fact.
+    promoted = {}
+    status_log = memory / "_status.jsonl"
+    if status_log.exists():
+        for line in status_log.read_text(encoding="utf-8").splitlines():
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(rec, dict) and rec.get("id") and rec.get("fact_id"):
+                promoted[rec["id"]] = rec["fact_id"]
+    for path in memory.glob("*.jsonl"):
+        if path.stem not in LABELS or path.stem == "verification":
             continue
         for line in path.read_text(encoding="utf-8").splitlines():
             try:
                 entry = json.loads(line)
             except ValueError:
                 continue
-            if isinstance(entry, dict) and entry.get("fact_id"):
-                labels.setdefault(str(entry["fact_id"]), set()).add(path.stem)
+            fact = entry.get("fact_id") or promoted.get(entry.get("id")) if isinstance(entry, dict) else None
+            if fact:
+                labels.setdefault(str(fact), set()).add(path.stem)
     return labels
 
 

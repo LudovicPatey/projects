@@ -1,7 +1,7 @@
 // The AI client: where to get it, and how the platform and the computers of the team work together.
 import { api } from '../api.js';
 import { store } from '../store.js';
-import { SYSTEMS, clientCommand, detectSystem, downloadPlan, formatSize } from '../client-download.js';
+import { GITHUB_REPO, RELEASES_URL, SOURCE_URL, SYSTEMS, clientCommand, detectSystem, downloadPlan, formatSize, mergeRelease } from '../client-download.js';
 
 export const ArchitectureDiagram = {
   template: `<figure class="arch" aria-label="The platform stores the research. Each member's computer takes tasks, runs the AI with their own account, and returns checked results.">
@@ -26,7 +26,7 @@ export const ArchitectureDiagram = {
 
 export const ClientView = {
   components: { ArchitectureDiagram },
-  data() { return { info: null, copied: false, failed: false }; },
+  data() { return { info: null, copied: false, failed: false, releasesUrl: RELEASES_URL, sourceUrl: SOURCE_URL }; },
   computed: {
     site() { return (location.origin + location.pathname).replace(/\/$/, ''); },
     system() { return store.clientSystem || detectSystem({ userAgent: navigator.userAgent, platform: navigator.userAgentData?.platform || navigator.platform || '', touchPoints: navigator.maxTouchPoints || 0 }); },
@@ -44,17 +44,23 @@ export const ClientView = {
       }
     } catch { /* the default detection stays */ }
     try { this.info = await api.get('api/client/info'); } catch { this.failed = true; this.info = { installers: [] }; }
+    if (!['localhost', '127.0.0.1', '::1'].includes(location.hostname)) {
+      try {
+        const r = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/releases/latest`, { credentials: 'omit', referrerPolicy: 'no-referrer' });
+        if (r.ok) this.info = mergeRelease(this.info, await r.json());
+      } catch { /* the page keeps what the platform offers */ }
+    }
   },
   methods: {
     formatSize,
     systemName(k) { return SYSTEMS[k]?.label || k; },
-    href(x) { return `api/client/download?system=${encodeURIComponent(x.system)}`; },
+    href(x) { return x.url || `api/client/download?system=${encodeURIComponent(x.system)}`; },
     async copy() {
       try { await navigator.clipboard.writeText(this.command); this.copied = true; setTimeout(() => { this.copied = false; }, 1500); } catch { /* the text stays selectable */ }
     },
   },
   template: `<div class="page wide client-page">
-    <header class="page-title"><span class="sh-icon"><icon name="download" :size="22"/></span><div><h1>AI client</h1><p>Let your computer work for your projects, with your own AI account and within your limits.</p></div></header>
+    <header class="page-title"><span class="sh-icon"><icon name="download" :size="22"/></span><div><h1>AI client</h1><p>Let your computer work for your projects, with your own AI account and within your limits.</p></div><div v-if="info?.version" class="title-kpis"><div><b>{{ info.version }}</b><span>latest version</span></div></div></header>
     <section class="panel client-hero">
       <div class="client-main">
         <p class="eyebrow">{{ plan.phone ? 'On a computer' : 'For ' + plan.label }}</p>
@@ -62,7 +68,7 @@ export const ClientView = {
         <template v-else-if="plan.installer">
           <h2>Download the desktop app</h2><p>It includes everything it needs. Open it, connect your account, and choose your limits.</p>
           <a class="btn primary client-btn" :href="href(plan.installer)" download><icon name="download" :size="17"/> Download for {{ plan.label }}</a>
-          <small class="muted">Version {{ plan.installer.version }} · {{ formatSize(plan.installer.size) }}</small>
+          <small class="muted"><template v-if="plan.installer.version">Version {{ plan.installer.version }} · </template>{{ formatSize(plan.installer.size) }}</small>
           <details v-if="plan.installer.sha256" class="client-hash"><summary>File checksum</summary><code>{{ plan.installer.sha256 }}</code></details>
         </template>
         <template v-else>
@@ -79,6 +85,8 @@ export const ClientView = {
       <section class="panel"><h2><icon name="clock" :size="15"/> You stay in control</h2><ul class="client-list"><li>Set daily caps and working hours</li><li>Limit its share of your ChatGPT usage</li><li>Uses your subscription, not a paid API key</li><li>Give each proof search a time and usage limit</li></ul></section>
       <section class="panel"><h2><icon name="terminal" :size="15"/> Other ways to run it</h2>
         <a v-for="x in plan.others" :key="x.system" class="d-row" :href="href(x)" download><icon name="download" :size="14"/><span class="d-title">{{ systemName(x.system) }}</span><small>{{ formatSize(x.size) }}</small></a>
+        <a class="d-row" :href="releasesUrl" target="_blank" rel="noopener noreferrer"><icon name="download" :size="14"/><span class="d-title">All releases on GitHub</span><span class="chev">↗</span></a>
+        <a class="d-row" :href="sourceUrl" target="_blank" rel="noopener noreferrer"><icon name="code" :size="14"/><span class="d-title">Source code (AGPL-3.0)</span><span class="chev">↗</span></a>
         <a class="d-row" href="#/help?a=ai-app"><icon name="terminal" :size="14"/><span class="d-title">Command line, for servers</span><span class="chev">›</span></a>
         <a class="d-row" href="#/help?a=ai-setup-claude"><icon name="help" :size="14"/><span class="d-title">Guide for Claude</span><span class="chev">›</span></a>
         <a class="d-row" href="#/help?a=ai-setup-chatgpt"><icon name="help" :size="14"/><span class="d-title">Guide for ChatGPT</span><span class="chev">›</span></a>

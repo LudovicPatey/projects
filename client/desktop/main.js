@@ -18,7 +18,7 @@ function engineCommand() {
 function startEngine() {
   return new Promise((resolve, reject) => {
     const [cmd, args] = engineCommand();
-    engine = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+    engine = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
     const timer = setTimeout(() => reject(new Error('The engine did not start.')), 20000);
     engine.stdout.on('data', (d) => {
       const m = String(d).match(/OQ_APP_URL=(http:\/\/127\.0\.0\.1:\d+\/\?t=[\w-]+)/);

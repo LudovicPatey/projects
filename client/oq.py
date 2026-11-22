@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (C) 2026 Ludovic Patey
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Open Questions AI client. It runs on your computer, with your own Claude or ChatGPT account.
 
@@ -8,6 +10,7 @@ Open Questions AI client. It runs on your computer, with your own Claude or Chat
     python3 oq.py status    show the work waiting in your projects
     python3 oq.py run       process the work until you press Ctrl+C
     python3 oq.py run --once    process what is waiting, then stop
+    python3 oq.py update    check for a new version, and install it
     python3 oq.py limits    show or change what the client may use of your subscription
     python3 oq.py danus setup|status|remove    install Danus in an isolated machine
     python3 oq.py danus run --project ID --minutes 120 --stop-session 40 --stop-weekly 50 --on-limit resume
@@ -42,7 +45,9 @@ import urllib.parse
 import urllib.request
 import webbrowser
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
+API_LEVEL = 1  # raise with the server's AiTaskController::API_LEVEL when a client needs new server features
+GITHUB_REPO = "LudovicPatey/projects"
 KINDS = ["extract", "ask", "bib", "derive"]
 KIND_NAMES = {"extract": "Extract facts", "ask": "Answer a question", "bib": "Suggest references", "derive": "Prove new facts"}
 FACT_KINDS = ["definition", "lemma", "proposition", "theorem", "corollary", "conjecture", "remark"]
@@ -549,6 +554,11 @@ def cmd_doctor(a):
             line(False, "Connection", str(e))
     else:
         line(False, "Connection", "run: python3 oq.py setup")
+    try:
+        up = check_update()
+        line(not up["available"], "Version", f"{VERSION}" + (f", version {up['latest']} is available: python3 oq.py update" if up["available"] else ""), needed=False)
+    except Exception:
+        line(True, "Version", VERSION)
     print("\nEverything is ready. Start with: python3 oq.py run" if ok else "\nFix the lines marked !! and run this command again.")
     return 0 if ok else 1
 
@@ -681,6 +691,7 @@ def cmd_run(a):
     if any(k not in KINDS for k in a.kinds):
         raise Stop(f"--only accepts: {', '.join(KINDS)}")
     name = a.name or f"{platform.node() or 'computer'} ({a.provider})"
+    update_notice()
     print(f"Connected to {api.url}, using {a.provider}. Handles: {', '.join(KIND_NAMES[k] for k in a.kinds if k in load_limits()['kinds']) or 'nothing, see your limits'}.")
     print("Leave this window open. Press Ctrl+C to stop." if not a.once else "Processing what is waiting.", flush=True)
     done, code = 0, 0
@@ -738,22 +749,36 @@ def parse_danus(path):
     if not sections.get("statement"):
         raise Stop(f"{path.name}: no statement section")
     return {"fact_id": str(meta.get("fact_id") or path.stem), "predecessors": [str(p) for p in meta.get("predecessors") or []],
-            "glossary_introduces": meta.get("glossary_introduces") or None, "external_refs": meta.get("external_refs") or None,
+            "glossary_introduces": meta["glossary_introduces"] if isinstance(meta.get("glossary_introduces"), dict) and meta["glossary_introduces"] else None,
+            "external_refs": meta["external_refs"] if isinstance(meta.get("external_refs"), list) and meta["external_refs"] else None,
             "statement": sections["statement"], "proof": sections.get("proof", ""), "intuition": sections.get("intuition", "")}
 
 
 def danus_labels(graph):
     labels = {}
-    for path in (graph.parent / "global_memory").glob("*.jsonl"):
-        if path.stem not in DANUS_LABELS:
+    memory = graph.parent / "global_memory"
+    # A finding is linked to its fact in the status log. "verification" is only the trace of the check, present for every fact.
+    promoted = {}
+    status_log = memory / "_status.jsonl"
+    if status_log.exists():
+        for line in status_log.read_text(encoding="utf-8").splitlines():
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(rec, dict) and rec.get("id") and rec.get("fact_id"):
+                promoted[rec["id"]] = rec["fact_id"]
+    for path in memory.glob("*.jsonl"):
+        if path.stem not in DANUS_LABELS or path.stem == "verification":
             continue
         for line in path.read_text(encoding="utf-8").splitlines():
             try:
                 entry = json.loads(line)
             except ValueError:
                 continue
-            if isinstance(entry, dict) and entry.get("fact_id"):
-                labels.setdefault(str(entry["fact_id"]), set()).add(path.stem)
+            fact = entry.get("fact_id") or promoted.get(entry.get("id")) if isinstance(entry, dict) else None
+            if fact:
+                labels.setdefault(str(fact), set()).add(path.stem)
     return labels
 
 
@@ -1151,9 +1176,16 @@ def billing_problem(provider, limits):
                 problem = "Claude is set to use a paid API key (apiKeyHelper). Remove it, or choose API billing."
         except (OSError, ValueError):
             pass
+        if not problem and shutil.which("claude"):
+            try:
+                p = subprocess.run([shutil.which("claude"), "auth", "status"], stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=20, env=safe_env("claude"))
+                if json.loads(p.stdout).get("authMethod") in ("api_key", "api_key_helper", "third_party"):
+                    problem = "Claude is signed in with a paid API method. Sign in with your Claude plan, or choose API billing."
+            except (OSError, ValueError, AttributeError, subprocess.SubprocessError):
+                pass
     elif shutil.which("codex"):
         try:
-            p = subprocess.run([shutil.which("codex"), "login", "status"], capture_output=True, text=True, timeout=20, env=safe_env("codex"))
+            p = subprocess.run([shutil.which("codex"), "login", "status"], stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=20, env=safe_env("codex"))
             if "api key" in (p.stdout + p.stderr).lower():
                 problem = "Codex is signed in with a paid API key. Sign in with ChatGPT, or choose API billing."
         except (OSError, subprocess.SubprocessError):
@@ -1195,8 +1227,23 @@ grep -q '^CODEX_BACKEND=chatgpt' config/danus.env || echo 'CODEX_BACKEND=chatgpt
 """
 
 
+# Only the image: Lima's ready-made Ubuntu templates also mount the user's home folder.
+LIMA_SPEC = """minimumLimaVersion: 2.0.0
+base: template:_images/ubuntu-26.04
+cpus: 2
+memory: 4GiB
+disk: 30GiB
+ssh:
+  forwardAgent: false
+portForwards:
+- guestPortRange: [1, 65535]
+  ignore: true
+"""
+
+
 class LimaVm:
     name = "macOS virtual machine"
+    isolation_check = "! findmnt -n -t virtiofs,9p,fuse.sshfs | grep -q ."
 
     def __init__(self):
         self.root = data_dir() / "lima"
@@ -1231,8 +1278,8 @@ class LimaVm:
         if not self.exists():
             say("Creating the isolated machine (several minutes)")
             spec = self.root / "machine.yaml"
-            spec.write_text("base: template://ubuntu-lts\nmounts: []\ncpus: 2\nmemory: 4GiB\ndisk: 30GiB\nportForwards:\n- guestPortRange: [1, 65535]\n  ignore: true\n", encoding="utf-8")
-            cmd = [str(self.bin), "start", f"--name={VM_NAME}", "--tty=false", str(spec)]
+            spec.write_text(LIMA_SPEC, encoding="utf-8")
+            cmd = [str(self.bin), "start", f"--name={VM_NAME}", "--tty=false", "--mount-none", str(spec)]
         else:
             cmd = [str(self.bin), "start", "--tty=false", VM_NAME]
         p = subprocess.run(cmd, env=self.env, capture_output=True, text=True, timeout=1800)
@@ -1258,6 +1305,11 @@ class ContainerVm:
     def __init__(self, tool):
         self.tool, self.env, self.name = tool, safe_env(), f"{tool} container"
 
+    def isolated(self):
+        """The engine itself lists the folders shared with the container: there must be none."""
+        p = subprocess.run([self.tool, "inspect", "-f", "{{len .Mounts}}", VM_NAME], stdin=subprocess.DEVNULL, capture_output=True, text=True, env=self.env)
+        return p.returncode == 0 and p.stdout.strip() == "0"
+
     def exists(self):
         return subprocess.run([self.tool, "inspect", VM_NAME], capture_output=True, env=self.env).returncode == 0
 
@@ -1266,7 +1318,7 @@ class ContainerVm:
             subprocess.run([self.tool, "start", VM_NAME], capture_output=True, env=self.env)
             return
         say("Creating the isolated container")
-        p = subprocess.run([self.tool, "run", "-d", "--name", VM_NAME, "--memory", "4g", "--cpus", "2", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "ubuntu:24.04", "sleep", "infinity"], capture_output=True, text=True, env=self.env)
+        p = subprocess.run([self.tool, "run", "-d", "--name", VM_NAME, "--memory", "4g", "--cpus", "2", "--cap-drop", "ALL", "--cap-add", "CHOWN", "--cap-add", "DAC_OVERRIDE", "--cap-add", "FOWNER", "--cap-add", "SETUID", "--cap-add", "SETGID", "--security-opt", "no-new-privileges", "ubuntu:24.04", "sleep", "infinity"], capture_output=True, text=True, env=self.env)
         if p.returncode != 0:
             raise Stop("The container could not start: " + p.stderr.strip()[-300:])
 
@@ -1282,6 +1334,7 @@ class ContainerVm:
 
 class WslVm:
     name = "Windows Linux subsystem"
+    isolation_check = "! mountpoint -q /mnt/c && ! command -v cmd.exe >/dev/null"
 
     def __init__(self):
         self.env = safe_env()
@@ -1297,6 +1350,11 @@ class WslVm:
         p = subprocess.run(["wsl", "--install", "Ubuntu-24.04", "--name", VM_NAME, "--no-launch"], capture_output=True, env=self.env)
         if p.returncode != 0:
             raise Stop("Windows could not create the Linux machine. It may need the Windows Subsystem for Linux, which asks for administrator approval once.")
+        conf = "[automount]\nenabled=false\nmountFsTab=false\n[interop]\nenabled=false\nappendWindowsPath=false\n"
+        p = subprocess.run(["wsl", "-d", VM_NAME, "-u", "root", "--", "sh", "-c", "cat > /etc/wsl.conf"], input=conf.encode("utf-8"), capture_output=True, env=self.env)
+        if p.returncode != 0:
+            raise Stop("The Linux machine could not be isolated from Windows.")
+        subprocess.run(["wsl", "--terminate", VM_NAME], capture_output=True, env=self.env)
 
     def command(self, script):
         return ["wsl", "-d", VM_NAME, "--cd", "~", "--", "bash", "-lc", script]
@@ -1364,6 +1422,11 @@ class DanusManager:
             return "This computer needs Docker or Podman to isolate the proof search."
         return None
 
+    def assert_isolated(self, vm):
+        """Danus runs with its sandbox off: it never starts if the machine can see the computer's files."""
+        if not (vm.isolated() if hasattr(vm, "isolated") else self.sh(vm, vm.isolation_check, timeout=60).returncode == 0):
+            raise Stop("The isolated machine can see files of this computer, so the prover was not started.")
+
     def sh(self, vm, script, timeout=600, input_text=None):
         # Without input, the machine must not wait on the terminal or on the app's own input.
         feed = {"input": input_text} if input_text is not None else {"stdin": subprocess.DEVNULL}
@@ -1377,6 +1440,7 @@ class DanusManager:
         self.save(ready=False, error=None, step="Starting", login=None)
         step = lambda s: (self.save(step=s), say(s))
         vm.start(step)
+        self.assert_isolated(vm)
         step("Installing Danus (several minutes)")
         p = self.sh(vm, DANUS_SETUP, timeout=3600)
         if p.returncode != 0:
@@ -1624,7 +1688,12 @@ class DanusRun:
                 last = now
                 Ledger().add(seconds=spent)
                 s = self.write(active_seconds=round(s.get("active_seconds", 0) + spent, 1))
-                dm.sh(vm, f"touch {hb}", timeout=30)
+                try:
+                    if dm.sh(vm, f"[ -f {hb} ] && touch {hb}", timeout=30).returncode != 0:
+                        running = False  # the watchdog stopped the workers, for example during a sleep
+                        say(f"{time.strftime('%H:%M:%S')}  The proof search was interrupted and restarts.")
+                except subprocess.TimeoutExpired:
+                    pass
                 if not self.keep_lease(api, s):
                     reason = "a cancellation on the platform"
                     final_status = "cancelled"
@@ -1654,11 +1723,12 @@ class DanusRun:
     def launch(self, dm, vm, s, name, hb):
         q = shlex.quote
         vm.start(say)
+        dm.assert_isolated(vm)
         p = dm.sh(vm, f"cd {DANUS_HOME} && bash scripts/services.sh up verify", timeout=300)
         if p.returncode != 0:
             raise RuntimeError("The proof verifier could not start: " + (p.stderr or p.stdout)[-300:])
         if not s.get("launched"):
-            p = dm.sh(vm, f"cd {DANUS_HOME} && bin/danus new {name} --roles high:{s['workers']} --model {q(s['model'])}")
+            p = dm.sh(vm, f"cd {DANUS_HOME} && (bin/danus status {name} --json >/dev/null 2>&1 || bin/danus new {name} --roles high:{s['workers']} --model {q(s['model'])})")
             if p.returncode != 0:
                 raise RuntimeError("The proof search could not be prepared: " + (p.stderr or p.stdout)[-300:])
             ctx = s.get("context") or {}
@@ -1786,7 +1856,7 @@ def tool_signed_in(name):
         return False
     cmd = [shutil.which(name), "login", "status"] if name == "codex" else [shutil.which(name), "auth", "status"]
     try:
-        return subprocess.run(cmd, capture_output=True, timeout=20, env=safe_env(name)).returncode == 0
+        return subprocess.run(cmd, stdin=subprocess.DEVNULL, capture_output=True, timeout=20, env=safe_env(name)).returncode == 0
     except (OSError, subprocess.SubprocessError):
         return False
 
@@ -1847,7 +1917,13 @@ class Service:
 
     def state(self):
         cfg = load_config()
-        tools = {n: {"installed": bool(shutil.which(n)), "signed_in": tool_signed_in(n)} for n in ("claude", "codex")}
+        cached_tools = getattr(self, "tools_cache", None)
+        busy = any(k.startswith(("install-", "login-")) and v.get("running") for k, v in self.jobs.items())
+        if cached_tools and time.time() - cached_tools[0] < 20 and not busy:
+            tools = cached_tools[1]
+        else:
+            tools = {n: {"installed": bool(shutil.which(n)), "signed_in": tool_signed_in(n)} for n in ("claude", "codex")}
+            self.tools_cache = (time.time(), tools)
         provider = self.provider or load_prefs().get("provider") or next((n for n in ("claude", "codex") if tools[n]["installed"]), None)
         windows = UsageReader.read(provider) if provider else None
         limits = load_limits()
@@ -1870,7 +1946,7 @@ class Service:
             except ApiError as e:
                 error = str(e)
         dm = DanusManager()
-        return {"danus_run": DanusRun().public(), "version": VERSION, "connected": bool(cfg.get("key")) and not error, "url": cfg.get("url", ""), "error": error, "projects": projects, "tools": tools, "provider": provider,
+        return {"update": read_update(), "danus_run": DanusRun().public(), "version": VERSION, "connected": bool(cfg.get("key")) and not error, "url": cfg.get("url", ""), "error": error, "projects": projects, "tools": tools, "provider": provider,
                 "running": self.running(), "allowed": allowed, "reason": reason, "retry_at": retry, "limits": limits, "day": day, "windows": windows,
                 "log": list(self.log)[-60:], "jobs": self.jobs, "danus": {**dm.state(), "unavailable": dm.unavailable_reason()}}
 
@@ -1913,14 +1989,14 @@ def make_handler(service, token, port):
             return True
 
         def authorized(self):
-            return hmac.compare_digest(self.headers.get("X-OQ-Token", ""), token)
+            return hmac.compare_digest(self.headers.get("X-OQ-Token", "").encode("utf-8", "replace"), token.encode("utf-8"))
 
         def do_GET(self):
             if not self.guarded():
                 return
             u = urllib.parse.urlparse(self.path)
             if u.path == "/":
-                if not hmac.compare_digest(urllib.parse.parse_qs(u.query).get("t", [""])[0], token):
+                if not hmac.compare_digest(urllib.parse.parse_qs(u.query).get("t", [""])[0].encode("utf-8", "replace"), token.encode("utf-8")):
                     return self.reply(403, b"Open this page from the Open Questions app.", "text/plain; charset=utf-8")
                 return self.reply(200, UI_HTML.replace("__TOKEN__", token).encode("utf-8"), "text/html; charset=utf-8")
             if u.path == "/api/state" and self.authorized():
@@ -1977,13 +2053,26 @@ def make_handler(service, token, port):
                 name = b.get("tool")
                 if name not in TOOL_LOGIN or not shutil.which(name):
                     raise Stop("Install this tool first.")
-                service.job(f"login-{name}", lambda: check_run([shutil.which(name)] + TOOL_LOGIN[name][1:], f"Signing in to {name}", name))
+                service.tools_cache = None
+                if name == "claude":
+                    open_login_terminal(name)
+                else:
+                    service.job(f"login-{name}", lambda: check_run([shutil.which(name)] + TOOL_LOGIN[name][1:], f"Signing in to {name}", name))
             elif path == "/api/danus/setup":
                 service.job("danus", lambda: DanusManager().setup(say))
             elif path == "/api/danus/remove":
                 if DanusRun().alive():
                     raise Stop("Stop the proof search first.")
                 service.job("danus", lambda: DanusManager().remove())
+            elif path == "/api/update/check":
+                check_update(force=True)
+            elif path == "/api/update/apply":
+                if service.running():
+                    raise Stop("Stop the client first, then update.")
+                version = apply_update()
+                if version:
+                    threading.Thread(target=restart_app, args=(port, token), daemon=True).start()
+                    return {"ok": True, "restarting": True, "version": version}
             elif path == "/api/danus/run":
                 service.danus.start(b)
             elif path == "/api/danus/stop":
@@ -2006,6 +2095,27 @@ def danus_options(project):
     return {"questions": [{"id": q["id"], "title": q["title"]} for q in questions], "requests": requests}
 
 
+def open_login_terminal(name):
+    """Opens a terminal window on the tool's own sign-in."""
+    path = shutil.which(name)
+    command = f"{shlex.quote(path)} {' '.join(TOOL_LOGIN[name][1:])}"
+    try:
+        if sys.platform == "darwin":
+            text = command.replace("\\", "\\\\").replace('"', '\\"')
+            subprocess.Popen(["osascript", "-e", f'tell application "Terminal" to do script "{text}"', "-e", 'tell application "Terminal" to activate'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return
+        if os.name == "nt":
+            subprocess.Popen(["cmd", "/c", "start", "", "cmd", "/k", path, *TOOL_LOGIN[name][1:]])
+            return
+        for term, flag in (("x-terminal-emulator", "-e"), ("gnome-terminal", "--"), ("konsole", "-e"), ("xterm", "-e")):
+            if shutil.which(term):
+                subprocess.Popen([term, flag, path, *TOOL_LOGIN[name][1:]], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                return
+    except OSError:
+        pass
+    raise Stop(f"Open a terminal and run: {name} {' '.join(TOOL_LOGIN[name][1:])}")
+
+
 def check_run(cmd, label, tool=None):
     say(label)
     p = subprocess.run(cmd, stdin=subprocess.DEVNULL, capture_output=True, text=True, errors="replace", timeout=1800, env=safe_env(tool))
@@ -2017,7 +2127,7 @@ def check_run(cmd, label, tool=None):
 
 def cmd_app(a):
     service = Service()
-    token = secrets.token_urlsafe(24)
+    token = os.environ.pop("OQ_APP_TOKEN", "") or secrets.token_urlsafe(24)  # kept across an update, so that the open page reconnects
     server = http.server.ThreadingHTTPServer(("127.0.0.1", a.port), None)
     port = server.server_address[1]
     server.RequestHandlerClass = make_handler(service, token, port)
@@ -2025,6 +2135,15 @@ def cmd_app(a):
     print(f"OQ_APP_URL={url}" if a.no_open else f"Open Questions is open in your browser. Keep this window open.\n{url}", flush=True)
     if not a.no_open:
         webbrowser.open(url)
+    def keep_checking():
+        while True:
+            try:
+                check_update()
+            except Exception:
+                pass
+            time.sleep(1800)
+
+    threading.Thread(target=keep_checking, daemon=True).start()
     if load_config().get("key"):
         try:
             service.danus.resume_after_restart()
@@ -2113,6 +2232,255 @@ def cmd_danus_managed(a):
     return 0
 
 
+# ----- updates: the connected platform says which version is current -----
+
+UPDATE_EVERY = 6 * 3600
+MAX_CLIENT_SIZE = 5 * 1024 * 1024
+
+
+def version_tuple(value):
+    m = re.fullmatch(r"(\d{1,4})\.(\d{1,4})\.(\d{1,4})", str(value or ""))
+    return tuple(int(x) for x in m.groups()) if m else None
+
+
+def is_newer(candidate, current):
+    a, b = version_tuple(candidate), version_tuple(current)
+    return bool(a and b and a > b)
+
+
+def is_packaged():
+    return bool(getattr(sys, "frozen", False))
+
+
+def installer_system():
+    if sys.platform == "darwin":
+        return "mac-arm64" if platform.machine() in ("arm64", "aarch64") else "mac-x64"
+    return "windows" if os.name == "nt" else "linux"
+
+
+def safe_update_url(url):
+    """Code is only fetched over HTTPS, or from this computer during development."""
+    u = urllib.parse.urlparse(url or "")
+    return u.scheme == "https" or (u.scheme == "http" and u.hostname in ("127.0.0.1", "localhost", "::1"))
+
+
+def fetch_url(url, limit=MAX_CLIENT_SIZE):
+    req = urllib.request.Request(url, headers={"User-Agent": f"open-questions-client/{VERSION}", "Accept": "*/*"})  # never sends the key
+    with urllib.request.urlopen(req, timeout=30) as r:
+        data = r.read(limit + 1)
+    if len(data) > limit:
+        raise Stop("The downloaded file is too large.")
+    return data
+
+
+INSTALLER_NAMES = {"mac-arm64": "open-questions-ai-mac-arm64.dmg", "mac-x64": "open-questions-ai-mac-x64.dmg",
+                   "windows": "open-questions-ai-windows.exe", "linux": "open-questions-ai-linux.AppImage"}
+
+
+def release_endpoint():
+    """GitHub, except for a platform on this computer, which is development and follows its own code."""
+    forced = os.environ.get("OQ_RELEASE_URL")
+    if forced:
+        return forced
+    host = urllib.parse.urlparse(load_config().get("url") or "").hostname
+    if host in ("127.0.0.1", "localhost", "::1"):
+        return None
+    return f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+
+
+def valid_asset_url(url):
+    forced = os.environ.get("OQ_RELEASE_URL")
+    if forced and str(url).startswith(forced.rsplit("/", 1)[0] + "/"):
+        return True
+    return str(url).startswith(f"https://github.com/{GITHUB_REPO}/releases/download/")
+
+
+def parse_release(data):
+    """The published release, keeping only assets with a GitHub checksum and an expected address."""
+    if not isinstance(data, dict) or data.get("draft") or data.get("prerelease"):
+        return None
+    version = str(data.get("tag_name") or "").lstrip("v")
+    if not version_tuple(version):
+        return None
+    needed = re.search(r"requires-api:\s*(\d+)", str(data.get("body") or ""), re.I)
+    assets = {}
+    for a in data.get("assets") or []:
+        digest = str(a.get("digest") or "")
+        if digest.startswith("sha256:") and re.fullmatch(r"[0-9a-f]{64}", digest[7:]) and valid_asset_url(a.get("browser_download_url")):
+            assets[a.get("name")] = {"url": a["browser_download_url"], "sha256": digest[7:], "size": a.get("size")}
+    return {"version": version, "requires_api": int(needed.group(1)) if needed else 1, "assets": assets}
+
+
+def read_release():
+    """(release, reached): GitHub answering that no release exists yet is a valid answer, not a failure."""
+    endpoint = release_endpoint()
+    if not endpoint:
+        return None, False
+    try:
+        return parse_release(json.loads(fetch_url(endpoint, 2 * 1024 * 1024).decode("utf-8"))), True
+    except urllib.error.HTTPError as e:
+        return None, e.code == 404
+    except (OSError, ValueError, Stop):  # offline
+        return None, False
+
+
+def fetch_release():
+    return read_release()[0]
+
+
+def evaluate_update(current, info, packaged, system, release=None):
+    """What this copy of the client can do with the published versions."""
+    info = info or {}
+    options = []
+    # A release that needs a newer server than the connected platform is not offered.
+    if release and release["requires_api"] <= int(info.get("api_level") or 1) and is_newer(release["version"], current):
+        asset = release["assets"].get(INSTALLER_NAMES.get(system) if packaged else "oq.py")
+        if asset:
+            options.append({"available": True, "latest": release["version"], "mode": "installer" if packaged else "script", "source": "github", "asset_url": asset["url"], "sha256": asset["sha256"]})
+    if packaged:
+        found = next((x for x in info.get("installers") or [] if x.get("system") == system), None)
+        if found and is_newer(found.get("version"), current):
+            options.append({"available": True, "latest": found["version"], "mode": "installer", "source": "platform"})
+    elif is_newer(info.get("version"), current) and re.fullmatch(r"[0-9a-f]{64}", str(info.get("script_sha256") or "")):
+        options.append({"available": True, "latest": info["version"], "mode": "script", "source": "platform", "sha256": info["script_sha256"]})
+    if options:
+        return max(options, key=lambda o: version_tuple(o["latest"]))
+    latest = info.get("version") if not packaged and version_tuple(info.get("version")) else current
+    return {"available": False, "latest": latest, "mode": None}
+
+
+def update_path():
+    return data_dir() / "update.json"
+
+
+def read_update():
+    try:
+        d = json.loads(update_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        d = {}
+    if d.get("current") != VERSION:  # a check made by an older version says nothing about this one
+        d = {}
+    url = (load_config().get("url") or "").rstrip("/")
+    return {"current": VERSION, "available": bool(d.get("available")), "latest": d.get("latest"), "mode": d.get("mode"), "checked_at": d.get("checked_at"),
+            "error": d.get("error"), "source": d.get("source"), "download_url": d.get("asset_url") or (f"{url}/#/client" if url else None), "packaged": is_packaged()}
+
+
+def check_update(force=False):
+    state = read_update()
+    if not force and state["checked_at"] and time.time() - state["checked_at"] < UPDATE_EVERY:
+        return state
+    url = (load_config().get("url") or "").rstrip("/")
+    result = {"current": VERSION, "checked_at": time.time(), "error": None}
+    info, failure = None, None
+    if url:
+        try:
+            info = json.loads(fetch_url(f"{url}/api/client/info", 1024 * 1024).decode("utf-8"))
+        except (OSError, ValueError, Stop) as e:
+            failure = e
+    release, reached = read_release()
+    if info is None and not reached:
+        # A failed check must never interrupt the work: keep what was known.
+        result.update(available=state["available"], latest=state["latest"], mode=state["mode"], error="The update check failed. It will be tried again later.")
+        if force and failure:
+            print(f"Update check failed: {failure}", file=sys.stderr) if not SINKS else say("The update check failed.")
+    else:
+        result.update(evaluate_update(VERSION, info, is_packaged(), installer_system(), release))
+    data_dir().mkdir(parents=True, exist_ok=True)
+    update_path().write_text(json.dumps(result), encoding="utf-8")
+    return read_update()
+
+
+def verify_client_file(data, info, current):
+    """A replacement must match the published checksum, be valid Python, and really be newer."""
+    if hashlib.sha256(data).hexdigest() != info.get("script_sha256"):
+        raise Stop("The downloaded update failed its integrity check. Nothing was changed.")
+    try:
+        text = data.decode("utf-8")
+        compile(text, "oq.py", "exec")
+    except (UnicodeDecodeError, SyntaxError, ValueError):
+        raise Stop("The downloaded update is not valid. Nothing was changed.")
+    m = re.search(r'^VERSION = "([^"]+)"', text, re.M)
+    if not m or m.group(1) != info.get("version") or not is_newer(m.group(1), current):
+        raise Stop("The downloaded update does not have the expected version. Nothing was changed.")
+    return m.group(1)
+
+
+def apply_update():
+    if is_packaged():
+        raise Stop("Download the new version of the app from the platform.")
+    if DanusRun().alive():
+        raise Stop("Stop the proof search first.")
+    url = (load_config().get("url") or "").rstrip("/")
+    try:
+        info = json.loads(fetch_url(f"{url}/api/client/info", 1024 * 1024).decode("utf-8")) if url else None
+    except (OSError, ValueError):
+        info = None
+    choice = evaluate_update(VERSION, info, False, installer_system(), fetch_release())
+    if not choice["available"]:
+        check_update(force=True)
+        return None
+    if choice["source"] == "platform" and not safe_update_url(url):
+        raise Stop("Updates are only installed over a secure (https) connection.")
+    if choice["source"] == "github" and not valid_asset_url(choice["asset_url"]):
+        raise Stop("The update does not come from the expected address. Nothing was changed.")
+    try:
+        data = fetch_url(choice["asset_url"] if choice["source"] == "github" else f"{url}/api/client/oq.py")
+    except (OSError, ValueError) as e:
+        raise Stop(f"The update could not be downloaded: {e}")
+    version = verify_client_file(data, {"version": choice["latest"], "script_sha256": choice["sha256"]}, VERSION)
+    target = pathlib.Path(__file__).resolve()
+    tmp = target.with_name(target.name + ".new")
+    try:
+        tmp.write_bytes(data)
+        os.chmod(str(tmp), target.stat().st_mode & 0o777)
+        shutil.copy2(str(target), str(target.with_name(target.name + ".previous")))
+        os.replace(str(tmp), str(target))
+    except OSError as e:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise Stop(f"The client file could not be replaced: {e}")
+    update_path().unlink(missing_ok=True) if sys.version_info >= (3, 8) else None
+    return version
+
+
+def cmd_update(a):
+    state = check_update(force=True)
+    if state["error"]:
+        print(state["error"], file=sys.stderr)
+        return 1
+    if not state["available"]:
+        print(f"The client is up to date (version {VERSION}).")
+        return 0
+    print(f"Version {state['latest']} is available. You have {VERSION}.")
+    if a.check:
+        return 0
+    if state["mode"] == "installer":
+        print(f"Download it from {state['download_url']}")
+        return 0
+    version = apply_update()
+    print(f"Updated to version {version}. Start the client again to use it." if version else "The client is up to date.")
+    return 0
+
+
+def update_notice():
+    """A short reminder at the start of a command. It never blocks or fails the command."""
+    try:
+        state = check_update()
+        if state["available"]:
+            print(f"Version {state['latest']} is available. Update with: python3 oq.py update", flush=True)
+    except Exception:
+        pass
+
+
+def restart_app(port, token):
+    """Starts the new version on the same address, so that the open page reconnects."""
+    time.sleep(0.4)
+    os.environ["OQ_APP_TOKEN"] = token
+    os.execv(sys.executable, [sys.executable, str(pathlib.Path(__file__).resolve()), "app", "--no-open", "--port", str(port)])
+
+
 def parser():
     ap = argparse.ArgumentParser(prog="oq.py", description="Open Questions AI client")
     ap.add_argument("--version", action="version", version=VERSION)
@@ -2122,6 +2490,9 @@ def parser():
     s.set_defaults(fn=cmd_setup)
     sub.add_parser("doctor", help="check the installation").set_defaults(fn=cmd_doctor)
     sub.add_parser("status", help="show the waiting work").set_defaults(fn=cmd_status)
+    u = sub.add_parser("update", help="check for a new version, and install it")
+    u.add_argument("--check", action="store_true", help="only check")
+    u.set_defaults(fn=cmd_update)
     r = sub.add_parser("run", help="process the work")
     r.add_argument("--once", action="store_true", help="process what is waiting, then stop")
     r.add_argument("--limit", type=int, help="stop after this many tasks")
@@ -2208,11 +2579,11 @@ button.btn{border:1px solid var(--line);background:var(--panel);color:var(--text
 .meter{margin:10px 0}.meter header{display:flex;justify-content:space-between;gap:8px;font-size:13px}.meter small{color:var(--muted)}.bar{position:relative;height:8px;margin-top:5px;border-radius:5px;background:var(--line)}.bar i{display:block;height:100%;border-radius:5px;background:var(--accent)}.bar i.high{background:var(--bad)}.bar u{position:absolute;top:-3px;width:2px;height:14px;background:var(--text)}
 .row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px solid var(--line)}.row:first-of-type{border-top:0}.row>div{min-width:0}.row small{display:block;color:var(--muted)}.pill{flex:none;padding:2px 9px;border-radius:99px;background:var(--soft);color:var(--accent);font-size:12px;font-weight:700}.pill.good{background:var(--goodbg);color:var(--good)}.pill.warn{background:var(--warnbg);color:var(--warn)}
 .log{max-height:240px;overflow:auto;font:12px/1.6 ui-monospace,Menlo,monospace;white-space:pre-wrap;overflow-wrap:anywhere}.log span{color:var(--muted);margin-right:8px}.empty{color:var(--muted);padding:6px 0}
-label.f{display:grid;gap:4px;margin-bottom:12px;font-weight:650;font-size:13px}label.f small{font-weight:400;color:var(--muted)}input[type=text],input[type=password],input[type=number],select{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--text);font:inherit}input[type=range]{width:100%;accent-color:var(--accent)}.check{display:flex;gap:8px;align-items:center;padding:4px 0;font-weight:500}.run-form h3{font-size:13px;margin:0 0 8px}.run-form textarea{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--text);font:inherit;resize:vertical}.run-btn{width:100%;padding:12px;font-size:15px}.pill.bad{background:var(--badbg);color:var(--bad)}.err{padding:9px 11px;border-radius:8px;background:var(--badbg);color:var(--bad);margin-bottom:12px;overflow-wrap:anywhere}.note{padding:9px 11px;border-radius:8px;background:var(--soft);font-size:13px;margin:10px 0}.code{font:700 20px ui-monospace,Menlo,monospace;letter-spacing:.06em}.steps{display:grid;gap:6px;margin:0 0 12px;padding:0;list-style:none}.steps li{display:flex;gap:8px;align-items:center}.steps i{width:20px;height:20px;border-radius:50%;display:grid;place-items:center;background:var(--line);font-style:normal;font-size:11px;font-weight:800}.steps li.ok i{background:var(--good);color:#fff}
-@media(max-width:680px){.app{display:block}nav{flex-direction:row;overflow-x:auto;padding:8px}.brand{display:none}nav button{flex:none}main{padding:16px}.grid{grid-template-columns:minmax(0,1fr)}.hero{flex-wrap:wrap}.hero .btn{width:100%}}
-</style></head><body><div class="app"><nav aria-label="Sections"><div class="brand">Open Questions AI</div><button data-v="home">Home</button><button data-v="limits">Usage limits</button><button data-v="danus">Prove new facts</button><button data-v="account">Accounts</button></nav><main id="m">Loading…</main></div>
+label.f{display:grid;gap:4px;margin-bottom:12px;font-weight:650;font-size:13px}label.f small{font-weight:400;color:var(--muted)}input[type=text],input[type=password],input[type=number],select{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--text);font:inherit}input[type=range]{width:100%;accent-color:var(--accent)}.check{display:flex;gap:8px;align-items:center;padding:4px 0;font-weight:500}.ver{margin-top:auto;display:grid;gap:2px;padding:10px 11px 2px;color:#c7c9f0}.ver small{font-size:11.5px}.ver button{all:unset;cursor:pointer;margin-top:3px;font-size:11.5px;font-weight:700;color:#fff;text-decoration:underline}.ver a{margin-top:3px;font-size:11.5px;color:#c7c9f0}.ver button:focus-visible{outline:2px solid #fff;outline-offset:2px}.update{display:flex;align-items:center;justify-content:space-between;gap:12px;background:var(--soft);border-color:transparent}.update div{display:grid;min-width:0}.update span{color:var(--muted);font-size:13px}.update a.btn{border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:8px;padding:8px 13px;font-weight:650;text-decoration:none}.run-form h3{font-size:13px;margin:0 0 8px}.run-form textarea{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--text);font:inherit;resize:vertical}.run-btn{width:100%;padding:12px;font-size:15px}.pill.bad{background:var(--badbg);color:var(--bad)}.err{padding:9px 11px;border-radius:8px;background:var(--badbg);color:var(--bad);margin-bottom:12px;overflow-wrap:anywhere}.note{padding:9px 11px;border-radius:8px;background:var(--soft);font-size:13px;margin:10px 0}.code{font:700 20px ui-monospace,Menlo,monospace;letter-spacing:.06em}.steps{display:grid;gap:6px;margin:0 0 12px;padding:0;list-style:none}.steps li{display:flex;gap:8px;align-items:center}.steps i{width:20px;height:20px;border-radius:50%;display:grid;place-items:center;background:var(--line);font-style:normal;font-size:11px;font-weight:800}.steps li.ok i{background:var(--good);color:#fff}
+@media(max-width:680px){.app{display:block}nav{flex-direction:row;overflow-x:auto;padding:8px}.brand{display:none}nav button{flex:none}.ver{margin:0 0 0 auto;flex:none;display:flex;align-items:center;gap:8px;padding:0 6px}.ver small:first-child,.ver a{display:none}.update{flex-wrap:wrap}main{padding:16px}.grid{grid-template-columns:minmax(0,1fr)}.hero{flex-wrap:wrap}.hero .btn{width:100%}}
+</style></head><body><div class="app"><nav aria-label="Sections"><div class="brand">Open Questions AI</div><button data-v="home">Home</button><button data-v="limits">Usage limits</button><button data-v="danus">Prove new facts</button><button data-v="account">Accounts</button><div class=ver id=ver></div></nav><main id="m">Loading…</main></div>
 <script>
-const T='__TOKEN__';let S=null,view='home',draft=null,msg='',paint=0,R=null,O={};
+const T='__TOKEN__';let S=null,view='home',draft=null,msg='',paint=0,R=null,O={},checking=false,updating=false;
 const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const call=async(p,b={})=>{msg='';try{const r=await fetch(p,{method:'POST',headers:{'Content-Type':'application/json','X-OQ-Token':T},body:JSON.stringify(b)});const d=await r.json();if(!r.ok)msg=d.error||'Error';}catch{msg='The app is not responding.'}await load()};
 const load=async()=>{try{const r=await fetch('/api/state',{headers:{'X-OQ-Token':T}});S=await r.json();if(!draft)draft={...S.limits};render()}catch{document.getElementById('m').innerHTML='<div class=err>The app stopped. Close this window and open it again.</div>'}};
@@ -2227,7 +2598,9 @@ const usage=()=>{const l=S.limits,d=S.day;let h='<section class=panel><h2>Usage 
  if(S.windows)for(const w of S.windows){const cap=w.name==='weekly'?l.max_weekly_percent:l.max_session_percent;h+=meter(`ChatGPT ${w.name} limit`,w.used,100,`${w.used}% used, stops at ${cap}%${w.resets_at?' · resets '+when(w.resets_at):''}`,cap)}
  else if(S.provider==='claude')h+='<div class=note>Claude does not report its percentage to unattended tools. The caps below apply, and work also stops if Claude reports a limit. Keep usage credits off in your Claude settings to avoid extra charges.</div>';
  h+=meter('Tasks',d.tasks,l.tasks_per_day,`${d.tasks} of ${l.tasks_per_day||'∞'}`)+meter('Computing time',d.seconds/60,l.minutes_per_day,`${Math.round(d.seconds/60)} of ${l.minutes_per_day||'∞'} min`)+meter('Tokens',d.tokens,l.tokens_per_day,`${d.tokens.toLocaleString()} of ${l.tokens_per_day?l.tokens_per_day.toLocaleString():'∞'}`);return h+'</section>'};
-const home=()=>`<h1>Home</h1><p class=sub>Your computer helps your research projects, within the limits you set.</p>${hero()}<div class=grid>${usage()}<section class=panel><h2>Your projects</h2>${S.projects.map(p=>`<div class=row><div><b>${e(p.title)}</b><small>${p.review?p.review+' reference(s) to validate':'Nothing to validate'}</small></div><span class="pill ${p.waiting?'warn':'good'}">${p.waiting} waiting</span></div>`).join('')||'<div class=empty>No project yet.</div>'}</section></div><section class=panel style="margin-top:14px"><h2>Activity</h2><div class=log tabindex=0>${S.log.slice().reverse().map(x=>`<div><span>${e(x.at)}</span>${e(x.text)}</div>`).join('')||'<div class=empty>Nothing yet.</div>'}</div></section>`;
+const updateBanner=()=>{const u=S.update;if(!u?.available)return'';return`<section class="panel update"><div><b>Version ${e(u.latest)} is available</b><span>You have version ${e(u.current)}.${u.mode==='installer'?' Download the new app.':S.running||S.danus_run?.active?' Stop the current work to update.':''}</span></div>${u.mode==='installer'?(u.download_url?`<a class="btn primary" href="${e(u.download_url)}" target=_blank rel="noopener noreferrer">Download</a>`:''):`<button class="btn primary" data-a=updateapply ${S.running||S.danus_run?.active||updating?'disabled':''}>${updating?'Updating…':'Update now'}</button>`}</section>`};
+const versionBox=()=>{const u=S.update||{};const label=u.available?`Version ${u.latest} available`:u.error?'Check failed':u.checked_at?'Up to date':'Not checked yet';return`<small>Version ${e(S.version)}</small><small>${e(label)}</small><button data-a=updatecheck ${checking?'disabled':''}>${checking?'Checking…':'Check for updates'}</button><a href="https://github.com/LudovicPatey/projects" target=_blank rel="noopener noreferrer">Source code (AGPL-3.0)</a>`};
+const home=()=>`<h1>Home</h1><p class=sub>Your computer helps your research projects, within the limits you set.</p>${updateBanner()}${hero()}<div class=grid>${usage()}<section class=panel><h2>Your projects</h2>${S.projects.map(p=>`<div class=row><div><b>${e(p.title)}</b><small>${p.review?p.review+' reference(s) to validate':'Nothing to validate'}</small></div><span class="pill ${p.waiting?'warn':'good'}">${p.waiting} waiting</span></div>`).join('')||'<div class=empty>No project yet.</div>'}</section></div><section class=panel style="margin-top:14px"><h2>Activity</h2><div class=log tabindex=0>${S.log.slice().reverse().map(x=>`<div><span>${e(x.at)}</span>${e(x.text)}</div>`).join('')||'<div class=empty>Nothing yet.</div>'}</div></section>`;
 const num=(k,l,h,min,max,unit)=>`<label class=f>${e(l)}<small>${e(h)}</small><input type=number data-l=${k} min=${min} max=${max} value="${e(draft[k])}"></label>`;
 const limits=()=>`<h1>Usage limits</h1><p class=sub>Keep your AI subscription for your own work. The client stops before crossing these limits.</p><div class=grid><section class=panel><h2>Share of your subscription</h2><label class=f>Stop at this share of the session limit: ${draft.max_session_percent}%<small>ChatGPT reports this directly.</small><input type=range min=5 max=100 step=5 data-l=max_session_percent value="${draft.max_session_percent}"></label><label class=f>Stop at this share of the weekly limit: ${draft.max_weekly_percent}%<input type=range min=5 max=100 step=5 data-l=max_weekly_percent value="${draft.max_weekly_percent}"></label><label class=f>Working hours<small>For example 22-7 for nights. Empty means all day.</small><input type=text data-l=hours value="${e(draft.hours)}" placeholder="All day"></label></section><section class=panel><h2>Daily caps</h2>${num('tasks_per_day','Tasks per day','0 means no cap.',0,1000)}${num('minutes_per_day','Computing minutes per day','0 means no cap.',0,1440)}${num('tokens_per_day','Tokens per day','0 means no cap.',0,10000000000)}${num('task_minutes','Maximum minutes per task','A longer task is stopped.',1,720)}</section></div><section class=panel style="margin-top:14px"><h2>What this computer may do</h2>${[['extract','Extract facts from new files'],['ask','Answer @AI questions'],['bib','Suggest references'],['derive','Prove new facts automatically, without pressing Start (uses more of your subscription)']].map(([k,l])=>`<label class=check><input type=checkbox data-k=${k} ${draft.kinds.includes(k)?'checked':''}> ${l}</label>`).join('')}<p><button class="btn primary" data-a=save>Save limits</button></p></section>`;
 const account=()=>{const t=n=>{const x=S.tools[n],j=S.jobs['install-'+n]?.running,g=S.jobs['login-'+n]?.running;return`<div class=row><div><b>${toolName(n)}</b><small>${x.installed?(x.signed_in?'Installed and signed in':'Installed, sign-in needed'):'Not installed'}</small></div>${!x.installed?`<button class=btn data-tool=install data-n=${n} ${j?'disabled':''}>${j?'Installing…':'Install'}</button>`:!x.signed_in?`<button class="btn primary" data-tool=login data-n=${n} ${g?'disabled':''}>${g?'Check your browser…':'Sign in'}</button>`:`<button class=btn data-use=${n} ${S.provider===n?'disabled':''}>${S.provider===n?'In use':'Use this'}</button>`}</div>`};
@@ -2243,8 +2616,8 @@ const runForm=()=>{const l=S.limits;if(!R||!S.projects.some(p=>p.id===R.project_
 const runSummary=t=>`Runs for <b>${t}</b>, and stops at <b>${R.stop_session}%</b> of the session or <b>${R.stop_weekly}%</b> of the week. ${R.on_limit==='resume'?(R.minutes?'It waits for each reset, then continues until the time is used.':'<b>It continues after every reset until you stop it.</b>'):'It ends at the first limit.'}`;
 const options=async()=>{const id=R?.project_id;if(!id||O[id])return;try{const r=await fetch('/api/danus/options',{method:'POST',headers:{'Content-Type':'application/json','X-OQ-Token':T},body:JSON.stringify({project_id:id})});if(r.ok){O[id]=await r.json();if(view==='danus'){const a=document.activeElement;if(a?.dataset?.r!=='goal')render()}}}catch{}};
 const danus=()=>{const d=S.danus,j=S.jobs.danus?.running,r=S.danus_run||{};return`<h1>Prove new facts</h1><p class=sub>A team of AI agents searches for new proofs, using the open-source system Danus. It is the heaviest use of your subscription, so it runs only when you press Start.</p>${d.error?`<div class=err>${e(d.error)}</div>`:''}${d.login?`<section class=panel><div class=note><b>Sign in to ChatGPT to start proving</b><br>Open <a href="${e(d.login.url)}" target=_blank rel="noopener noreferrer">${e(d.login.url)}</a> and enter:<div class=code>${e(d.login.code)}</div></div></section>`:''}${d.ready?runStatus(r)+(r.active?'':runForm())+`<section class=panel><div class=row><div><b>Installed</b><small>Runs in an isolated ${e(d.backend||'machine')}.</small></div><button class="btn danger" data-a=danusremove ${j||r.active?'disabled':''}>Remove the prover</button></div></section>`:`<section class=panel>${d.unavailable?`<div class=note>${e(d.unavailable)}</div>`:j?`<div class=row><div><b>${e(d.step||'Installing')}</b><small>You can keep using your computer.</small></div><span class=pill>In progress</span></div>`:`<p>The first installation downloads about 2 GB and takes several minutes. The agents never see your files: they run in a separate machine.</p><button class="btn primary" data-a=danus>Set up proving</button>`}</section>`}`};
-const render=()=>{const a=document.activeElement;if(a&&['INPUT','SELECT','TEXTAREA'].includes(a.tagName)&&view!=='home')return;for(const b of document.querySelectorAll('nav button')){b.classList.toggle('on',b.dataset.v===view);b.setAttribute('aria-current',b.dataset.v===view?'page':'false')}const m=document.getElementById('m');const sc=m.querySelector('.log')?.scrollTop;m.innerHTML=(msg?`<div class=err role=alert>${e(msg)}</div>`:'')+{home,limits,danus,account}[view]();if(sc)m.querySelector('.log').scrollTop=sc};
-document.addEventListener('click',ev=>{const b=ev.target.closest('button');if(!b)return;if(b.dataset.v){view=b.dataset.v;msg='';draft={...S.limits};return render()}if(b.dataset.go){view=b.dataset.go;return render()}if(b.dataset.tool)return call('/api/tool/'+b.dataset.tool,{tool:b.dataset.n});if(b.dataset.use)return call('/api/limits',{}).then(()=>call('/api/start',{provider:b.dataset.use}));const x=b.dataset.a;if(x==='start')call('/api/start',{provider:S.provider});if(x==='stop')call('/api/stop');if(x==='disconnect'&&confirm('Disconnect this computer?'))call('/api/disconnect');if(x==='connect')call('/api/connect',{url:document.getElementById('url').value,key:document.getElementById('key').value});if(x==='save'){const{paused,...rest}=draft;document.activeElement?.blur();call('/api/limits',rest).then(()=>{if(!msg)draft={...S.limits}})}if(x==='danus')call('/api/danus/setup');if(x==='danusstop'&&confirm('Stop the proof search now? Its facts so far are kept.'))call('/api/danus/stop');if(x==='danusrun'){document.activeElement?.blur();const g=R.goal||'',b={project_id:R.project_id,prompt:R.prompt,minutes:R.minutes,stop_session:R.stop_session,stop_weekly:R.stop_weekly,on_limit:R.on_limit,workers:R.workers,task_id:g[0]==='t'?+g.slice(1):null,question_id:g[0]==='q'?+g.slice(1):null};if(R.on_limit==='resume'&&!R.minutes&&!confirm('This run continues after every reset until you stop it. Start it?'))return;call('/api/danus/run',b).then(()=>{if(!msg)O={}})}if(x==='danusremove'&&confirm('Remove the prover and its isolated machine?'))call('/api/danus/remove')});
+const render=()=>{const a=document.activeElement;if(a&&['INPUT','SELECT','TEXTAREA'].includes(a.tagName)&&view!=='home')return;for(const b of document.querySelectorAll('nav button')){b.classList.toggle('on',b.dataset.v===view);b.setAttribute('aria-current',b.dataset.v===view?'page':'false')}document.getElementById('ver').innerHTML=versionBox();const m=document.getElementById('m');const sc=m.querySelector('.log')?.scrollTop;m.innerHTML=(msg?`<div class=err role=alert>${e(msg)}</div>`:'')+{home,limits,danus,account}[view]();if(sc)m.querySelector('.log').scrollTop=sc};
+document.addEventListener('click',ev=>{const b=ev.target.closest('button');if(!b)return;if(b.dataset.v){view=b.dataset.v;msg='';draft={...S.limits};return render()}if(b.dataset.go){view=b.dataset.go;return render()}if(b.dataset.tool)return call('/api/tool/'+b.dataset.tool,{tool:b.dataset.n});if(b.dataset.use)return call('/api/limits',{}).then(()=>call('/api/start',{provider:b.dataset.use}));const x=b.dataset.a;if(x==='start')call('/api/start',{provider:S.provider});if(x==='stop')call('/api/stop');if(x==='disconnect'&&confirm('Disconnect this computer?'))call('/api/disconnect');if(x==='connect')call('/api/connect',{url:document.getElementById('url').value,key:document.getElementById('key').value});if(x==='save'){const{paused,...rest}=draft;document.activeElement?.blur();call('/api/limits',rest).then(()=>{if(!msg)draft={...S.limits}})}if(x==='updatecheck'){checking=true;render();call('/api/update/check').finally(()=>{checking=false;render()})}if(x==='updateapply'&&confirm('Install version '+S.update.latest+' now? The client restarts.')){updating=true;render();call('/api/update/apply').finally(()=>{setTimeout(()=>{updating=false;load()},2500)})}if(x==='danus')call('/api/danus/setup');if(x==='danusstop'&&confirm('Stop the proof search now? Its facts so far are kept.'))call('/api/danus/stop');if(x==='danusrun'){document.activeElement?.blur();const g=R.goal||'',b={project_id:R.project_id,prompt:R.prompt,minutes:R.minutes,stop_session:R.stop_session,stop_weekly:R.stop_weekly,on_limit:R.on_limit,workers:R.workers,task_id:g[0]==='t'?+g.slice(1):null,question_id:g[0]==='q'?+g.slice(1):null};if(R.on_limit==='resume'&&!R.minutes&&!confirm('This run continues after every reset until you stop it. Start it?'))return;call('/api/danus/run',b).then(()=>{if(!msg)O={}})}if(x==='danusremove'&&confirm('Remove the prover and its isolated machine?'))call('/api/danus/remove')});
 document.addEventListener('input',ev=>{const t=ev.target;if(t.dataset.l){draft[t.dataset.l]=t.type==='text'?t.value:+t.value;if(t.type==='range'){t.closest('label').firstChild.textContent=t.closest('label').firstChild.textContent.replace(/\d+%/,t.value+'%')}}if(t.dataset.k){draft.kinds=['extract','ask','bib','derive'].filter(k=>k===t.dataset.k?t.checked:draft.kinds.includes(k))}if('danus'in t.dataset)draft.danus_enabled=t.checked;if(t.dataset.r&&R){const k=t.dataset.r;R[k]=['goal','prompt','on_limit'].includes(k)?t.value:+t.value;if(k==='project_id'){R.goal='';t.blur();options();render()}const set=(i,v)=>{const x=document.getElementById(i);if(x)x.textContent=v};if(k==='workers')set('rw',t.value);if(k==='stop_session')set('rs',t.value);if(k==='stop_weekly')set('rk',t.value);const n=document.getElementById('runsum');if(n)n.innerHTML=runSummary(R.minutes?fmtMin(R.minutes):'no time limit')}});
 document.addEventListener('change',ev=>{const b=ev.target.dataset?.billing;if(!b)return;ev.target.blur();if(b==='api'&&!confirm('Allow a paid API key? The AI provider will charge each use to that key.'))return load();call('/api/limits',{ai_billing:b}).then(()=>{if(!msg)draft={...S.limits}})});
 load();setInterval(()=>{if(!document.hidden)load()},3000);

@@ -187,7 +187,7 @@ The platform stores AI requests and results and never runs a model. A client on 
 
 | Method | Path | Who | Body / notes |
 |---|---|---|---|
-| GET | `/api/client/info`, `/api/client/download?system=` | public | Published installers. One is offered only once its file is in `client/releases`. |
+| GET | `/api/client/info`, `/api/client/download?system=` | public | Current `api_level`, `version`, `script_sha256`, and published installers. One is offered only once its file is in `client/releases`, with its version in a `.version` file. |
 | GET | `/api/projects/{id}/ai` | members | `tasks`, `counts`, running `clients`, `suggestions`. |
 | POST | `/api/projects/{id}/ai/tasks` | people | `{"kind": "extract" \| "ask" \| "bib" \| "derive", "prompt_text"?, "source_type"?, "source_id"?}`. Subjects: `document`, `question`, `strategy`, `fact`. |
 | POST | `/api/ai/tasks/claim` | AI | `{"client_name", "ai_model"?, "kinds"?, "project_id"?}`. Returns `{task}` with its `lease` and `context`, or `{task: null}`. |

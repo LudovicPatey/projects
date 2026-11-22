@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { test } from 'node:test';
 import { filterTasks, offersAskAi, requestBody, requestError, resultLinks, suggestionLink, taskActions, taskTitle } from '../public/assets/js/ai-model.js';
-import { clientCommand, detectSystem, downloadPlan, formatSize } from '../public/assets/js/client-download.js';
+import { clientCommand, detectSystem, downloadPlan, formatSize, mergeRelease } from '../public/assets/js/client-download.js';
 import { ARTICLES } from '../public/assets/js/help/content.js';
 
 test('a request is validated before it is sent', () => {
@@ -100,4 +100,18 @@ test('the interface says Prove new facts, and explains Danus only where it helps
   assert.equal(article.title, 'Prove new facts');
   assert.ok(JSON.stringify(article.blocks).includes('powered by [Danus]'));
   assert.ok(!fs.readFileSync('public/assets/js/ai-model.js', 'utf8').includes('Danus'));
+});
+
+test('the download page offers a GitHub release only when it is safe and compatible', () => {
+  const url = 'https://github.com/LudovicPatey/projects/releases/download/v2.0.0/open-questions-ai-mac-arm64.dmg';
+  const release = { tag_name: 'v2.0.0', body: '', assets: [{ name: 'open-questions-ai-mac-arm64.dmg', size: 9, digest: 'sha256:abc', browser_download_url: url }] };
+  const merged = mergeRelease({ api_level: 1, installers: [] }, release);
+  assert.equal(merged.installers[0].url, url); assert.equal(merged.installers[0].version, '2.0.0'); assert.equal(merged.installers[0].sha256, 'abc');
+  assert.equal(mergeRelease({ api_level: 1, installers: [] }, { ...release, body: 'requires-api: 2' }).installers.length, 0);
+  assert.equal(mergeRelease({ installers: [] }, { ...release, draft: true }).installers.length, 0);
+  assert.equal(mergeRelease({ installers: [] }, { ...release, prerelease: true }).installers.length, 0);
+  assert.equal(mergeRelease({ installers: [] }, { ...release, assets: [{ ...release.assets[0], browser_download_url: 'https://evil.example/x.dmg' }] }).installers.length, 0);
+  const local = { system: 'mac-arm64', version: '3.0.0' };
+  assert.equal(mergeRelease({ installers: [local] }, release).installers[0], local, 'a newer local installer stays');
+  assert.equal(mergeRelease({ installers: [{ system: 'mac-arm64', version: '1.0.0' }] }, release).installers[0].url, url);
 });
