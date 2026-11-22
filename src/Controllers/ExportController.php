@@ -110,7 +110,7 @@ final class ExportController
                     if ($a['rationale_text'] !== '') $md .= "\n{$a['rationale_text']}\n";
                 }
                 foreach ($q['strategies'] as $s) {
-                    $md = "\n**Strategy: {$s['title']}** [{$s['status']}], revision {$s['current_revision']}\n\n" . ($s['body_text'] !== '' ? $s['body_text'] . "\n" : '');
+                    $md .= "\n**Strategy: {$s['title']}** [{$s['status']}], revision {$s['current_revision']}\n\n" . ($s['body_text'] !== '' ? $s['body_text'] . "\n" : '');
                     foreach ($s['revisions'] as $v) {
                         $md .= "- r{$v['revision_no']} {$v['created_at']} UTC, {$v['author_name']}" . ($v['ai_model'] ? " (AI: {$v['ai_model']})" : '') . ": " . str_replace("\n", ' ', $v['change_note']) . "\n";
                     }

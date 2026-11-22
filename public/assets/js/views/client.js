@@ -82,7 +82,7 @@ export const ClientView = {
     </section>
     <div class="client-grid">
       <section class="panel"><h2><icon name="sparkles" :size="15"/> What it does</h2><ul class="client-list"><li>Extracts facts from new papers</li><li>Answers <code>@AI</code> in discussions</li><li>Suggests references for people to validate</li><li>Proves new facts when you press Start</li></ul></section>
-      <section class="panel"><h2><icon name="clock" :size="15"/> You stay in control</h2><ul class="client-list"><li>Set daily caps and working hours</li><li>Limit its share of your ChatGPT usage</li><li>Uses your subscription, not a paid API key</li><li>Give each proof search a time and usage limit</li></ul></section>
+      <section class="panel"><h2><icon name="clock" :size="15"/> You stay in control</h2><ul class="client-list"><li>Set daily caps and working hours</li><li>Limit its share of your ChatGPT usage</li><li>Uses your subscription, not a paid API key</li><li>Give each proof search a time and usage limit</li><li>Optionally keep regular backups of your projects</li></ul></section>
       <section class="panel"><h2><icon name="terminal" :size="15"/> Other ways to run it</h2>
         <a v-for="x in plan.others" :key="x.system" class="d-row" :href="href(x)" download><icon name="download" :size="14"/><span class="d-title">{{ systemName(x.system) }}</span><small>{{ formatSize(x.size) }}</small></a>
         <a class="d-row" :href="releasesUrl" target="_blank" rel="noopener noreferrer"><icon name="download" :size="14"/><span class="d-title">All releases on GitHub</span><span class="chev">↗</span></a>

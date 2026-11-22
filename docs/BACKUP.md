@@ -12,6 +12,26 @@ Keep a copy of that file in a password manager.
 
 This is the administrator's full backup. Project members can separately download their own copy of a project with **Download project**, which only contains what they can see and cannot be restored with these tools.
 
+## Automatic copies on members' computers
+
+The AI client can optionally keep dated copies of each project on a member's computer. **This is off until the member turns it on.** It then runs weekly and keeps the last 4 copies per project, unless changed on the **Backups** page or from the command line:
+
+```bash
+python3 oq.py backup --on                           # turn automatic backups on
+python3 oq.py backup                                # back up once, now
+python3 oq.py backup --list
+python3 oq.py backup --every-days 7 --keep 4 --folder ~/my-backups
+python3 oq.py backup --off
+python3 oq.py backup --if-due                       # for cron or another scheduler
+```
+
+- Copies go to `~/Open Questions backups/<platform>/` unless you choose a folder. They are readable by your account only.
+- Each download is checked (archive integrity, project, SHA-256 of every file) before it is kept. **Older copies are removed only after that**, and a failed backup removes nothing and is retried an hour later.
+- Only files named like the client's own backups are ever removed. Copies of a project you have left are kept.
+- Automatic backups run while the app or `oq.py run` is open, and catch up at the next start.
+
+These are the same member copies as **Download project**. They protect a member's readable data, including files, but **cannot be restored with `bin/restore.php`** and exclude other people's private conversations. They do not replace the administrator's full backup below.
+
 ## Create a backup
 
 ```bash

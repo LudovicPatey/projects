@@ -335,6 +335,8 @@ Then open the site, sign in with ORCID, and create a test project.
 
 ### 9. Backups
 
+Each member can optionally turn on readable copies of their projects in the AI client, weekly and keeping the last 4 unless changed (`python3 oq.py backup --on`). These do not replace the full server backup below.
+
 ```bash
 php bin/backup.php                 # verified archive of the database and uploaded files
 php bin/backup.php --list

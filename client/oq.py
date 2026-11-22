@@ -11,6 +11,7 @@ Open Questions AI client. It runs on your computer, with your own Claude or Chat
     python3 oq.py run       process the work until you press Ctrl+C
     python3 oq.py run --once    process what is waiting, then stop
     python3 oq.py update    check for a new version, and install it
+    python3 oq.py backup    back up your projects now (--list, --if-due, --every-days, --keep, --folder, --on, --off)
     python3 oq.py limits    show or change what the client may use of your subscription
     python3 oq.py danus setup|status|remove    install Danus in an isolated machine
     python3 oq.py danus run --project ID --minutes 120 --stop-session 40 --stop-weekly 50 --on-limit resume
@@ -24,6 +25,7 @@ import collections
 import getpass
 import hashlib
 import hmac
+import http.client
 import http.server
 import json
 import os
@@ -37,6 +39,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import socket
 import tempfile
 import threading
 import time
@@ -44,8 +47,10 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import webbrowser
+import zipfile
+import zlib
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 API_LEVEL = 1  # raise with the server's AiTaskController::API_LEVEL when a client needs new server features
 GITHUB_REPO = "LudovicPatey/projects"
 KINDS = ["extract", "ask", "bib", "derive"]
@@ -694,6 +699,8 @@ def cmd_run(a):
     update_notice()
     print(f"Connected to {api.url}, using {a.provider}. Handles: {', '.join(KIND_NAMES[k] for k in a.kinds if k in load_limits()['kinds']) or 'nothing, see your limits'}.")
     print("Leave this window open. Press Ctrl+C to stop." if not a.once else "Processing what is waiting.", flush=True)
+    if not a.once:
+        threading.Thread(target=backup_scheduler, daemon=True).start()
     done, code = 0, 0
     try:
         done, code = run_loop(api, a, name)
@@ -1946,7 +1953,7 @@ class Service:
             except ApiError as e:
                 error = str(e)
         dm = DanusManager()
-        return {"update": read_update(), "danus_run": DanusRun().public(), "version": VERSION, "connected": bool(cfg.get("key")) and not error, "url": cfg.get("url", ""), "error": error, "projects": projects, "tools": tools, "provider": provider,
+        return {"backup": backup_public(projects), "update": read_update(), "danus_run": DanusRun().public(), "version": VERSION, "connected": bool(cfg.get("key")) and not error, "url": cfg.get("url", ""), "error": error, "projects": projects, "tools": tools, "provider": provider,
                 "running": self.running(), "allowed": allowed, "reason": reason, "retry_at": retry, "limits": limits, "day": day, "windows": windows,
                 "log": list(self.log)[-60:], "jobs": self.jobs, "danus": {**dm.state(), "unavailable": dm.unavailable_reason()}}
 
@@ -2058,6 +2065,14 @@ def make_handler(service, token, port):
                     open_login_terminal(name)
                 else:
                     service.job(f"login-{name}", lambda: check_run([shutil.which(name)] + TOOL_LOGIN[name][1:], f"Signing in to {name}", name))
+            elif path == "/api/backup/settings":
+                save_backup_settings({k: b[k] for k in ("enabled", "every_days", "keep", "folder") if k in b})
+            elif path == "/api/backup/run":
+                connect()
+                service.job("backup", lambda: run_backups(force=True))
+            elif path == "/api/backup/open":
+                d = read_backup()["settings"]
+                open_folder(backup_folder(d, load_config().get("url") or ""))
             elif path == "/api/danus/setup":
                 service.job("danus", lambda: DanusManager().setup(say))
             elif path == "/api/danus/remove":
@@ -2144,6 +2159,7 @@ def cmd_app(a):
             time.sleep(1800)
 
     threading.Thread(target=keep_checking, daemon=True).start()
+    threading.Thread(target=backup_scheduler, daemon=True).start()
     if load_config().get("key"):
         try:
             service.danus.resume_after_restart()
@@ -2474,6 +2490,345 @@ def update_notice():
         pass
 
 
+# ----- backups: dated copies of each project, kept on this computer -----
+
+DEFAULT_BACKUP = {"enabled": False, "every_days": 7, "keep": 4, "folder": ""}
+BACKUP_NAME = re.compile(r"^oq-project-(\d+)-(\d{8}-\d{6})(?:-[a-z0-9-]{1,40})?\.zip$")
+BACKUP_RETRY = 3600
+BACKUP_NOW = {"project": None}
+backup_file_lock = threading.Lock()
+
+
+def clean_backup(raw):
+    out = dict(DEFAULT_BACKUP)
+    for k, (low, high) in {"every_days": (1, 365), "keep": (1, 100)}.items():
+        if k in raw:
+            try:
+                v = int(raw[k])
+            except (TypeError, ValueError):
+                raise Stop(f"{k} must be a whole number.")
+            if not low <= v <= high:
+                raise Stop(f"{k} must be between {low} and {high}.")
+            out[k] = v
+    if "enabled" in raw:
+        out["enabled"] = bool(raw["enabled"])
+    folder = str(raw.get("folder") or "").strip()
+    if folder:
+        path = pathlib.Path(folder).expanduser()
+        if not path.is_absolute():
+            raise Stop("The backup folder must be a full path.")
+        if path.exists() and not path.is_dir():
+            raise Stop("The backup folder is a file.")
+        folder = str(path)
+    out["folder"] = folder
+    return out
+
+
+def backup_state_path():
+    return data_dir() / "backup.json"
+
+
+def read_backup():
+    try:
+        d = json.loads(backup_state_path().read_text(encoding="utf-8"))
+        settings = clean_backup(d.get("settings") or {})
+        projects = d.get("projects") if isinstance(d.get("projects"), dict) else {}
+    except (OSError, ValueError, AttributeError, Stop):
+        settings, projects = dict(DEFAULT_BACKUP), {}
+    return {"settings": settings, "projects": projects}
+
+
+def write_backup(d):
+    data_dir().mkdir(parents=True, exist_ok=True)
+    tmp = backup_state_path().with_suffix(".tmp")
+    tmp.write_text(json.dumps(d), encoding="utf-8")
+    os.replace(str(tmp), str(backup_state_path()))
+
+
+def save_backup_settings(raw):
+    with backup_file_lock:
+        d = read_backup()
+        d["settings"] = clean_backup({**d["settings"], **raw})
+        write_backup(d)
+        return d["settings"]
+
+
+def save_backup_entry(key, **fields):
+    with backup_file_lock:
+        d = read_backup()
+        d["projects"][key] = {**d["projects"].get(key, {}), **fields}
+        write_backup(d)
+
+
+def site_name(url):
+    return re.sub(r"[^a-z0-9.-]+", "-", urllib.parse.urlparse(url or "").netloc.lower()).strip("-") or "platform"
+
+
+def backup_folder(settings, url):
+    """One folder per platform, because two platforms can both have a project 1."""
+    base = pathlib.Path(settings["folder"]) if settings["folder"] else pathlib.Path.home() / "Open Questions backups"
+    return base / site_name(url)
+
+
+def backup_files(folder, project):
+    """This project's backups, oldest first. Any other file in the folder is ignored."""
+    found = []
+    try:
+        entries = list(folder.iterdir())
+    except OSError:
+        return found
+    for f in entries:
+        m = BACKUP_NAME.match(f.name)
+        if m and int(m.group(1)) == int(project) and f.is_file() and not f.is_symlink():
+            found.append((m.group(2), f))
+    return [f for _, f in sorted(found, key=lambda x: x[0])]
+
+
+def prune_backups(folder, project, keep):
+    files = backup_files(folder, project)
+    removed = []
+    for f in files[:max(0, len(files) - keep)]:
+        try:
+            f.unlink()
+            removed.append(f.name)
+        except OSError:
+            pass
+    return removed
+
+
+def backup_due(settings, entry, now):
+    if entry.get("retry_at") and entry["retry_at"] > now:
+        return False
+    return not entry.get("last_ok") or now - entry["last_ok"] >= settings["every_days"] * 86400
+
+
+def verify_backup(path, project):
+    """A copy is kept only if it opens, every entry is intact, and it matches its own manifest."""
+    try:
+        with zipfile.ZipFile(str(path)) as z:
+            if z.testzip() is not None:
+                raise Stop("The backup is damaged.")
+            names = [n for n in z.namelist() if n.count("/") == 1 and n.endswith("/manifest.json")]
+            if len(names) != 1:
+                raise Stop("The backup has no manifest.")
+            base = names[0].rsplit("/", 1)[0]
+            manifest = json.loads(z.read(names[0]).decode("utf-8"))
+            if manifest.get("app") != "open-questions" or int(manifest.get("project", {}).get("id", 0)) != int(project):
+                raise Stop("The backup is for another project.")
+            for item in manifest.get("files") or []:
+                digest = hashlib.sha256()
+                with z.open(f"{base}/{item['path']}") as src:
+                    for chunk in iter(lambda: src.read(1048576), b""):
+                        digest.update(chunk)
+                if digest.hexdigest() != item["sha256"]:
+                    raise Stop(f"A file in the backup is damaged: {item['path']}")
+            return manifest
+    except (zipfile.BadZipFile, KeyError, ValueError, TypeError, AttributeError, OSError, RuntimeError, EOFError, zlib.error) as e:
+        raise Stop(f"The backup could not be verified: {e}")
+
+
+def download_backup(api, project, part):
+    req = urllib.request.Request(f"{api.url}/api/projects/{int(project)}/export")
+    for name, value in (("Authorization", f"Bearer {api.key}"), ("X-Api-Key", api.key), ("Accept", "application/zip"), ("User-Agent", f"open-questions-client/{VERSION}")):
+        req.add_header(name, value)
+    try:
+        with urllib.request.urlopen(req, timeout=1800) as r:
+            size = int(r.headers.get("Content-Length") or 0)
+            if size and shutil.disk_usage(str(part.parent)).free < size * 1.1 + 10485760:
+                raise Stop("There is not enough free disk space for this backup.")
+            fd = os.open(str(part), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o600)
+            written = 0
+            with os.fdopen(fd, "wb") as out:
+                for chunk in iter(lambda: r.read(1048576), b""):
+                    out.write(chunk)
+                    written += len(chunk)
+                out.flush()
+                os.fsync(out.fileno())
+            if size and written != size:
+                raise Stop("The download was interrupted.")
+    except urllib.error.HTTPError as e:
+        text = e.read().decode("utf-8", "replace")
+        try:
+            message = json.loads(text).get("error")
+        except (ValueError, AttributeError):
+            message = None
+        raise ApiError(e.code, message or f"HTTP {e.code}")
+    except (urllib.error.URLError, http.client.HTTPException, socket.timeout) as e:
+        raise ApiError(0, f"The download failed: {e}")
+
+
+class BackupLock:
+    """Held by the operating system, so that a crash cannot leave it locked."""
+
+    def __enter__(self):
+        data_dir().mkdir(parents=True, exist_ok=True)
+        self.f = open(str(data_dir() / "backup.lock"), "a+b")
+        try:
+            if os.name == "nt":
+                import msvcrt
+                self.f.seek(0)
+                msvcrt.locking(self.f.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(self.f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            self.f.close()
+            raise Stop("A backup is already running.")
+        return self
+
+    def __exit__(self, *a):
+        self.f.close()  # closing releases the lock
+
+
+def backup_one(api, project, settings, folder, key):
+    title = project.get("title") or f"Project {project['id']}"
+    slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:40].strip("-")
+    moment = int(time.time())
+    while True:
+        stamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime(moment))
+        target = folder / (f"oq-project-{project['id']}-{stamp}" + (f"-{slug}" if slug else "") + ".zip")
+        if not target.exists():
+            break
+        moment += 1
+    part = target.with_name(target.name + ".part")
+    BACKUP_NOW["project"] = title
+    try:
+        download_backup(api, project["id"], part)
+        manifest = verify_backup(part, project["id"])
+        os.replace(str(part), str(target))
+    except (Stop, ApiError, OSError) as e:
+        try:
+            part.unlink()
+        except OSError:
+            pass
+        save_backup_entry(key, id=project["id"], title=title, error=str(e)[:300], retry_at=time.time() + BACKUP_RETRY)
+        say(f"Backup of {title} failed. Your earlier backups were kept. {str(e)[:200]}")
+        return False
+    finally:
+        BACKUP_NOW["project"] = None
+    removed = prune_backups(folder, project["id"], settings["keep"])  # only now that the new copy is verified
+    missing = len(manifest.get("missing_files") or [])
+    save_backup_entry(key, id=project["id"], title=title, last_ok=time.time(), error=None, retry_at=None, missing=missing)
+    say(f"Backed up {title}." + (f" Removed {len(removed)} older backup(s)." if removed else "") + (f" {missing} file(s) were already missing on the platform." if missing else ""))
+    return True
+
+
+def run_backups(force=False, only=None):
+    """Backs up the projects that are due, or all of them when forced."""
+    api, cfg = connect()
+    settings = read_backup()["settings"]
+    if not force and not settings["enabled"]:
+        return {"done": 0, "failed": 0}
+    with BackupLock():
+        folder = backup_folder(settings, cfg["url"])
+        try:
+            folder.mkdir(parents=True, exist_ok=True, mode=0o700)
+        except OSError as e:
+            raise Stop(f"The backup folder cannot be created: {e}")
+        for leftover in folder.glob("oq-project-*.zip.part"):  # from an interrupted run; the lock proves it is not in use
+            try:
+                leftover.unlink()
+            except OSError:
+                pass
+        site = site_name(cfg["url"])
+        done, failed = 0, 0
+        for p in project_list(api.get("/api/projects")):
+            if only and int(p["id"]) != int(only):
+                continue
+            key = f"{site}:{p['id']}"
+            if not force and not backup_due(settings, read_backup()["projects"].get(key, {}), time.time()):
+                continue
+            if backup_one(api, p, settings, folder, key):
+                done += 1
+            else:
+                failed += 1
+    return {"done": done, "failed": failed}
+
+
+def backup_public(projects=()):
+    """What the interface and the command line show."""
+    state, cfg = read_backup(), load_config()
+    settings, url = state["settings"], cfg.get("url") or ""
+    folder, site = backup_folder(settings, url), site_name(url)
+    rows = {int(p["id"]): {"id": int(p["id"]), "title": p["title"]} for p in projects}
+    for key, entry in state["projects"].items():
+        if key.startswith(site + ":") and entry.get("id") is not None:
+            rows.setdefault(int(entry["id"]), {"id": int(entry["id"]), "title": entry.get("title") or f"Project {entry['id']}", "left": bool(projects)})
+    out = []
+    for pid, row in sorted(rows.items()):
+        entry = state["projects"].get(f"{site}:{pid}", {})
+        files = backup_files(folder, pid)
+        size = 0
+        for f in files:
+            try:
+                size += f.stat().st_size
+            except OSError:
+                pass
+        last = entry.get("last_ok")
+        out.append({**row, "count": len(files), "size": size, "last_ok": last, "error": entry.get("error"), "missing": entry.get("missing") or 0,
+                    "next_at": entry.get("retry_at") or (last + settings["every_days"] * 86400 if last else None), "latest": files[-1].name if files else None})
+    return {"settings": settings, "folder": str(folder), "projects": out, "current": BACKUP_NOW["project"]}
+
+
+def backup_scheduler():
+    """Catches up after sleep or time off, because it compares dates rather than waiting for a set time."""
+    poll = float(os.environ.get("OQ_BACKUP_POLL") or 900)
+    time.sleep(min(poll, 60))
+    while True:
+        try:
+            if load_config().get("key"):
+                run_backups()
+        except (Stop, ApiError, OSError):
+            pass  # each project records its own failure; the next check tries again
+        except Exception as e:
+            say(f"The backup check failed: {str(e)[:200]}")
+        time.sleep(poll)
+
+
+def open_folder(path):
+    path.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if os.name == "nt":
+        os.startfile(str(path))
+    else:
+        subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", str(path)], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def human_size(n):
+    return f"{n / 1048576:.1f} MB" if n >= 1048576 else f"{max(1, round(n / 1024))} KB" if n else "0 KB"
+
+
+def cmd_backup(a):
+    changes = {}
+    if a.on or a.off:
+        changes["enabled"] = bool(a.on)
+    for k in ("every_days", "keep", "folder"):
+        if getattr(a, k) is not None:
+            changes[k] = getattr(a, k)
+    if a.on and a.off:
+        raise Stop("Choose --on or --off.")
+    if changes:
+        s = save_backup_settings(changes)
+        print(f"Backups are {'on' if s['enabled'] else 'off'}: every {s['every_days']} day(s), keeping the last {s['keep']} of each project. A lower number applies at the next backup.")
+        if not a.list:
+            return 0
+    if a.list:
+        d = backup_public()
+        s = d["settings"]
+        print(f"Automatic backups: {'on' if s['enabled'] else 'off'}, every {s['every_days']} day(s), keeping {s['keep']}.\nFolder: {d['folder']}")
+        for p in d["projects"]:
+            last = time.strftime("%Y-%m-%d %H:%M", time.localtime(p["last_ok"])) if p["last_ok"] else "never"
+            print(f"  #{p['id']} {p['title']}: {p['count']} backup(s), {human_size(p['size'])}, last {last}" + (f". Last attempt failed: {p['error']}" if p["error"] else ""))
+        if not d["projects"]:
+            print("  No backup yet.")
+        return 0
+    if a.if_due and not read_backup()["settings"]["enabled"]:
+        print("Automatic backups are off. Turn them on with: python3 oq.py backup --on")
+        return 0
+    result = run_backups(force=not a.if_due, only=a.project)
+    print(f"{result['done']} project(s) backed up, {result['failed']} failed." if result["done"] or result["failed"] else "No backup is due.")
+    return 1 if result["failed"] else 0
+
+
 def restart_app(port, token):
     """Starts the new version on the same address, so that the open page reconnects."""
     time.sleep(0.4)
@@ -2508,6 +2863,16 @@ def parser():
     g.add_argument("--port", type=int, default=0)
     g.add_argument("--no-open", action="store_true", help="print the address instead of opening a browser")
     g.set_defaults(fn=cmd_app)
+    b = sub.add_parser("backup", help="back up your projects to this computer")
+    b.add_argument("--if-due", action="store_true", help="only the projects whose backup is due, for a scheduled task")
+    b.add_argument("--list", action="store_true", help="show the settings and existing backups")
+    b.add_argument("--project", type=int, help="only this project")
+    b.add_argument("--on", action="store_true", help="turn automatic backups on")
+    b.add_argument("--off", action="store_true", help="turn automatic backups off")
+    b.add_argument("--every-days", type=int, help="days between automatic backups, once on (default 7)")
+    b.add_argument("--keep", type=int, help="backups kept per project (default 4)")
+    b.add_argument("--folder", help="where backups are stored")
+    b.set_defaults(fn=cmd_backup)
     l = sub.add_parser("limits", help="show or change usage limits")
     for flag, kind in (("max-session-percent", int), ("max-weekly-percent", int), ("tasks-per-day", int), ("minutes-per-day", int), ("tokens-per-day", int), ("task-minutes", int), ("hours", str), ("danus-workers", int), ("danus-minutes", int)):
         l.add_argument("--" + flag, type=kind)
@@ -2581,9 +2946,9 @@ button.btn{border:1px solid var(--line);background:var(--panel);color:var(--text
 .log{max-height:240px;overflow:auto;font:12px/1.6 ui-monospace,Menlo,monospace;white-space:pre-wrap;overflow-wrap:anywhere}.log span{color:var(--muted);margin-right:8px}.empty{color:var(--muted);padding:6px 0}
 label.f{display:grid;gap:4px;margin-bottom:12px;font-weight:650;font-size:13px}label.f small{font-weight:400;color:var(--muted)}input[type=text],input[type=password],input[type=number],select{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--text);font:inherit}input[type=range]{width:100%;accent-color:var(--accent)}.check{display:flex;gap:8px;align-items:center;padding:4px 0;font-weight:500}.ver{margin-top:auto;display:grid;gap:2px;padding:10px 11px 2px;color:#c7c9f0}.ver small{font-size:11.5px}.ver button{all:unset;cursor:pointer;margin-top:3px;font-size:11.5px;font-weight:700;color:#fff;text-decoration:underline}.ver a{margin-top:3px;font-size:11.5px;color:#c7c9f0}.ver button:focus-visible{outline:2px solid #fff;outline-offset:2px}.update{display:flex;align-items:center;justify-content:space-between;gap:12px;background:var(--soft);border-color:transparent}.update div{display:grid;min-width:0}.update span{color:var(--muted);font-size:13px}.update a.btn{border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:8px;padding:8px 13px;font-weight:650;text-decoration:none}.run-form h3{font-size:13px;margin:0 0 8px}.run-form textarea{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--text);font:inherit;resize:vertical}.run-btn{width:100%;padding:12px;font-size:15px}.pill.bad{background:var(--badbg);color:var(--bad)}.err{padding:9px 11px;border-radius:8px;background:var(--badbg);color:var(--bad);margin-bottom:12px;overflow-wrap:anywhere}.note{padding:9px 11px;border-radius:8px;background:var(--soft);font-size:13px;margin:10px 0}.code{font:700 20px ui-monospace,Menlo,monospace;letter-spacing:.06em}.steps{display:grid;gap:6px;margin:0 0 12px;padding:0;list-style:none}.steps li{display:flex;gap:8px;align-items:center}.steps i{width:20px;height:20px;border-radius:50%;display:grid;place-items:center;background:var(--line);font-style:normal;font-size:11px;font-weight:800}.steps li.ok i{background:var(--good);color:#fff}
 @media(max-width:680px){.app{display:block}nav{flex-direction:row;overflow-x:auto;padding:8px}.brand{display:none}nav button{flex:none}.ver{margin:0 0 0 auto;flex:none;display:flex;align-items:center;gap:8px;padding:0 6px}.ver small:first-child,.ver a{display:none}.update{flex-wrap:wrap}main{padding:16px}.grid{grid-template-columns:minmax(0,1fr)}.hero{flex-wrap:wrap}.hero .btn{width:100%}}
-</style></head><body><div class="app"><nav aria-label="Sections"><div class="brand">Open Questions AI</div><button data-v="home">Home</button><button data-v="limits">Usage limits</button><button data-v="danus">Prove new facts</button><button data-v="account">Accounts</button><div class=ver id=ver></div></nav><main id="m">Loading…</main></div>
+</style></head><body><div class="app"><nav aria-label="Sections"><div class="brand">Open Questions AI</div><button data-v="home">Home</button><button data-v="limits">Usage limits</button><button data-v="danus">Prove new facts</button><button data-v="backup">Backups</button><button data-v="account">Accounts</button><div class=ver id=ver></div></nav><main id="m">Loading…</main></div>
 <script>
-const T='__TOKEN__';let S=null,view='home',draft=null,msg='',paint=0,R=null,O={},checking=false,updating=false;
+const T='__TOKEN__';let S=null,view='home',draft=null,msg='',paint=0,R=null,O={},checking=false,updating=false,BD=null;
 const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const call=async(p,b={})=>{msg='';try{const r=await fetch(p,{method:'POST',headers:{'Content-Type':'application/json','X-OQ-Token':T},body:JSON.stringify(b)});const d=await r.json();if(!r.ok)msg=d.error||'Error';}catch{msg='The app is not responding.'}await load()};
 const load=async()=>{try{const r=await fetch('/api/state',{headers:{'X-OQ-Token':T}});S=await r.json();if(!draft)draft={...S.limits};render()}catch{document.getElementById('m').innerHTML='<div class=err>The app stopped. Close this window and open it again.</div>'}};
@@ -2616,9 +2981,14 @@ const runForm=()=>{const l=S.limits;if(!R||!S.projects.some(p=>p.id===R.project_
 const runSummary=t=>`Runs for <b>${t}</b>, and stops at <b>${R.stop_session}%</b> of the session or <b>${R.stop_weekly}%</b> of the week. ${R.on_limit==='resume'?(R.minutes?'It waits for each reset, then continues until the time is used.':'<b>It continues after every reset until you stop it.</b>'):'It ends at the first limit.'}`;
 const options=async()=>{const id=R?.project_id;if(!id||O[id])return;try{const r=await fetch('/api/danus/options',{method:'POST',headers:{'Content-Type':'application/json','X-OQ-Token':T},body:JSON.stringify({project_id:id})});if(r.ok){O[id]=await r.json();if(view==='danus'){const a=document.activeElement;if(a?.dataset?.r!=='goal')render()}}}catch{}};
 const danus=()=>{const d=S.danus,j=S.jobs.danus?.running,r=S.danus_run||{};return`<h1>Prove new facts</h1><p class=sub>A team of AI agents searches for new proofs, using the open-source system Danus. It is the heaviest use of your subscription, so it runs only when you press Start.</p>${d.error?`<div class=err>${e(d.error)}</div>`:''}${d.login?`<section class=panel><div class=note><b>Sign in to ChatGPT to start proving</b><br>Open <a href="${e(d.login.url)}" target=_blank rel="noopener noreferrer">${e(d.login.url)}</a> and enter:<div class=code>${e(d.login.code)}</div></div></section>`:''}${d.ready?runStatus(r)+(r.active?'':runForm())+`<section class=panel><div class=row><div><b>Installed</b><small>Runs in an isolated ${e(d.backend||'machine')}.</small></div><button class="btn danger" data-a=danusremove ${j||r.active?'disabled':''}>Remove the prover</button></div></section>`:`<section class=panel>${d.unavailable?`<div class=note>${e(d.unavailable)}</div>`:j?`<div class=row><div><b>${e(d.step||'Installing')}</b><small>You can keep using your computer.</small></div><span class=pill>In progress</span></div>`:`<p>The first installation downloads about 2 GB and takes several minutes. The agents never see your files: they run in a separate machine.</p><button class="btn primary" data-a=danus>Set up proving</button>`}</section>`}`};
-const render=()=>{const a=document.activeElement;if(a&&['INPUT','SELECT','TEXTAREA'].includes(a.tagName)&&view!=='home')return;for(const b of document.querySelectorAll('nav button')){b.classList.toggle('on',b.dataset.v===view);b.setAttribute('aria-current',b.dataset.v===view?'page':'false')}document.getElementById('ver').innerHTML=versionBox();const m=document.getElementById('m');const sc=m.querySelector('.log')?.scrollTop;m.innerHTML=(msg?`<div class=err role=alert>${e(msg)}</div>`:'')+{home,limits,danus,account}[view]();if(sc)m.querySelector('.log').scrollTop=sc};
-document.addEventListener('click',ev=>{const b=ev.target.closest('button');if(!b)return;if(b.dataset.v){view=b.dataset.v;msg='';draft={...S.limits};return render()}if(b.dataset.go){view=b.dataset.go;return render()}if(b.dataset.tool)return call('/api/tool/'+b.dataset.tool,{tool:b.dataset.n});if(b.dataset.use)return call('/api/limits',{}).then(()=>call('/api/start',{provider:b.dataset.use}));const x=b.dataset.a;if(x==='start')call('/api/start',{provider:S.provider});if(x==='stop')call('/api/stop');if(x==='disconnect'&&confirm('Disconnect this computer?'))call('/api/disconnect');if(x==='connect')call('/api/connect',{url:document.getElementById('url').value,key:document.getElementById('key').value});if(x==='save'){const{paused,...rest}=draft;document.activeElement?.blur();call('/api/limits',rest).then(()=>{if(!msg)draft={...S.limits}})}if(x==='updatecheck'){checking=true;render();call('/api/update/check').finally(()=>{checking=false;render()})}if(x==='updateapply'&&confirm('Install version '+S.update.latest+' now? The client restarts.')){updating=true;render();call('/api/update/apply').finally(()=>{setTimeout(()=>{updating=false;load()},2500)})}if(x==='danus')call('/api/danus/setup');if(x==='danusstop'&&confirm('Stop the proof search now? Its facts so far are kept.'))call('/api/danus/stop');if(x==='danusrun'){document.activeElement?.blur();const g=R.goal||'',b={project_id:R.project_id,prompt:R.prompt,minutes:R.minutes,stop_session:R.stop_session,stop_weekly:R.stop_weekly,on_limit:R.on_limit,workers:R.workers,task_id:g[0]==='t'?+g.slice(1):null,question_id:g[0]==='q'?+g.slice(1):null};if(R.on_limit==='resume'&&!R.minutes&&!confirm('This run continues after every reset until you stop it. Start it?'))return;call('/api/danus/run',b).then(()=>{if(!msg)O={}})}if(x==='danusremove'&&confirm('Remove the prover and its isolated machine?'))call('/api/danus/remove')});
-document.addEventListener('input',ev=>{const t=ev.target;if(t.dataset.l){draft[t.dataset.l]=t.type==='text'?t.value:+t.value;if(t.type==='range'){t.closest('label').firstChild.textContent=t.closest('label').firstChild.textContent.replace(/\d+%/,t.value+'%')}}if(t.dataset.k){draft.kinds=['extract','ask','bib','derive'].filter(k=>k===t.dataset.k?t.checked:draft.kinds.includes(k))}if('danus'in t.dataset)draft.danus_enabled=t.checked;if(t.dataset.r&&R){const k=t.dataset.r;R[k]=['goal','prompt','on_limit'].includes(k)?t.value:+t.value;if(k==='project_id'){R.goal='';t.blur();options();render()}const set=(i,v)=>{const x=document.getElementById(i);if(x)x.textContent=v};if(k==='workers')set('rw',t.value);if(k==='stop_session')set('rs',t.value);if(k==='stop_weekly')set('rk',t.value);const n=document.getElementById('runsum');if(n)n.innerHTML=runSummary(R.minutes?fmtMin(R.minutes):'no time limit')}});
+const size=n=>n>=1048576?(n/1048576).toFixed(1)+' MB':n?Math.max(1,Math.round(n/1024))+' KB':'0 KB';
+const longDate=t=>t?new Date(t*1000).toLocaleDateString([],{day:'numeric',month:'short',year:'numeric'}):'';
+const backup=()=>{const b=S.backup,s=b.settings,j=S.jobs.backup;BD=BD||{...s};const busy=j?.running||b.current;const fails=b.projects.filter(p=>p.error).length;const next=b.projects.map(p=>p.next_at).filter(Boolean).sort((x,y)=>x-y)[0];
+ const st=!S.connected?['hold','Connect your account','Backups start once this computer is connected.']:busy?['on','Backing up'+(b.current?' '+b.current:''),'You can keep working.']:fails?['hold',fails+' backup(s) failed','Your earlier backups were kept. The client tries again in an hour.']:s.enabled?['on','Automatic backups are on',next?'Next check: '+longDate(next)+'.':'The first backup starts within 15 minutes.']:['','Automatic backups are off','Optional. Nothing is copied to this computer unless you turn them on or press Back up now.'];
+ return`<h1>Backups</h1><p class=sub>Dated copies of your projects, on this computer.</p><section class="panel hero ${st[0]}"><span class=dot></span><div><b>${e(st[1])}</b><span>${e(st[2])}</span></div><button class="btn primary" data-a=backupnow ${busy||!S.connected?'disabled':''}>${busy?'Working…':'Back up now'}</button></section>${j?.error?`<div class=err>${e(j.error)}</div>`:''}<div class=grid><section class=panel><h2>Schedule</h2><label class=check><input type=checkbox data-b=enabled ${BD.enabled?'checked':''}> <span><b>Back up automatically</b> (optional)</span></label><label class=f>Frequency<select data-b=every_days>${[[1,'Every day'],[7,'Every week'],[14,'Every 2 weeks'],[30,'Every month']].concat([1,7,14,30].includes(+BD.every_days)?[]:[[+BD.every_days,'Every '+BD.every_days+' days']]).map(([v,l])=>`<option value=${v} ${+BD.every_days===v?'selected':''}>${l}</option>`).join('')}</select></label><label class=f>Backups kept per project<small>Older ones are removed only after a new backup is verified.</small><input type=number min=1 max=100 data-b=keep value="${e(BD.keep)}"></label><label class=f>Folder<small>Leave empty for the default folder.</small><input type=text data-b=folder value="${e(BD.folder)}" placeholder="Open Questions backups"></label><button class="btn primary" data-a=backupsave>Save</button></section><section class=panel><h2>Your backups</h2>${b.projects.map(p=>`<div class=row><div><b>${e(p.title)}</b><small>${p.last_ok?'Last: '+e(longDate(p.last_ok)):'No backup yet'} · ${p.count} kept · ${e(size(p.size))}${p.left?' · no longer a member':''}${p.error?'<br>'+e(p.error):''}${p.missing?'<br>'+p.missing+' file(s) were already missing on the platform':''}</small></div><span class="pill ${p.error?'bad':p.last_ok?'good':'warn'}">${p.error?'Failed':p.last_ok?'Saved':'Waiting'}</span></div>`).join('')||'<div class=empty>No project yet.</div>'}<p style="overflow-wrap:anywhere"><small>${e(b.folder)}</small></p><button class=btn data-a=backupopen>Open the folder</button></section></div><div class=note style="margin-top:14px">When turned on, backups run while this app is open, and catch up when you reopen it. Each one contains what you can see in the project, so keep the folder private. It is a readable copy for you, not a full restore of the platform.</div>`};
+const render=()=>{const a=document.activeElement;if(a&&['INPUT','SELECT','TEXTAREA'].includes(a.tagName)&&view!=='home')return;for(const b of document.querySelectorAll('nav button')){b.classList.toggle('on',b.dataset.v===view);b.setAttribute('aria-current',b.dataset.v===view?'page':'false')}document.getElementById('ver').innerHTML=versionBox();const m=document.getElementById('m');const sc=m.querySelector('.log')?.scrollTop;m.innerHTML=(msg?`<div class=err role=alert>${e(msg)}</div>`:'')+{home,limits,danus,backup,account}[view]();if(sc)m.querySelector('.log').scrollTop=sc};
+document.addEventListener('click',ev=>{const b=ev.target.closest('button');if(!b)return;if(b.dataset.v){view=b.dataset.v;msg='';draft={...S.limits};BD=null;return render()}if(b.dataset.go){view=b.dataset.go;return render()}if(b.dataset.tool)return call('/api/tool/'+b.dataset.tool,{tool:b.dataset.n});if(b.dataset.use)return call('/api/limits',{}).then(()=>call('/api/start',{provider:b.dataset.use}));const x=b.dataset.a;if(x==='start')call('/api/start',{provider:S.provider});if(x==='stop')call('/api/stop');if(x==='disconnect'&&confirm('Disconnect this computer?'))call('/api/disconnect');if(x==='connect')call('/api/connect',{url:document.getElementById('url').value,key:document.getElementById('key').value});if(x==='save'){const{paused,...rest}=draft;document.activeElement?.blur();call('/api/limits',rest).then(()=>{if(!msg)draft={...S.limits}})}if(x==='updatecheck'){checking=true;render();call('/api/update/check').finally(()=>{checking=false;render()})}if(x==='updateapply'&&confirm('Install version '+S.update.latest+' now? The client restarts.')){updating=true;render();call('/api/update/apply').finally(()=>{setTimeout(()=>{updating=false;load()},2500)})}if(x==='backupnow')call('/api/backup/run');if(x==='backupopen')call('/api/backup/open');if(x==='backupsave'){document.activeElement?.blur();call('/api/backup/settings',BD).then(()=>{if(!msg){BD=null;render()}})}if(x==='danus')call('/api/danus/setup');if(x==='danusstop'&&confirm('Stop the proof search now? Its facts so far are kept.'))call('/api/danus/stop');if(x==='danusrun'){document.activeElement?.blur();const g=R.goal||'',b={project_id:R.project_id,prompt:R.prompt,minutes:R.minutes,stop_session:R.stop_session,stop_weekly:R.stop_weekly,on_limit:R.on_limit,workers:R.workers,task_id:g[0]==='t'?+g.slice(1):null,question_id:g[0]==='q'?+g.slice(1):null};if(R.on_limit==='resume'&&!R.minutes&&!confirm('This run continues after every reset until you stop it. Start it?'))return;call('/api/danus/run',b).then(()=>{if(!msg)O={}})}if(x==='danusremove'&&confirm('Remove the prover and its isolated machine?'))call('/api/danus/remove')});
+document.addEventListener('input',ev=>{const t=ev.target;if(t.dataset.b&&BD){const k=t.dataset.b;BD[k]=k==='enabled'?t.checked:k==='folder'?t.value:+t.value;if(t.type==='checkbox'||t.tagName==='SELECT')t.blur()}if(t.dataset.l){draft[t.dataset.l]=t.type==='text'?t.value:+t.value;if(t.type==='range'){t.closest('label').firstChild.textContent=t.closest('label').firstChild.textContent.replace(/\d+%/,t.value+'%')}}if(t.dataset.k){draft.kinds=['extract','ask','bib','derive'].filter(k=>k===t.dataset.k?t.checked:draft.kinds.includes(k))}if('danus'in t.dataset)draft.danus_enabled=t.checked;if(t.dataset.r&&R){const k=t.dataset.r;R[k]=['goal','prompt','on_limit'].includes(k)?t.value:+t.value;if(k==='project_id'){R.goal='';t.blur();options();render()}const set=(i,v)=>{const x=document.getElementById(i);if(x)x.textContent=v};if(k==='workers')set('rw',t.value);if(k==='stop_session')set('rs',t.value);if(k==='stop_weekly')set('rk',t.value);const n=document.getElementById('runsum');if(n)n.innerHTML=runSummary(R.minutes?fmtMin(R.minutes):'no time limit')}});
 document.addEventListener('change',ev=>{const b=ev.target.dataset?.billing;if(!b)return;ev.target.blur();if(b==='api'&&!confirm('Allow a paid API key? The AI provider will charge each use to that key.'))return load();call('/api/limits',{ai_billing:b}).then(()=>{if(!msg)draft={...S.limits}})});
 load();setInterval(()=>{if(!document.hidden)load()},3000);
 </script></body></html>

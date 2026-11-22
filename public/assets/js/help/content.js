@@ -264,6 +264,7 @@ export const ARTICLES = [
     blocks: [
       p('Any member can download a complete copy of what they can see.'),
       steps('Open the [Overview](app:overview) page.', 'Click **Download project**.', 'The download starts when the copy is ready.'),
+      p('The [AI client](help:ai-app) can optionally make this copy for you on a schedule and keep only the latest ones.'),
       live((c) => [line(`Your copy of **${c.project.title}** would contain ${n(c.facts.total, 'fact')}, ${n(c.files.total, 'file')} with all their versions, ${n(c.bib.total, 'reference')} and your ${n(c.conversations.total, 'conversation')}.`)]),
       h('What is inside'),
       table(['Folder', 'Content'], ['`facts/`', 'Readable facts and JSON, with reviews, Lean proofs and traceability'], ['`files/`', 'Every version, with its PDF and sources'], ['`bibliography/`', 'A `.bib` file, the PDFs and comments'], ['`conversations/`', 'The conversations you take part in'], ['`manifest.json`', 'The list of files with their SHA-256']),
@@ -538,7 +539,7 @@ export const ARTICLES = [
   },
   {
     slug: 'ai-app', category: 'ai', title: 'The AI client app and your usage limits', summary: 'Start, stop and limit what the client uses of your subscription.',
-    keywords: 'update updates upgrade new version latest app desktop graphic interface limit limits usage quota subscription budget percent pause hours tokens stop command line billing cost price pay api key credits extra',
+    keywords: 'backup backups automatic weekly retention keep copies update updates upgrade new version latest app desktop graphic interface limit limits usage quota subscription budget percent pause hours tokens stop command line billing cost price pay api key credits extra',
     blocks: [
       p('The AI client has a **graphic interface** and a **command line**. Both use the same engine and the same limits.'),
       h('Install the Mac app'),
@@ -557,6 +558,11 @@ export const ARTICLES = [
       h('Who pays'),
       p('By default the client uses **your subscription only**. It ignores API keys found on your computer, and stops with an explanation if your AI tool is set to use a paid key. To use a paid API key on purpose, choose it on the **Accounts** page, or run `python3 oq.py limits --billing api`.'),
       warn('The client cannot see whether **usage credits** are on in your Claude account. Keep them off, or set a monthly cap, to be sure nothing is charged past your plan limit.'),
+      h('Optional automatic backups'),
+      p('The **Backups** page of the client can save a dated copy of each of your projects on your computer. **It is off until you turn it on.** It then runs **every week and keeps the last 4 copies** of each project, unless you change this.'),
+      steps('Open the client and click **Backups**.', 'Tick **Back up automatically**.', 'Choose the frequency, how many copies to keep and, if you wish, a folder.', 'Click **Save**. To make a first copy at once, click **Back up now**.'),
+      list('Each copy is verified before it is kept. Older copies are removed only after that, so a failed backup never costs you an earlier one.', 'Automatic backups run while the client is open. If your computer was off, the client catches up when you open it again.', 'From the command line: `python3 oq.py backup --on` turns them on, `--off` turns them off, `python3 oq.py backup` makes one copy now, and `--list` shows them.'),
+      warn('A copy contains what you can see in the project, so keep its folder private. It is a [readable copy](help:download-project) for you. It cannot restore the whole platform, which remains the [administrator\'s backup](help:backups).'),
       h('Keep it up to date'),
       p('The client looks for the latest release on [GitHub](https://github.com/LudovicPatey/projects/releases), and on your platform, when it starts and every few hours. Its menu shows your version, and **Check for updates** checks at once. A release that needs a newer platform is not offered.'),
       list('**Command-line version:** click **Update now**, or run `python3 oq.py update`. The file is verified with a checksum before it replaces the old one, and the client restarts.', '**Installed app:** when a new app is released, a **Download** button appears. Install it over the old one.'),
@@ -739,7 +745,7 @@ export const ARTICLES = [
     slug: 'backups', category: 'admin', title: 'Backups and installation', summary: 'For the administrator of this platform.',
     keywords: 'backup restore administrator install deploy server update hosting',
     blocks: [
-      p('The administrator can create full backups of the platform and restore them from the command line. Members cannot do this, but each can [download their own copy](help:download-project) of a project.'),
+      p('The administrator can create full backups of the platform and restore them from the command line. Members cannot do this, but each can [download their own copy](help:download-project) of a project, or choose to let the [AI client](help:ai-app) keep regular copies.'),
       list('[Installation guide](https://github.com/LudovicPatey/projects#installation)', '[Backup and restoration](https://github.com/LudovicPatey/projects/blob/master/docs/BACKUP.md)', '[Deployment](https://github.com/LudovicPatey/projects/blob/master/docs/DEPLOY.md)', '[API for AI clients](https://github.com/LudovicPatey/projects/blob/master/docs/AGENT_API.md)'),
     ],
     related: ['download-project', 'privacy'],
