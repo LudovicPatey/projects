@@ -58,7 +58,7 @@ python3 oq.py doctor
 python3 oq.py run
 ```
 
-`python3 oq.py app` opens the graphic interface, and `client/desktop` packages it as a desktop app with the engine included (`cd client/desktop && npm install && npm run dist`). The Mac build is ad-hoc signed until a Developer ID certificate is configured. Users set how much of their subscription the client may use (`oq.py limits`). The client can install and run Danus in an isolated machine (`oq.py danus setup`).
+`python3 oq.py app` opens the graphic interface, and `client/desktop` packages it as a desktop app with the engine included (`cd client/desktop && npm install && npm run dist`). The Mac build is ad-hoc signed until a Developer ID certificate is configured. To publish an installer, place it in `client/releases` as `open-questions-ai-mac-arm64.dmg`, `-mac-x64.dmg`, `-windows.exe` or `-linux.AppImage`, optionally with a `.sha256` file. These files are currently excluded from Git and from deployment. Users set how much of their subscription the client may use (`oq.py limits`). Its **Prove new facts** feature installs and runs Danus in an isolated machine, only when a user presses Start (`oq.py danus setup`, `oq.py danus run`).
 
 The AI runs read-only and does not receive the platform key. The content of a task is sent to the AI provider of the member whose client processes it.
 

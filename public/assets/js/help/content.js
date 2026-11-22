@@ -506,7 +506,7 @@ export const ARTICLES = [
         ['**Extract facts**', 'Automatically, when a person uploads a file or a new version', 'Facts with an exact quotation. A quotation not found in the file is refused'],
         ['**Answer a question**', 'Write `@AI` in a message or a comment', 'A reply in the same thread, labelled with its model'],
         ['**Find references**', 'A request on the AI work page', 'Suggestions that a person must accept'],
-        ['**Derive new facts**', 'A request, or [Danus](help:danus)', 'New facts, marked unchecked']),
+        ['**Prove new facts**', 'A member starts a [proof search](help:danus) from their client', 'New facts, marked unchecked']),
       h('Ask the AI in a discussion'),
       steps('Type `@` in a message or a comment.', 'Choose **Ask AI**, or keep typing `@AI`.', 'Write your question and send it.', 'The next AI client to run answers in the same thread, and you are notified.'),
       h('Validate suggested references'),
@@ -524,6 +524,7 @@ export const ARTICLES = [
     slug: 'ai-setup', category: 'ai', title: 'Install an AI client', summary: 'Choose your guide: Claude or ChatGPT. No experience needed.',
     keywords: 'install setup tutorial step by step beginner terminal claude chatgpt codex openai anthropic client commands',
     blocks: [
+      tip('Start from the [AI client page](app:client). It detects your system and shows the easiest way to install.'),
       p('You need **about 15 minutes** and one AI subscription. You do not need to know how to program: each step gives a command to copy.'),
       h('Choose your guide'),
       table(['If you use', 'Follow'], ['**Claude**', '[Install with Claude](help:ai-setup-claude)'], ['**ChatGPT**', '[Install with ChatGPT](help:ai-setup-chatgpt)']),
@@ -541,8 +542,8 @@ export const ARTICLES = [
     blocks: [
       p('The AI client has a **graphic interface** and a **command line**. Both use the same engine and the same limits.'),
       h('Install the Mac app'),
-      steps('Get the file `Open Questions AI-1.0.0-arm64.dmg` from your platform administrator. It is for Macs with Apple silicon.', 'Open it and drag **Open Questions AI** to **Applications**.', 'Open the app. If macOS blocks it, open **System Settings**, then **Privacy & Security**, and click **Open Anyway**. This appears because the app is not yet signed with an Apple developer certificate.', 'On the **Accounts** page, install or sign in to your AI, then paste your [personal key](help:ai-client).', 'On **Home**, click **Start**. Closing the window keeps it working from the menu bar. Choose **Quit** there to stop it.'),
-      p('The app includes everything it needs, so you do not need to install Python. Windows and Linux can use the command line for now.'),
+      steps('Open the [AI client page](app:client). When the Mac app is published, a **Download** button appears there. Until then, the page gives one command that opens the same interface.', 'Open it and drag **Open Questions AI** to **Applications**.', 'Open the app. If macOS blocks it, open **System Settings**, then **Privacy & Security**, and click **Open Anyway**. This appears because the app is not yet signed with an Apple developer certificate.', 'On the **Accounts** page, install or sign in to your AI, then paste your [personal key](help:ai-client).', 'On **Home**, click **Start**. Closing the window keeps it working from the menu bar. Choose **Quit** there to stop it.'),
+      p('The installable app includes everything it needs. The one-command version needs Python 3.8 or later, on Mac, Windows or Linux.'),
       shot('app-home.webp', 'The Home page of the client, with its status, usage meters, projects and activity', 'Home: is it working, and how much has it used?'),
       h('Keep your subscription for yourself'),
       p('Before each task, the client checks your limits. If one is reached, it waits and resumes later. Your AI account is not used while it waits.'),
@@ -552,7 +553,7 @@ export const ARTICLES = [
         ['Tasks per day', '20', 'Both'], ['Computing minutes per day', '120', 'Both'], ['Tokens per day', '2,000,000', 'Both'],
         ['Maximum minutes per task', '30', 'Both'], ['Working hours', 'All day', 'Both']),
       warn('**ChatGPT** reports the real share of your subscription. **Claude** does not report it to unattended tools, so the client applies its daily caps and stops when Claude says a limit is reached. These caps count only what this client used, not your other use of Claude.'),
-      p('A task already running can go slightly past a limit, because limits are checked between tasks. Danus is checked every minute.'),
+      p('A task already running can go slightly past a limit, because limits are checked between tasks. A [proof search](help:danus) runs only when you start it, with its own stops, checked every 30 seconds.'),
       h('Who pays'),
       p('By default the client uses **your subscription only**. It ignores API keys found on your computer, and stops with an explanation if your AI tool is set to use a paid key. To use a paid API key on purpose, choose it on the **Accounts** page, or run `python3 oq.py limits --billing api`.'),
       warn('The client cannot see whether **usage credits** are on in your Claude account. Keep them off, or set a monthly cap, to be sure nothing is charged past your plan limit.'),
@@ -637,17 +638,27 @@ export const ARTICLES = [
     related: ['traceability', 'ai-client'],
   },
   {
-    slug: 'danus', category: 'ai', title: 'Danus', summary: 'Let the client install and run Danus for you.',
-    keywords: 'danus import sync synchronize wrapper watch serve fact graph predecessors batch derive',
+    slug: 'danus', category: 'ai', title: 'Prove new facts', summary: 'Let a team of AI agents search for proofs, powered by Danus.',
+    keywords: 'prove proof proving search new facts agents danus run launch start stop button duration time limit session weekly reset resume continue import sync synchronize wrapper watch serve fact graph predecessors batch derive',
     blocks: [
       live((c) => (c.facts.danus.length ? [line('Facts imported from Danus in this project:', c.facts.danus.map(toFact))] : [line('No fact has been imported from Danus in this project.')])),
-      p('[Danus](https://github.com/frenzymath/Danus) is a multi-agent system that builds a graph of verified mathematical facts. Its graphs can be imported here, with their dependencies and labels.'),
-      h('Automatic installation'),
-      steps('Open the [AI client](help:ai-app), then the **Danus** page.', 'Click **Install Danus**. The client creates an isolated Linux machine and installs Danus in it.', 'Sign in to ChatGPT when the page shows a code.', 'Choose the number of agents and the maximum time.'),
-      shot('app-danus.webp', 'The Danus page of the client, with its installation button', 'Danus in the client.'),
-      p('From then on, **Derive new facts** requests use Danus, and its facts appear in the project. The first installation downloads about 2 GB.'),
-      warn('Danus needs a **ChatGPT** account, because its agents and verifier run on Codex. With Claude alone, derivation requests use Claude directly.'),
-      p('On a server, `python3 oq.py danus setup` does the same. `python3 oq.py danus remove` deletes Danus and its machine.'),
+      p('**Prove new facts** lets a team of AI agents search for new proofs on your computer. It is powered by [Danus](https://github.com/frenzymath/Danus), an open-source multi-agent system that builds a graph of AI-verified mathematical facts. You do not need to know or configure Danus: the client handles it.'),
+      h('Set it up once'),
+      steps('Open the [AI client](help:ai-app), then the **Prove new facts** page.', 'Click **Set up proving**. The client creates an isolated Linux machine and installs Danus in it.', 'Sign in to ChatGPT when the page shows a code.'),
+      p('The first installation downloads about 2 GB.'),
+      h('Start a proof search'),
+      p('This is the heaviest use of your subscription, so **it starts only when you press Start proving**. A **Prove new facts** request on the platform waits until a member chooses it as the goal of a search.'),
+      steps('Choose the **project**, then a **goal**: the whole project, a question, or a waiting request.', 'Choose how many **agents** work in parallel.', 'Set when to **stop**: a running time, a share of your session limit, and a share of your weekly limit. The first one reached stops the run.', 'Choose what happens at a usage limit: **end the run**, or **wait and continue after the reset**.', 'Press **Start proving**. Facts appear in the project as they are found.'),
+      shot('app-danus.webp', 'The proof search form, with project, goal, agents, running time, session and weekly stops, and what to do at a limit', 'Set up a run.'),
+      table(['Stop', 'What it means'], ['Running time', 'Time the agents actually work. Time spent waiting for a reset does not count. `0` means no time limit.'], ['Session usage', 'Stops at this percentage of your ChatGPT session limit.'], ['Weekly usage', 'Stops at this percentage of your ChatGPT weekly limit.']),
+      p('Your [general limits](help:ai-app) always apply: a run cannot go above them. Usage is checked every 30 seconds, so a run can pass a limit slightly, especially with many agents.'),
+      shot('app-danus-run.webp', 'A running proof search with its running time, session and weekly usage against their stops, new facts and a Stop button', 'Follow a run, and stop it at any time. Facts found so far are kept.'),
+      warn('With **no time limit** and **continue after the reset**, the search uses your subscription up to your stop level in every period, until you stop it.'),
+      p('If the client or computer stops, the search halts by itself within a few minutes. A search set to continue picks up when you reopen the app.'),
+      cmd('python3 oq.py danus run --project 1 --minutes 120 --stop-session 40 --stop-weekly 50 --on-limit resume', 'From the command line'),
+      cmd('python3 oq.py danus stop', 'Stop it from another terminal'),
+      warn('Proof searches need a **ChatGPT** account, because the Danus agents and verifier run on Codex. With Claude alone, you can turn on **Prove new facts automatically** in the client limits, which uses Claude directly.'),
+      p('On a server, `python3 oq.py danus setup` does the same. `python3 oq.py danus remove` deletes the prover and its machine.'),
       h('If you already run Danus yourself'),
       p('After [installing the client](help:ai-setup), run these commands from its folder. Replace `PATH` with the `fact_graph` folder of your Danus project, and `MODEL` with the model used by Danus.'),
       live((c) => [line(`This project has the id \`${c.project.id}\`.`)]),
@@ -655,7 +666,7 @@ export const ARTICLES = [
         ['`python3 oq.py danus push PATH --project ID --model MODEL`', 'Sends new facts. Add `--dry-run` to check first. Facts already sent are skipped.'],
         ['`python3 oq.py danus watch PATH --project ID --model MODEL`', 'Sends new facts as Danus produces them.'],
         ['`python3 oq.py danus pull PATH --project ID`', 'Copies the facts of the platform into a separate `platform_facts` folder. Your Danus graph is not modified.'],
-        ['`python3 oq.py danus serve PATH --project ID --model MODEL --command "..."`', 'Takes **Derive new facts** requests, runs your Danus command, then sends the new facts. In the command, `{task}` is the request file and `{graph}` the graph folder.']),
+        ['`python3 oq.py danus serve PATH --project ID --model MODEL --command "..."`', 'Takes **Prove new facts** requests, runs your Danus command, then sends the new facts. In the command, `{task}` is the request file and `{graph}` the graph folder.']),
       warn('Danus runs its agents with full access to the computer, and its authors recommend an isolated, disposable machine. A request can contain text from other members, so run `serve` only on such a machine.'),
       warn('Imported facts arrive as **unchecked**. The Danus verifier is itself an AI, and the platform cannot confirm that it ran.'),
     ],
@@ -769,7 +780,7 @@ export function nextSteps(c) {
 }
 
 // ----- links -----
-const GLOBAL_VIEWS = { profile: '#/profile', projects: '#/projects', feedback: '#/feedback' };
+const GLOBAL_VIEWS = { profile: '#/profile', projects: '#/projects', feedback: '#/feedback', client: '#/client' };
 
 /** URL of a `help:slug` or `app:view` target, or null when it needs a project and there is none. */
 export function resolveTarget(target, pid) {

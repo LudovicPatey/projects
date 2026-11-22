@@ -187,6 +187,7 @@ The platform stores AI requests and results and never runs a model. A client on 
 
 | Method | Path | Who | Body / notes |
 |---|---|---|---|
+| GET | `/api/client/info`, `/api/client/download?system=` | public | Published installers. One is offered only once its file is in `client/releases`. |
 | GET | `/api/projects/{id}/ai` | members | `tasks`, `counts`, running `clients`, `suggestions`. |
 | POST | `/api/projects/{id}/ai/tasks` | people | `{"kind": "extract" \| "ask" \| "bib" \| "derive", "prompt_text"?, "source_type"?, "source_id"?}`. Subjects: `document`, `question`, `strategy`, `fact`. |
 | POST | `/api/ai/tasks/claim` | AI | `{"client_name", "ai_model"?, "kinds"?, "project_id"?}`. Returns `{task}` with its `lease` and `context`, or `{task: null}`. |
@@ -203,6 +204,8 @@ The platform stores AI requests and results and never runs a model. A client on 
 - `POST /api/ai/tasks/{id}/release` with `{"lease"}` gives a task back without counting an attempt, for a usage limit or a user stop.
 - `oq.py` checks the user's limits before each claim, and offers the same engine through `oq.py app` (local interface) and `client/desktop` (Electron shell).
 - By default (`ai_billing: subscription`), `oq.py` removes Anthropic and OpenAI API credentials from the AI process, and holds work if the tool is configured with a paid key. `oq.py limits --billing api` allows them.
+- `POST /api/projects/{id}/ai/tasks` also accepts a personal key for `kind: derive` only, so that a client records the Danus run its user launched. `claim` accepts `task_id` to take that task.
+- Danus starts only from the client's Run button or `oq.py danus run`, with stops on running time, session usage and weekly usage, and a choice to end or wait for the reset. A watchdog in the machine stops its workers if the client disappears.
 - `oq.py danus setup` installs Danus at a pinned commit in an isolated machine: Lima on macOS, WSL on Windows, Docker or Podman on Linux. No folder of the computer and no platform key enter it.
 - `oq.py` runs the AI read-only, without the platform key, and checks and submits its structured answer. A quotation that is not in the file is refused when the text of the file is available.
 

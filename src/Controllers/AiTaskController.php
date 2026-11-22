@@ -85,8 +85,9 @@ final class AiTaskController
     {
         $pid = $r->int('id');
         Access::member($pid);
-        self::humanOnly();
         $kind = $r->str('kind');
+        // A person's own client may record the Danus run they just launched, and nothing else.
+        if (Auth::isAi() && !(Auth::isClient() && $kind === 'derive')) throw new HttpError(403, 'Only a person can do this.');
         if (!in_array($kind, self::KINDS, true)) throw new HttpError(422, 'Choose what the AI should do.');
         $since = gmdate('Y-m-d H:i:s', time() - 86400);
         if ((int)Db::value('SELECT COUNT(*) FROM ai_tasks WHERE requested_by = ? AND created_at > ? AND dedupe_key IS NULL', [Auth::id(), $since]) >= self::MAX_REQUESTS_PER_DAY) {
@@ -180,13 +181,14 @@ final class AiTaskController
         if (!$kinds) throw new HttpError(422, 'No valid task kind.');
         [$in, $params] = Db::in($kinds);
         $project = (int)$r->input('project_id');
-        $where = $project ? ' AND t.project_id = ?' : '';
+        $only = (int)$r->input('task_id');
+        $where = ($project ? ' AND t.project_id = ?' : '') . ($only ? ' AND t.id = ?' : '');
         $candidates = Db::all(
             "SELECT t.id, t.status FROM ai_tasks t JOIN project_members m ON m.project_id = t.project_id AND m.user_id = ?
              WHERE t.kind IN $in AND (t.status = 'pending' OR (t.status = 'running' AND t.lease_until < ?))
                AND (t.not_before IS NULL OR t.not_before <= ?) AND " . self::visibleSql('t') . "$where
              ORDER BY CASE t.kind WHEN 'ask' THEN 0 ELSE 1 END, t.id LIMIT 10",
-            array_merge([$me], $params, [$now, $now, $me], $project ? [$project] : []));
+            array_merge([$me], $params, [$now, $now, $me], $project ? [$project] : [], $only ? [$only] : []));
         foreach ($candidates as $c) {
             $lease = bin2hex(random_bytes(24));
             $won = Db::run(
@@ -287,6 +289,43 @@ final class AiTaskController
         header('Content-Disposition: attachment; filename="oq.py"');
         header('X-Content-Type-Options: nosniff');
         readfile($file);
+        exit;
+    }
+
+    /** @return array<string, string> */
+    private static function installers(): array
+    {
+        return ['mac-arm64' => 'open-questions-ai-mac-arm64.dmg', 'mac-x64' => 'open-questions-ai-mac-x64.dmg',
+            'windows' => 'open-questions-ai-windows.exe', 'linux' => 'open-questions-ai-linux.AppImage'];
+    }
+
+    /** Public: what can be downloaded. An installer is offered only once its file is in client/releases. */
+    public static function clientInfo(Request $r): never
+    {
+        $dir = __DIR__ . '/../../client/releases/';
+        preg_match('/^VERSION = "([^"]+)"/m', (string)file_get_contents(__DIR__ . '/../../client/oq.py', false, null, 0, 8192), $m);
+        $list = [];
+        foreach (self::installers() as $system => $file) {
+            if (!is_file($dir . $file)) continue;
+            $hash = is_file($dir . $file . '.sha256') ? strtok(trim((string)file_get_contents($dir . $file . '.sha256')), " \n") : null;
+            $list[] = ['system' => $system, 'file' => $file, 'size' => filesize($dir . $file), 'version' => $m[1] ?? null,
+                'sha256' => is_string($hash) && preg_match('/^[0-9a-f]{64}$/', $hash) ? $hash : null];
+        }
+        Response::json(['version' => $m[1] ?? null, 'script' => 'api/client/oq.py', 'installers' => $list]);
+    }
+
+    public static function clientDownload(Request $r): never
+    {
+        $system = (string)($r->query['system'] ?? '');
+        $file = self::installers()[$system] ?? null;
+        $path = $file ? __DIR__ . '/../../client/releases/' . $file : null;
+        if (!$path || !is_file($path)) throw new HttpError(404, 'This installer is not available.');
+        while (ob_get_level()) ob_end_clean();
+        header('Content-Type: application/octet-stream');
+        header('Content-Disposition: attachment; filename="' . $file . '"');
+        header('Content-Length: ' . filesize($path));
+        header('X-Content-Type-Options: nosniff');
+        readfile($path);
         exit;
     }
 

@@ -1,12 +1,13 @@
 // Public front page, shown to visitors who are not signed in.
 import { store } from '../store.js';
+import { ArchitectureDiagram } from './client.js';
 
 const IMG = 'assets/img/landing/';
 const FEATURES = [
   {
     kicker: 'Fact database', title: 'See what is known, and what it rests on',
     text: 'Results become facts with a statement, a proof and an intuition, linked by their dependencies. Browse them as a list or as an interactive graph.',
-    points: ['Labels such as conclusion, counterexample, dead end or plan', 'Retracting a fact flags everything built on it', 'Import fact graphs produced by Danus'],
+    points: ['Labels such as conclusion, counterexample, dead end or plan', 'Retracting a fact flags everything built on it', 'Import fact graphs from the Danus prover'],
     img: 'facts-graph.webp', w: 1600, h: 978, alt: 'Dependency graph of facts next to a selected theorem with its statement, proof and intuition',
   },
   {
@@ -34,14 +35,22 @@ const FEATURES = [
     img: 'files.webp', w: 1600, h: 978, alt: 'PDF viewer with a highlighted passage and its comment thread, next to a list of human and AI files',
   },
   {
-    kicker: 'Your AI client', title: 'Bring the AI you already use',
-    text: 'Create a personal API key and your AI client can read your projects, extract facts from papers and discussions, or submit new results in a validated format.',
-    points: ['Keys can be revoked at any time', 'Clients cannot send messages or change files', 'Project agents can join the discussion'],
-    img: 'api-keys.webp', w: 873, h: 378, alt: 'Personal API keys section of the profile page',
+    kicker: 'The AI client', title: 'An app for your computer, with your own limits',
+    text: 'The client connects your Claude or ChatGPT account to your projects. It processes new papers, answers @AI and suggests references, then waits whenever you reach a limit you chose.',
+    points: ['A graphic interface, and a full command line for servers', 'Set daily caps, working hours, and a share of your ChatGPT limits', 'Start proof searches with a time limit and usage stops, in an isolated machine'],
+    src: 'assets/img/guide/app-home.webp', img: 'app-home.webp', w: 1560, h: 1140, alt: 'The AI client showing its status, usage against the limits, and the waiting work of a project',
   },
 ];
 
+// KEEP THIS UP TO DATE: where the front page presents each menu area, or false if it deliberately does not.
+// tests/landing.test.mjs fails when a menu area is missing or points to a section that no longer exists.
+export const FRONT_PAGE_COVERAGE = {
+  overview: 'One workspace per open problem', questions: false, conversations: 'Conversations', facts: 'Fact database',
+  files: 'Files and bibliography', bib: 'Files and bibliography', ai: 'Decentralized AI computing', members: false,
+};
+
 export const LandingPage = {
+  components: { ArchitectureDiagram },
   data() {
     return {
       orcid: '0000-0002-1825-0097', name: 'Josiah Carberry', zoom: null,
@@ -80,9 +89,21 @@ export const LandingPage = {
 
     <section class="lp-strip" aria-label="Key principles">
       <div><b>Every AI output is labelled</b><span>with its model, its user, and its generation time when measured</span></div>
+      <div><b>Your AI, on your computer</b><span>with your own account, within limits you set</span></div>
       <div><b>Humans stay in charge</b><span>they endorse, dispute and retract results</span></div>
       <div><b>Credit is traceable</b><span>from each result back to its sources</span></div>
-      <div><b>Find anything at once</b><span>one search across facts, files, discussions and people</span></div>
+    </section>
+
+    <section class="lp-arch">
+      <p class="lp-kicker">Decentralized AI computing</p>
+      <h2>A shared platform, with the AI on your computers</h2>
+      <p class="lp-arch-lead">The platform never runs a model. It keeps the research structured and shows what needs doing. Each member can run an AI client at home, and any running client can take the next task.</p>
+      <architecture-diagram/>
+      <div class="lp-arch-points">
+        <div><b>No shared AI bill</b><span>Each member uses their own Claude or ChatGPT account, or none at all.</span></div>
+        <div><b>Your limits are respected</b><span>The client pauses at the daily caps and usage limits you choose.</span></div>
+        <div><b>People have the last word</b><span>AI proposes facts, answers and references. Researchers validate them.</span></div>
+      </div>
     </section>
 
     <section v-for="(f, i) in features" :key="f.img" class="lp-feature" :class="{flip: i % 2 === 1}">
@@ -93,19 +114,19 @@ export const LandingPage = {
         <ul><li v-for="p in f.points" :key="p"><icon name="check" :size="15"/> {{ p }}</li></ul>
       </div>
       <button class="lp-shot" @click="zoom = f" :aria-label="'Enlarge: ' + f.alt">
-        <img :src="IMG + f.img" :width="f.w" :height="f.h" :alt="f.alt" loading="lazy"></button>
+        <img :src="f.src || IMG + f.img" :width="f.w" :height="f.h" :alt="f.alt" loading="lazy"></button>
     </section>
 
     <section class="lp-final">
       <h2>Bring your open question</h2>
-      <p>Sign in with your ORCID iD to join a project or start one.</p>
+      <p>Sign in with your ORCID iD to join a project, start one, and download the AI client.</p>
       <a class="btn orcid" href="auth/login"><span class="lp-id">iD</span> Sign in with ORCID</a>
     </section>
     <footer class="lp-foot">Screenshots show a sample project with fictional researchers.</footer>
 
     <div v-if="zoom" class="lp-zoom" role="dialog" aria-modal="true" :aria-label="zoom.title" @click="zoom = null">
       <button class="icon-btn" aria-label="Close"><icon name="x" :size="22"/></button>
-      <img :src="IMG + zoom.img" :alt="zoom.alt">
+      <img :src="zoom.src || IMG + zoom.img" :alt="zoom.alt">
     </div>
   </div>`,
 };

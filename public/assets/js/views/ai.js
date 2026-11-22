@@ -60,14 +60,14 @@ export const AiView = {
   },
   template: `<div class="page wide ai-page">
     <header class="page-title"><span class="sh-icon"><icon name="sparkles" :size="22"/></span><div><h1>AI work</h1><p>The platform keeps the requests and results. The computing happens on the computers of the team.</p></div>
-      <a class="btn" :href="link('help', null, {a: 'ai-setup'})"><icon name="help" :size="15"/> Install an AI client</a></header>
+      <a class="btn" href="#/client"><icon name="download" :size="15"/> Get the AI client</a></header>
     <div v-if="!d" class="d-empty">Loading…</div>
     <template v-else>
       <section class="ai-banner" :class="online.length ? 'is-on' : 'is-off'" role="status">
         <span class="ai-dot" aria-hidden="true"></span>
         <div v-if="online.length"><b>{{ online.length }} AI client{{ online.length > 1 ? 's' : '' }} running</b><span>{{ online.map((c) => c.user_name + ' · ' + (c.ai_model || c.name)).join(', ') }}</span></div>
         <div v-else><b>No AI client is running</b><span>{{ open ? open + ' task' + (open > 1 ? 's wait' : ' waits') + ' until a member starts one.' : 'Requests will wait until a member starts one.' }}</span></div>
-        <a v-if="!online.length" class="btn sm primary" :href="link('help', null, {a: 'ai-setup'})">Start one</a>
+        <a v-if="!online.length" class="btn sm primary" href="#/client">Get the client</a>
       </section>
       <div class="kpi-grid ai-kpis">
         <kpi icon="clock" :value="d.counts.pending" label="waiting" tone="neutral"/>

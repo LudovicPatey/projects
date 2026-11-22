@@ -4,7 +4,7 @@ export const AI_KINDS = {
   extract: { label: 'Extract facts', short: 'Extraction', icon: 'files', hint: 'Read a file and add the results it states, with exact quotations.', needs: 'document' },
   ask: { label: 'Ask a question', short: 'Question', icon: 'comment', hint: 'Get the opinion of the AI. You can also write @AI in any message or comment.', needs: 'prompt' },
   bib: { label: 'Find references', short: 'References', icon: 'book', hint: 'Search the literature. A person validates each suggestion.', needs: null },
-  derive: { label: 'Derive new facts', short: 'Derivation', icon: 'graph', hint: 'Try to prove new results toward a question. They arrive unchecked.', needs: null },
+  derive: { label: 'Prove new facts', short: 'Proof search', icon: 'graph', hint: 'Waits until a member starts a proof search from their AI client, with their own time and usage limits. Results arrive unchecked.', needs: null },
 };
 
 export const TASK_STATUS = {

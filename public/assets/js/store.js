@@ -31,6 +31,7 @@ export function parseRoute() {
   }
   if (parts[0] === 'profile') return { name: 'profile', query };
   if (parts[0] === 'help') return { name: 'help', query };
+  if (parts[0] === 'client') return { name: 'client', query };
   if (parts[0] === 'feedback') return { name: 'feedback', id: parts[1] ? +parts[1] : null, query };
   return { name: 'projects', query };
 }

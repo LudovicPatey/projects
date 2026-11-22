@@ -10,6 +10,7 @@ Open Questions AI client. It runs on your computer, with your own Claude or Chat
     python3 oq.py run --once    process what is waiting, then stop
     python3 oq.py limits    show or change what the client may use of your subscription
     python3 oq.py danus setup|status|remove    install Danus in an isolated machine
+    python3 oq.py danus run --project ID --minutes 120 --stop-session 40 --stop-weekly 50 --on-limit resume
     python3 oq.py danus push|pull|watch|serve PATH    synchronize your own Danus fact graph
 
 The AI runs in a read-only sandbox and never receives your API key. It returns a structured
@@ -43,7 +44,7 @@ import webbrowser
 
 VERSION = "1.0.0"
 KINDS = ["extract", "ask", "bib", "derive"]
-KIND_NAMES = {"extract": "Extract facts", "ask": "Answer a question", "bib": "Suggest references", "derive": "Derive facts"}
+KIND_NAMES = {"extract": "Extract facts", "ask": "Answer a question", "bib": "Suggest references", "derive": "Prove new facts"}
 FACT_KINDS = ["definition", "lemma", "proposition", "theorem", "corollary", "conjecture", "remark"]
 DANUS_LABELS = {"conclusion", "example", "counterexample", "proof_attempt", "plan", "dead_end",
                 "direction", "obstacle", "master_guidance", "verification", "elaboration"}
@@ -607,10 +608,7 @@ def work_once(api, opts, name, stop=None):
     url = f"/api/ai/tasks/{task['id']}"
     per_task = argparse.Namespace(**{**vars(opts), "timeout": min(opts.timeout, limits["task_minutes"] * 60)})
     try:
-        if danus_usable(limits, task["kind"]):
-            result = DanusManager().run(api, task, opts, limits, lambda: bool(stop and stop.is_set()))
-        else:
-            result = process(api, task, per_task)
+        result = process(api, task, per_task)
         api.post(url + "/complete", result)
         say(f"          done: {result['summary'][:160]}")
     except LimitReached as e:
@@ -683,7 +681,7 @@ def cmd_run(a):
     if any(k not in KINDS for k in a.kinds):
         raise Stop(f"--only accepts: {', '.join(KINDS)}")
     name = a.name or f"{platform.node() or 'computer'} ({a.provider})"
-    print(f"Connected to {api.url}, using {a.provider}. Handles: {', '.join(KIND_NAMES[k] for k in a.kinds)}.")
+    print(f"Connected to {api.url}, using {a.provider}. Handles: {', '.join(KIND_NAMES[k] for k in a.kinds if k in load_limits()['kinds']) or 'nothing, see your limits'}.")
     print("Leave this window open. Press Ctrl+C to stop." if not a.once else "Processing what is waiting.", flush=True)
     done, code = 0, 0
     try:
@@ -823,7 +821,9 @@ def danus_pull(api, graph, project):
 
 
 def cmd_danus(a):
-    if a.action in ("setup", "status", "remove"):
+    if a.action in ("setup", "status", "remove", "run", "stop"):
+        if a.action == "run" and not a.project:
+            raise Stop("Give the project: --project ID.")
         return cmd_danus_managed(a)
     if not a.path or not a.project:
         raise Stop("Give the fact_graph folder and --project.")
@@ -866,6 +866,13 @@ def danus_serve(api, graph, a):
     print(f"Serving derivation tasks of project {a.project} with Danus. Press Ctrl+C to stop.", flush=True)
     try:
         while True:
+            allowed, why, _, _ = guard("codex")
+            if not allowed:
+                print(f"{time.strftime('%H:%M:%S')}  On hold: {why}", flush=True)
+                if a.once:
+                    return 0
+                time.sleep(a.interval)
+                continue
             body = {"kinds": ["derive"], "client_name": f"{platform.node() or 'computer'} (danus)", "ai_model": a.model, "project_id": a.project}
             task = api.post("/api/ai/tasks/claim", body).get("task")
             if not task:
@@ -911,7 +918,7 @@ def danus_serve(api, graph, a):
 DEFAULT_LIMITS = {
     "max_session_percent": 50, "max_weekly_percent": 50,  # share of the subscription this client may reach
     "tasks_per_day": 20, "minutes_per_day": 120, "tokens_per_day": 2000000,  # 0 = no cap
-    "task_minutes": 30, "hours": "", "kinds": list(KINDS), "paused": False,
+    "task_minutes": 30, "hours": "", "kinds": ["extract", "ask", "bib"], "paused": False,  # derivation is the costliest: opt-in
     "danus_enabled": False, "danus_workers": 1, "danus_minutes": 60,
     "ai_billing": "subscription",  # "api" must be chosen explicitly, because it is charged per use
 }
@@ -1352,13 +1359,15 @@ class DanusManager:
 
     def unavailable_reason(self):
         if not shutil.which("codex"):
-            return "Danus works with a ChatGPT account. Install Codex first."
+            return "Proving new facts needs a ChatGPT account. Install ChatGPT on the Accounts page first."
         if not pick_vm():
-            return "This computer needs Docker or Podman to isolate Danus."
+            return "This computer needs Docker or Podman to isolate the proof search."
         return None
 
     def sh(self, vm, script, timeout=600, input_text=None):
-        return subprocess.run(vm.command(script), input=input_text, text=True, encoding="utf-8", errors="replace", capture_output=True, env=vm.env, timeout=timeout)
+        # Without input, the machine must not wait on the terminal or on the app's own input.
+        feed = {"input": input_text} if input_text is not None else {"stdin": subprocess.DEVNULL}
+        return subprocess.run(vm.command(script), text=True, encoding="utf-8", errors="replace", capture_output=True, env=vm.env, timeout=timeout, **feed)
 
     def setup(self, say):
         reason = self.unavailable_reason()
@@ -1371,20 +1380,20 @@ class DanusManager:
         step("Installing Danus (several minutes)")
         p = self.sh(vm, DANUS_SETUP, timeout=3600)
         if p.returncode != 0:
-            raise Stop("Danus could not be installed: " + (p.stderr or p.stdout).strip()[-400:])
+            raise Stop("The prover could not be installed: " + (p.stderr or p.stdout).strip()[-400:])
         if self.sh(vm, f"cd {DANUS_HOME} && bin/codex login status", timeout=60).returncode != 0:
             step("Waiting for you to sign in to ChatGPT")
             self.device_login(vm)
         step("Starting the verifier")
         p = self.sh(vm, f"cd {DANUS_HOME} && bash scripts/services.sh up verify", timeout=300)
         if p.returncode != 0:
-            raise Stop("The Danus verifier could not start: " + (p.stderr or p.stdout).strip()[-300:])
+            raise Stop("The proof verifier could not start: " + (p.stderr or p.stdout).strip()[-300:])
         self.save(ready=True, step="Ready", login=None, backend=vm.name, commit=DANUS_COMMIT)
-        say("Danus is ready.")
+        say("The prover is ready.")
 
     def device_login(self, vm):
         """The account is connected inside the machine: the credentials of this computer are not copied there."""
-        p = subprocess.Popen(vm.command(f"cd {DANUS_HOME} && bin/codex login --device-auth"), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace", env=vm.env)
+        p = subprocess.Popen(vm.command(f"cd {DANUS_HOME} && bin/codex login --device-auth"), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace", env=vm.env)
         url = code = None
         for line in p.stdout:
             clean = re.sub(r"\x1b\[[0-9;]*m", "", line)
@@ -1400,7 +1409,7 @@ class DanusManager:
     def fetch_graph(self, vm, project, target):
         cmd = vm.command(f"cd {DANUS_HOME}/runtime/projects/{project} && tar -cf - fact_graph global_memory 2>/dev/null")
         with tempfile.TemporaryFile() as f:
-            p = subprocess.run(cmd, stdout=f, stderr=subprocess.DEVNULL, env=vm.env, timeout=300)
+            p = subprocess.run(cmd, stdin=subprocess.DEVNULL, stdout=f, stderr=subprocess.DEVNULL, env=vm.env, timeout=300)
             if p.returncode not in (0, 1):
                 return False
             f.seek(0)
@@ -1409,56 +1418,6 @@ class DanusManager:
             with tarfile.open(fileobj=f) as t:
                 safe_extract(t, target)
         return (target / "fact_graph" / "facts").is_dir()
-
-    def run(self, api, task, opts, limits, should_stop):
-        vm = pick_vm()
-        vm.start(say)
-        self.sh(vm, f"cd {DANUS_HOME} && bash scripts/services.sh up verify", timeout=300)
-        model = opts.model or codex_default_model() or "gpt-5.6-sol"
-        name = f"oq{task['project_id']}t{task['id']}"
-        roles = f"high:{limits['danus_workers']}"
-        started = time.time()
-        q = shlex.quote
-        p = self.sh(vm, f"cd {DANUS_HOME} && (bin/danus status {name} --json >/dev/null 2>&1 || bin/danus new {name} --roles {roles} --model {q(model)})")
-        if p.returncode != 0:
-            raise RuntimeError("Danus could not create the project: " + (p.stderr or p.stdout)[-300:])
-        ctx = task["context"]
-        goal = "\n\n".join(x for x in [f"# {ctx['project']['title']}", ctx["project"]["question"], task.get("prompt_text") or "",
-                                       json.dumps(ctx.get("question") or ctx.get("strategy") or ctx.get("fact") or {}, ensure_ascii=False)] if x and x != "{}")
-        self.sh(vm, f"cat > {DANUS_HOME}/runtime/projects/{name}/PROBLEM.md", input_text=goal)
-        status = self.sh(vm, f"cd {DANUS_HOME} && bin/danus status {name} --json")
-        for worker in danus_workers(status.stdout):
-            self.sh(vm, f"cd {DANUS_HOME} && bin/danus assign {name}/{q(worker)} --stdin", input_text=goal)
-        p = self.sh(vm, f"cd {DANUS_HOME} && bin/danus start {name}")
-        if p.returncode != 0:
-            raise RuntimeError("Danus could not start: " + (p.stderr or p.stdout)[-300:])
-        reason = "the time you allowed"
-        created = []
-        with tempfile.TemporaryDirectory(prefix="oq-danus-") as tmp:
-            graph_root = pathlib.Path(tmp) / "g"
-            try:
-                while time.time() - started < limits["danus_minutes"] * 60:
-                    time.sleep(int(os.environ.get("OQ_DANUS_POLL") or 60))
-                    if should_stop():
-                        reason = "your request"
-                        break
-                    UsageReader.cache.pop("codex", None)
-                    ok, why, _, _ = guard("codex")
-                    if not ok:
-                        reason = why
-                        break
-                    if self.fetch_graph(vm, name, graph_root) and any((graph_root / "fact_graph" / "facts").glob("*.md")):
-                        ids, _ = danus_push(api, graph_root / "fact_graph", task["project_id"], model, False)
-                        created += ids
-            finally:
-                self.sh(vm, f"cd {DANUS_HOME} && bin/danus stop {name} --force", timeout=120)
-            if self.fetch_graph(vm, name, graph_root) and any((graph_root / "fact_graph" / "facts").glob("*.md")):
-                ids, _ = danus_push(api, graph_root / "fact_graph", task["project_id"], model, False)
-                created += ids
-        seconds = round(time.time() - started, 3)
-        Ledger().add(seconds=seconds)
-        return {"lease": task["lease"], "ai_model": model, "generation_seconds": seconds, "fact_ids": list(dict.fromkeys(created)),
-                "summary": f"Danus: {len(set(created))} new fact(s). Stopped at {reason}."[:1000]}
 
     def remove(self):
         vm = pick_vm()
@@ -1481,8 +1440,326 @@ def danus_workers(text):
     return [str(r.get("name") or r.get("worker") or r.get("id")) for r in rows if isinstance(r, dict)]
 
 
-def danus_usable(limits, kind):
-    return kind == "derive" and limits["danus_enabled"] and DanusManager().state().get("ready") and shutil.which("codex")
+class DanusRun:
+    """One explicit Danus run. Nothing starts it but a person pressing Run, or the command `danus run`."""
+    ACTIVE = ("starting", "running", "waiting", "stopping")
+
+    def __init__(self):
+        self.path = data_dir() / "danus_run.json"
+        self.flag = data_dir() / "danus_stop"
+        self.lock = threading.RLock()
+
+    def read(self):
+        try:
+            return json.loads(self.path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {"status": "idle"}
+
+    def write(self, **kw):
+        with self.lock:
+            s = {**self.read(), **kw, "updated_at": time.time()}
+            data_dir().mkdir(parents=True, exist_ok=True)
+            tmp = self.path.with_suffix(".tmp")
+            fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)  # it holds the task lease
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(s, f)
+            os.replace(str(tmp), str(self.path))
+            return s
+
+    def alive(self):
+        s = self.read()
+        return s.get("status") in self.ACTIVE and time.time() - s.get("updated_at", 0) < 90
+
+    def public(self):
+        s = {k: v for k, v in self.read().items() if k != "lease"}
+        s["active"] = self.alive()
+        if s.get("status") in self.ACTIVE and not s["active"]:
+            s["status"] = "interrupted"
+        s["fact_count"] = len(s.get("facts") or [])
+        return s
+
+    def request_stop(self):
+        if self.alive():
+            self.flag.write_text("stop", encoding="utf-8")
+            self.write(status="stopping")
+            return True
+        return False
+
+    def wants_stop(self):
+        return self.flag.exists()
+
+    def pause(self, seconds):
+        end = time.time() + seconds
+        while time.time() < end and not self.wants_stop():
+            time.sleep(min(1, max(0.05, end - time.time())))
+
+    def start(self, raw, background=True):
+        if self.alive():
+            raise Stop("A proof search is already in progress.")
+        if not DanusManager().state().get("ready"):
+            raise Stop("Set up proving first.")
+        api, _ = connect()
+        run = clean_run(raw)
+        model = raw.get("model") or load_prefs().get("danus_model") or codex_default_model() or "gpt-5.6-sol"
+        problem = billing_problem("codex", load_limits())
+        if problem:
+            raise Stop(problem)
+        block = danus_block(run)
+        if block and run["on_limit"] == "stop":
+            raise Stop(f"The proof search cannot start now. {block[0]} Choose higher limits, or wait and continue after the reset.")
+        try:
+            self.flag.unlink()
+        except OSError:
+            pass
+        self.path.write_text(json.dumps({"status": "starting"}), encoding="utf-8")
+        self.write(status="starting", **run, model=model, started_at=time.time(), active_seconds=0, facts=[], stop_reason=None, error=None, lease=None, project_name=None, retry_at=None, launched=False)
+        if background:
+            threading.Thread(target=self.execute, args=(api,), daemon=True).start()
+        else:
+            self.execute(api)
+
+    def resume_after_restart(self):
+        """After a restart, a run set to continue picks up again. Any other run is closed."""
+        s = self.read()
+        if s.get("status") not in self.ACTIVE or self.alive():
+            return
+        api, _ = connect()
+        if s.get("on_limit") == "resume" and s.get("status") != "stopping":
+            self.write(status="starting")
+            threading.Thread(target=self.execute, args=(api,), daemon=True).start()
+            return
+        if s.get("task_id") and s.get("lease"):
+            try:
+                api.post(f"/api/ai/tasks/{s['task_id']}/complete", {"lease": s["lease"], "ai_model": s.get("model"), "generation_seconds": round(s.get("active_seconds", 0), 3),
+                                                                 "fact_ids": s.get("facts") or [], "summary": "Proof search: stopped because the client was closed."})
+            except ApiError:
+                pass
+        self.write(status="stopped", stop_reason="the client was closed", finished_at=time.time())
+
+    def task(self, api, s):
+        """The queue records the run, so that the team can see it and cancel it."""
+        if s.get("task_id") and s.get("lease"):
+            try:
+                api.post(f"/api/ai/tasks/{s['task_id']}/heartbeat", {"lease": s["lease"]})
+                return s
+            except ApiError:
+                pass
+        task_id = s.get("task_id")
+        if not task_id:
+            body = {"kind": "derive"}
+            if s.get("prompt"):
+                body["prompt_text"] = s["prompt"]
+            if s.get("question_id"):
+                body.update(source_type="question", source_id=s["question_id"])
+            task_id = api.post(f"/api/projects/{s['project_id']}/ai/tasks", body)["id"]
+        name = f"{platform.node() or 'computer'} (danus)"
+        task = api.post("/api/ai/tasks/claim", {"kinds": ["derive"], "client_name": name, "ai_model": s["model"], "project_id": s["project_id"], "task_id": task_id}).get("task")
+        if not task:
+            raise RuntimeError("This request has already been taken by another client.")
+        return self.write(task_id=task["id"], lease=task["lease"], context=task["context"], prompt=task.get("prompt_text") or s.get("prompt") or "", source_type=task.get("source_type"), source_id=task.get("source_id"))
+
+    def execute(self, api):
+        beat = threading.Event()
+
+        def alive():
+            while not beat.wait(20):
+                s = self.read()
+                if s.get("status") in self.ACTIVE:
+                    self.write()
+
+        threading.Thread(target=alive, daemon=True).start()
+        dm, vm = DanusManager(), pick_vm()
+        running = False
+        reason, final_status = "your request", "stopped"
+        s = self.read()
+        name = s.get("project_name")
+        q = shlex.quote
+        poll = int(os.environ.get("OQ_DANUS_POLL") or 30)
+        missed = 0
+        last = time.time()
+        graph = pathlib.Path(tempfile.mkdtemp(prefix="oq-danus-")) / "g"
+        try:
+            s = self.task(api, s)
+            if not name:
+                name = f"oq{s['project_id']}t{s['task_id']}"
+                s = self.write(project_name=name)
+            hb = f"{DANUS_HOME}/runtime/oq-heartbeat-{name}"
+            while True:
+                s = self.read()
+                if self.wants_stop():
+                    reason = "your request"
+                    break
+                if s.get("minutes") and s.get("active_seconds", 0) >= s["minutes"] * int(os.environ.get("OQ_DANUS_MINUTE") or 60):
+                    reason = f"the time limit of {s['minutes']} minutes"
+                    break
+                block = danus_block(s)
+                if block and block[2] and running and missed < 2:  # one failed reading is not a limit
+                    missed += 1
+                    block = None
+                elif not block:
+                    missed = 0
+                if block:
+                    if running:
+                        self.sh_stop(dm, vm, name, hb)
+                        running = False
+                        self.sync(api, dm, vm, name, graph, s)
+                    if s["on_limit"] == "stop":
+                        reason = block[0]
+                        break
+                    self.write(status="waiting", wait_reason=block[0], retry_at=block[1])
+                    self.keep_lease(api, s)
+                    self.pause(min(60, poll * 2))
+                    last = time.time()
+                    continue
+                if not running:
+                    self.write(status="starting", wait_reason=None, retry_at=None)
+                    self.launch(dm, vm, s, name, hb)
+                    running = True
+                    last = time.time()
+                    self.write(status="running", launched=True)
+                    say(f"{time.strftime('%H:%M:%S')}  The proof search is running.")
+                self.pause(poll)
+                now = time.time()
+                spent = now - last
+                last = now
+                Ledger().add(seconds=spent)
+                s = self.write(active_seconds=round(s.get("active_seconds", 0) + spent, 1))
+                dm.sh(vm, f"touch {hb}", timeout=30)
+                if not self.keep_lease(api, s):
+                    reason = "a cancellation on the platform"
+                    final_status = "cancelled"
+                    break
+                self.sync(api, dm, vm, name, graph, s)
+        except Stop as e:
+            reason, final_status = str(e), "failed"
+        except (RuntimeError, ApiError, OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as e:
+            reason, final_status = str(e)[:500], "failed"
+        finally:
+            self.write(status="stopping")
+            try:
+                if running or self.read().get("launched"):
+                    self.sh_stop(dm, vm, name, f"{DANUS_HOME}/runtime/oq-heartbeat-{name}")
+                    self.sync(api, dm, vm, name, graph, self.read())
+                self.finish(api, reason, final_status)
+                vm.stop()
+            except (ApiError, OSError, subprocess.SubprocessError) as e:
+                self.write(status="failed", stop_reason=str(e)[:300], finished_at=time.time())
+            shutil.rmtree(str(graph.parent), ignore_errors=True)
+            beat.set()
+            try:
+                self.flag.unlink()
+            except OSError:
+                pass
+
+    def launch(self, dm, vm, s, name, hb):
+        q = shlex.quote
+        vm.start(say)
+        p = dm.sh(vm, f"cd {DANUS_HOME} && bash scripts/services.sh up verify", timeout=300)
+        if p.returncode != 0:
+            raise RuntimeError("The proof verifier could not start: " + (p.stderr or p.stdout)[-300:])
+        if not s.get("launched"):
+            p = dm.sh(vm, f"cd {DANUS_HOME} && bin/danus new {name} --roles high:{s['workers']} --model {q(s['model'])}")
+            if p.returncode != 0:
+                raise RuntimeError("The proof search could not be prepared: " + (p.stderr or p.stdout)[-300:])
+            ctx = s.get("context") or {}
+            parts = [f"# {(ctx.get('project') or {}).get('title', '')}", (ctx.get("project") or {}).get("question", ""), s.get("prompt") or "",
+                     json.dumps(ctx.get("question") or ctx.get("strategy") or ctx.get("fact") or {}, ensure_ascii=False)]
+            goal = "\n\n".join(x for x in parts if x and x != "{}")
+            dm.sh(vm, f"cat > {DANUS_HOME}/runtime/projects/{name}/PROBLEM.md", input_text=goal)
+            status = dm.sh(vm, f"cd {DANUS_HOME} && bin/danus status {name} --json")
+            for worker in danus_workers(status.stdout):
+                dm.sh(vm, f"cd {DANUS_HOME} && bin/danus assign {name}/{q(worker)} --stdin", input_text=goal)
+        p = dm.sh(vm, f"cd {DANUS_HOME} && bin/danus start {name}")
+        if p.returncode != 0:
+            raise RuntimeError("The proof search could not start: " + (p.stderr or p.stdout)[-300:])
+        # If this client dies, the workers must not keep spending the subscription.
+        dm.sh(vm, f"""touch {hb}; cd {DANUS_HOME}; nohup setsid bash -c 'while sleep 30; do [ -f {hb} ] || exit 0; a=$(( $(date +%s) - $(stat -c %Y {hb}) )); if [ "$a" -gt 240 ]; then bin/danus stop {name} --force; rm -f {hb}; exit 0; fi; done' >/dev/null 2>&1 &""", timeout=30)
+
+    def sh_stop(self, dm, vm, name, hb):
+        dm.sh(vm, f"rm -f {hb}; cd {DANUS_HOME} && bin/danus stop {name} --force", timeout=120)
+
+    def keep_lease(self, api, s):
+        try:
+            api.post(f"/api/ai/tasks/{s['task_id']}/heartbeat", {"lease": s["lease"]})
+        except ApiError as e:
+            return e.status != 409  # a network problem is not a cancellation
+        return True
+
+    def sync(self, api, dm, vm, name, graph, s):
+        try:
+            if dm.fetch_graph(vm, name, graph) and any(p for p in (graph / "fact_graph" / "facts").glob("*.md") if not p.name.startswith(".")):
+                ids, _ = danus_push(api, graph / "fact_graph", s["project_id"], s["model"], False)
+                if ids:
+                    self.write(facts=list(dict.fromkeys((self.read().get("facts") or []) + ids)))
+        except (ApiError, Stop, OSError, subprocess.SubprocessError, tarfile.TarError) as e:
+            say(f"New facts could not be sent yet: {str(e)[:200]}")
+
+    def finish(self, api, reason, status):
+        s = self.read()
+        facts = s.get("facts") or []
+        if s.get("source_type") == "question":
+            for fid in facts:
+                try:
+                    api.post(f"/api/questions/{s['source_id']}/links", {"target_type": "fact", "target_id": fid, "ai_model": s["model"]})
+                except ApiError:
+                    pass
+        if s.get("task_id") and s.get("lease") and status != "cancelled":
+            url = f"/api/ai/tasks/{s['task_id']}"
+            summary = f"Proof search: {len(facts)} new fact(s) in {round(s.get('active_seconds', 0) / 60)} min. Stopped at {reason}."[:1000]
+            try:
+                if status == "failed" and not facts:
+                    api.post(url + "/fail", {"lease": s["lease"], "error": reason[:900], "final": True})
+                else:
+                    api.post(url + "/complete", {"lease": s["lease"], "ai_model": s["model"], "generation_seconds": round(s.get("active_seconds", 0), 3), "fact_ids": facts, "summary": summary})
+            except ApiError as e:
+                say(f"The platform could not record the end of the run: {e}")
+        self.write(status=status, stop_reason=reason, finished_at=time.time(), wait_reason=None, retry_at=None, lease=None)
+        say(f"{time.strftime('%H:%M:%S')}  The proof search stopped at {reason}. {len(facts)} new fact(s).")
+
+
+def clean_run(raw):
+    def number(key, low, high, default):
+        try:
+            v = int(raw.get(key, default))
+        except (TypeError, ValueError):
+            raise Stop(f"{key} must be a whole number.")
+        if not low <= v <= high:
+            raise Stop(f"{key} must be between {low} and {high}.")
+        return v
+    limits = load_limits()
+    try:
+        project = int(raw.get("project_id") or 0)
+    except (TypeError, ValueError):
+        project = 0
+    if project <= 0:
+        raise Stop("Choose a project.")
+    on_limit = raw.get("on_limit", "stop")
+    if on_limit not in ("stop", "resume"):
+        raise Stop("When a limit is reached: choose stop or resume.")
+    prompt = str(raw.get("prompt") or "").strip()
+    if len(prompt) > 4000:
+        raise Stop("The instructions are too long (4000 characters at most).")
+    return {"project_id": project, "question_id": int(raw.get("question_id") or 0) or None, "task_id": int(raw.get("task_id") or 0) or None, "prompt": prompt,
+            "minutes": number("minutes", 0, 43200, 120), "stop_session": number("stop_session", 1, 100, limits["max_session_percent"]),
+            "stop_weekly": number("stop_weekly", 1, 100, limits["max_weekly_percent"]), "on_limit": on_limit,
+            "workers": number("workers", 1, 7, limits["danus_workers"])}
+
+
+def danus_block(run):
+    """(reason, retry_at, reading_failed) when Danus must not run now. The stricter of the run's and the general limits applies."""
+    limits = {**load_limits(), "tasks_per_day": 0}
+    now = time.time()
+    windows = UsageReader.read("codex", max_age=20)
+    allowed, reason, retry = evaluate_limits(limits, Ledger().read(), windows, time.localtime().tm_hour)
+    if not allowed:
+        return reason, retry, False
+    if not windows:
+        return "Your ChatGPT usage cannot be read, so the proof search does not run.", now + 300, True
+    for w in windows:
+        cap = run["stop_weekly"] if w["name"] == "weekly" else run["stop_session"]
+        if w["used"] >= cap:
+            return f"{w['name']} usage at {w['used']}% (stop set at {cap}%)", w.get("resets_at") or now + 1800, False
+    return None
 
 
 # ----- installing and signing in to the AI tools -----
@@ -1520,6 +1797,7 @@ class Service:
     def __init__(self):
         self.log, self.thread, self.stop_flag = collections.deque(maxlen=200), None, threading.Event()
         self.provider, self.busy, self.block, self.jobs = None, None, None, {}
+        self.danus = DanusRun()
         SINKS.append(self.write)
 
     def write(self, msg):
@@ -1579,16 +1857,20 @@ class Service:
         if problem:
             allowed, reason, retry = False, problem, time.time() + 300
         projects, error = [], None
-        if cfg.get("url") and cfg.get("key"):
+        cached = getattr(self, "projects_cache", None)
+        if cached and cached[0] == cfg.get("key") and time.time() - cached[1] < 15:
+            projects = cached[2]
+        elif cfg.get("url") and cfg.get("key"):
             try:
                 a = Api(cfg["url"], cfg["key"])
                 for p in project_list(a.get("/api/projects")):
                     d = a.get(f"/api/projects/{p['id']}/ai")
                     projects.append({"id": p["id"], "title": p["title"], "waiting": d["counts"]["pending"], "running": d["counts"]["running"], "review": sum(1 for s in d["suggestions"] if s["status"] == "proposed")})
+                self.projects_cache = (cfg.get("key"), time.time(), projects)
             except ApiError as e:
                 error = str(e)
         dm = DanusManager()
-        return {"version": VERSION, "connected": bool(cfg.get("key")) and not error, "url": cfg.get("url", ""), "error": error, "projects": projects, "tools": tools, "provider": provider,
+        return {"danus_run": DanusRun().public(), "version": VERSION, "connected": bool(cfg.get("key")) and not error, "url": cfg.get("url", ""), "error": error, "projects": projects, "tools": tools, "provider": provider,
                 "running": self.running(), "allowed": allowed, "reason": reason, "retry_at": retry, "limits": limits, "day": day, "windows": windows,
                 "log": list(self.log)[-60:], "jobs": self.jobs, "danus": {**dm.state(), "unavailable": dm.unavailable_reason()}}
 
@@ -1697,17 +1979,31 @@ def make_handler(service, token, port):
                     raise Stop("Install this tool first.")
                 service.job(f"login-{name}", lambda: check_run([shutil.which(name)] + TOOL_LOGIN[name][1:], f"Signing in to {name}", name))
             elif path == "/api/danus/setup":
-                save_limits({"danus_enabled": True})
                 service.job("danus", lambda: DanusManager().setup(say))
             elif path == "/api/danus/remove":
-                save_limits({"danus_enabled": False})
+                if DanusRun().alive():
+                    raise Stop("Stop the proof search first.")
                 service.job("danus", lambda: DanusManager().remove())
+            elif path == "/api/danus/run":
+                service.danus.start(b)
+            elif path == "/api/danus/stop":
+                service.danus.request_stop()
+            elif path == "/api/danus/options":
+                return danus_options(int(b.get("project_id") or 0))
             else:
                 raise Stop("Unknown action.")
             UsageReader.cache.clear() if path in ("/api/tool/login", "/api/start") else None
             return {"ok": True}
 
     return Handler
+
+
+def danus_options(project):
+    api, _ = connect()
+    questions = api.get(f"/api/projects/{project}/questions").get("questions", [])
+    tasks = api.get(f"/api/projects/{project}/ai").get("tasks", [])
+    requests = [{"id": t["id"], "label": (t.get("prompt_text") or t.get("subject") or f"Request #{t['id']}")[:90]} for t in tasks if t["kind"] == "derive" and t["status"] == "pending"]
+    return {"questions": [{"id": q["id"], "title": q["title"]} for q in questions], "requests": requests}
 
 
 def check_run(cmd, label, tool=None):
@@ -1729,6 +2025,11 @@ def cmd_app(a):
     print(f"OQ_APP_URL={url}" if a.no_open else f"Open Questions is open in your browser. Keep this window open.\n{url}", flush=True)
     if not a.no_open:
         webbrowser.open(url)
+    if load_config().get("key"):
+        try:
+            service.danus.resume_after_restart()
+        except (Stop, ApiError):
+            pass
     if load_prefs().get("autostart") and load_config().get("key"):
         try:
             service.start(load_prefs().get("provider"))
@@ -1773,16 +2074,42 @@ def cmd_limits(a):
 
 def cmd_danus_managed(a):
     dm = DanusManager()
+    run = DanusRun()
+    if a.action == "run":
+        raw = {"project_id": a.project, "question_id": a.question, "task_id": a.task, "prompt": a.goal or "", "on_limit": a.on_limit}
+        for key, value in (("minutes", a.minutes), ("stop_session", a.stop_session), ("stop_weekly", a.stop_weekly), ("workers", a.workers), ("model", a.model)):
+            if value is not None:
+                raw[key] = value
+        print("The proof search is starting. Press Ctrl+C to stop it.", flush=True)
+        try:
+            run.start(raw, background=False)
+        except KeyboardInterrupt:
+            run.flag.write_text("stop", encoding="utf-8")
+        final = run.public()
+        print(f"Result: {final['status']}, {final['fact_count']} new fact(s), stopped at {final.get('stop_reason')}.")
+        return 1 if final["status"] == "failed" else 0
+    if a.action == "stop":
+        print("Stopping the proof search." if run.request_stop() else "No proof search is in progress.")
+        return 0
     if a.action == "setup":
-        save_limits({"danus_enabled": True})
         dm.setup(print)
     elif a.action == "remove":
-        save_limits({"danus_enabled": False})
+        if run.alive():
+            raise Stop("Stop the proof search first.")
         dm.remove()
-        print("Danus and its isolated machine were removed.")
+        print("The prover and its isolated machine were removed.")
     else:
         s = dm.state()
-        print("Danus: ready" if s.get("ready") else f"Danus: not installed. {dm.unavailable_reason() or 'Run: python3 oq.py danus setup'}")
+        print("Prover (Danus): ready" if s.get("ready") else f"Prover (Danus): not installed. {dm.unavailable_reason() or 'Run: python3 oq.py danus setup'}")
+        r = run.public()
+        if r.get("status") != "idle":
+            limit = f"{r.get('minutes')} min" if r.get("minutes") else "no time limit"
+            print(f"Run: {r['status']}, {round((r.get('active_seconds') or 0) / 60)} min of {limit}, {r['fact_count']} new fact(s)")
+            print(f"Stops at {r.get('stop_session')}% session, {r.get('stop_weekly')}% weekly. At a limit: {'wait and continue' if r.get('on_limit') == 'resume' else 'end'}.")
+            if r.get("wait_reason"):
+                print(f"Waiting: {r['wait_reason']}")
+            if r.get("stop_reason"):
+                print(f"Stopped at: {r['stop_reason']}")
     return 0
 
 
@@ -1819,10 +2146,18 @@ def parser():
     l.add_argument("--resume", action="store_true")
     l.set_defaults(fn=cmd_limits)
     d = sub.add_parser("danus", help="install Danus, or synchronize your own fact graph")
-    d.add_argument("action", choices=["setup", "status", "remove", "push", "pull", "watch", "serve"])
+    d.add_argument("action", choices=["run", "stop", "status", "setup", "remove", "push", "pull", "watch", "serve"])
     d.add_argument("path", nargs="?", help="for push, pull, watch, serve: the fact_graph folder")
     d.add_argument("--project", type=int)
     d.add_argument("--model", help="model used by Danus")
+    d.add_argument("--question", type=int, help="for run: the question to work on")
+    d.add_argument("--task", type=int, help="for run: a waiting derivation request")
+    d.add_argument("--goal", help="for run: instructions")
+    d.add_argument("--minutes", type=int, help="for run: running time, 0 for no time limit")
+    d.add_argument("--stop-session", type=int, help="for run: stop at this percent of the session limit")
+    d.add_argument("--stop-weekly", type=int, help="for run: stop at this percent of the weekly limit")
+    d.add_argument("--on-limit", choices=["stop", "resume"], default="stop", help="for run: end, or wait and continue after the reset")
+    d.add_argument("--workers", type=int, help="for run: parallel agents, 1 to 7")
     d.add_argument("--dry-run", action="store_true")
     d.add_argument("--once", action="store_true")
     d.add_argument("--interval", type=int, default=60)
@@ -1873,11 +2208,11 @@ button.btn{border:1px solid var(--line);background:var(--panel);color:var(--text
 .meter{margin:10px 0}.meter header{display:flex;justify-content:space-between;gap:8px;font-size:13px}.meter small{color:var(--muted)}.bar{position:relative;height:8px;margin-top:5px;border-radius:5px;background:var(--line)}.bar i{display:block;height:100%;border-radius:5px;background:var(--accent)}.bar i.high{background:var(--bad)}.bar u{position:absolute;top:-3px;width:2px;height:14px;background:var(--text)}
 .row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px solid var(--line)}.row:first-of-type{border-top:0}.row>div{min-width:0}.row small{display:block;color:var(--muted)}.pill{flex:none;padding:2px 9px;border-radius:99px;background:var(--soft);color:var(--accent);font-size:12px;font-weight:700}.pill.good{background:var(--goodbg);color:var(--good)}.pill.warn{background:var(--warnbg);color:var(--warn)}
 .log{max-height:240px;overflow:auto;font:12px/1.6 ui-monospace,Menlo,monospace;white-space:pre-wrap;overflow-wrap:anywhere}.log span{color:var(--muted);margin-right:8px}.empty{color:var(--muted);padding:6px 0}
-label.f{display:grid;gap:4px;margin-bottom:12px;font-weight:650;font-size:13px}label.f small{font-weight:400;color:var(--muted)}input[type=text],input[type=password],input[type=number],select{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--text);font:inherit}input[type=range]{width:100%;accent-color:var(--accent)}.check{display:flex;gap:8px;align-items:center;padding:4px 0;font-weight:500}.err{padding:9px 11px;border-radius:8px;background:var(--badbg);color:var(--bad);margin-bottom:12px;overflow-wrap:anywhere}.note{padding:9px 11px;border-radius:8px;background:var(--soft);font-size:13px;margin:10px 0}.code{font:700 20px ui-monospace,Menlo,monospace;letter-spacing:.06em}.steps{display:grid;gap:6px;margin:0 0 12px;padding:0;list-style:none}.steps li{display:flex;gap:8px;align-items:center}.steps i{width:20px;height:20px;border-radius:50%;display:grid;place-items:center;background:var(--line);font-style:normal;font-size:11px;font-weight:800}.steps li.ok i{background:var(--good);color:#fff}
+label.f{display:grid;gap:4px;margin-bottom:12px;font-weight:650;font-size:13px}label.f small{font-weight:400;color:var(--muted)}input[type=text],input[type=password],input[type=number],select{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--text);font:inherit}input[type=range]{width:100%;accent-color:var(--accent)}.check{display:flex;gap:8px;align-items:center;padding:4px 0;font-weight:500}.run-form h3{font-size:13px;margin:0 0 8px}.run-form textarea{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--text);font:inherit;resize:vertical}.run-btn{width:100%;padding:12px;font-size:15px}.pill.bad{background:var(--badbg);color:var(--bad)}.err{padding:9px 11px;border-radius:8px;background:var(--badbg);color:var(--bad);margin-bottom:12px;overflow-wrap:anywhere}.note{padding:9px 11px;border-radius:8px;background:var(--soft);font-size:13px;margin:10px 0}.code{font:700 20px ui-monospace,Menlo,monospace;letter-spacing:.06em}.steps{display:grid;gap:6px;margin:0 0 12px;padding:0;list-style:none}.steps li{display:flex;gap:8px;align-items:center}.steps i{width:20px;height:20px;border-radius:50%;display:grid;place-items:center;background:var(--line);font-style:normal;font-size:11px;font-weight:800}.steps li.ok i{background:var(--good);color:#fff}
 @media(max-width:680px){.app{display:block}nav{flex-direction:row;overflow-x:auto;padding:8px}.brand{display:none}nav button{flex:none}main{padding:16px}.grid{grid-template-columns:minmax(0,1fr)}.hero{flex-wrap:wrap}.hero .btn{width:100%}}
-</style></head><body><div class="app"><nav aria-label="Sections"><div class="brand">Open Questions AI</div><button data-v="home">Home</button><button data-v="limits">Usage limits</button><button data-v="danus">Danus</button><button data-v="account">Accounts</button></nav><main id="m">Loading…</main></div>
+</style></head><body><div class="app"><nav aria-label="Sections"><div class="brand">Open Questions AI</div><button data-v="home">Home</button><button data-v="limits">Usage limits</button><button data-v="danus">Prove new facts</button><button data-v="account">Accounts</button></nav><main id="m">Loading…</main></div>
 <script>
-const T='__TOKEN__';let S=null,view='home',draft=null,msg='',paint=0;
+const T='__TOKEN__';let S=null,view='home',draft=null,msg='',paint=0,R=null,O={};
 const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const call=async(p,b={})=>{msg='';try{const r=await fetch(p,{method:'POST',headers:{'Content-Type':'application/json','X-OQ-Token':T},body:JSON.stringify(b)});const d=await r.json();if(!r.ok)msg=d.error||'Error';}catch{msg='The app is not responding.'}await load()};
 const load=async()=>{try{const r=await fetch('/api/state',{headers:{'X-OQ-Token':T}});S=await r.json();if(!draft)draft={...S.limits};render()}catch{document.getElementById('m').innerHTML='<div class=err>The app stopped. Close this window and open it again.</div>'}};
@@ -1894,13 +2229,23 @@ const usage=()=>{const l=S.limits,d=S.day;let h='<section class=panel><h2>Usage 
  h+=meter('Tasks',d.tasks,l.tasks_per_day,`${d.tasks} of ${l.tasks_per_day||'∞'}`)+meter('Computing time',d.seconds/60,l.minutes_per_day,`${Math.round(d.seconds/60)} of ${l.minutes_per_day||'∞'} min`)+meter('Tokens',d.tokens,l.tokens_per_day,`${d.tokens.toLocaleString()} of ${l.tokens_per_day?l.tokens_per_day.toLocaleString():'∞'}`);return h+'</section>'};
 const home=()=>`<h1>Home</h1><p class=sub>Your computer helps your research projects, within the limits you set.</p>${hero()}<div class=grid>${usage()}<section class=panel><h2>Your projects</h2>${S.projects.map(p=>`<div class=row><div><b>${e(p.title)}</b><small>${p.review?p.review+' reference(s) to validate':'Nothing to validate'}</small></div><span class="pill ${p.waiting?'warn':'good'}">${p.waiting} waiting</span></div>`).join('')||'<div class=empty>No project yet.</div>'}</section></div><section class=panel style="margin-top:14px"><h2>Activity</h2><div class=log tabindex=0>${S.log.slice().reverse().map(x=>`<div><span>${e(x.at)}</span>${e(x.text)}</div>`).join('')||'<div class=empty>Nothing yet.</div>'}</div></section>`;
 const num=(k,l,h,min,max,unit)=>`<label class=f>${e(l)}<small>${e(h)}</small><input type=number data-l=${k} min=${min} max=${max} value="${e(draft[k])}"></label>`;
-const limits=()=>`<h1>Usage limits</h1><p class=sub>Keep your AI subscription for your own work. The client stops before crossing these limits.</p><div class=grid><section class=panel><h2>Share of your subscription</h2><label class=f>Stop at this share of the session limit: ${draft.max_session_percent}%<small>ChatGPT reports this directly.</small><input type=range min=5 max=100 step=5 data-l=max_session_percent value="${draft.max_session_percent}"></label><label class=f>Stop at this share of the weekly limit: ${draft.max_weekly_percent}%<input type=range min=5 max=100 step=5 data-l=max_weekly_percent value="${draft.max_weekly_percent}"></label><label class=f>Working hours<small>For example 22-7 for nights. Empty means all day.</small><input type=text data-l=hours value="${e(draft.hours)}" placeholder="All day"></label></section><section class=panel><h2>Daily caps</h2>${num('tasks_per_day','Tasks per day','0 means no cap.',0,1000)}${num('minutes_per_day','Computing minutes per day','0 means no cap.',0,1440)}${num('tokens_per_day','Tokens per day','0 means no cap.',0,10000000000)}${num('task_minutes','Maximum minutes per task','A longer task is stopped.',1,720)}</section></div><section class=panel style="margin-top:14px"><h2>What this computer may do</h2>${[['extract','Extract facts from new files'],['ask','Answer @AI questions'],['bib','Suggest references'],['derive','Derive new facts']].map(([k,l])=>`<label class=check><input type=checkbox data-k=${k} ${draft.kinds.includes(k)?'checked':''}> ${l}</label>`).join('')}<p><button class="btn primary" data-a=save>Save limits</button></p></section>`;
+const limits=()=>`<h1>Usage limits</h1><p class=sub>Keep your AI subscription for your own work. The client stops before crossing these limits.</p><div class=grid><section class=panel><h2>Share of your subscription</h2><label class=f>Stop at this share of the session limit: ${draft.max_session_percent}%<small>ChatGPT reports this directly.</small><input type=range min=5 max=100 step=5 data-l=max_session_percent value="${draft.max_session_percent}"></label><label class=f>Stop at this share of the weekly limit: ${draft.max_weekly_percent}%<input type=range min=5 max=100 step=5 data-l=max_weekly_percent value="${draft.max_weekly_percent}"></label><label class=f>Working hours<small>For example 22-7 for nights. Empty means all day.</small><input type=text data-l=hours value="${e(draft.hours)}" placeholder="All day"></label></section><section class=panel><h2>Daily caps</h2>${num('tasks_per_day','Tasks per day','0 means no cap.',0,1000)}${num('minutes_per_day','Computing minutes per day','0 means no cap.',0,1440)}${num('tokens_per_day','Tokens per day','0 means no cap.',0,10000000000)}${num('task_minutes','Maximum minutes per task','A longer task is stopped.',1,720)}</section></div><section class=panel style="margin-top:14px"><h2>What this computer may do</h2>${[['extract','Extract facts from new files'],['ask','Answer @AI questions'],['bib','Suggest references'],['derive','Prove new facts automatically, without pressing Start (uses more of your subscription)']].map(([k,l])=>`<label class=check><input type=checkbox data-k=${k} ${draft.kinds.includes(k)?'checked':''}> ${l}</label>`).join('')}<p><button class="btn primary" data-a=save>Save limits</button></p></section>`;
 const account=()=>{const t=n=>{const x=S.tools[n],j=S.jobs['install-'+n]?.running,g=S.jobs['login-'+n]?.running;return`<div class=row><div><b>${toolName(n)}</b><small>${x.installed?(x.signed_in?'Installed and signed in':'Installed, sign-in needed'):'Not installed'}</small></div>${!x.installed?`<button class=btn data-tool=install data-n=${n} ${j?'disabled':''}>${j?'Installing…':'Install'}</button>`:!x.signed_in?`<button class="btn primary" data-tool=login data-n=${n} ${g?'disabled':''}>${g?'Check your browser…':'Sign in'}</button>`:`<button class=btn data-use=${n} ${S.provider===n?'disabled':''}>${S.provider===n?'In use':'Use this'}</button>`}</div>`};
  return`<h1>Accounts</h1><p class=sub>The app uses your own AI account, on this computer.</p><section class=panel><h2>1. Choose your AI</h2>${t('claude')}${t('codex')}</section><section class=panel><h2>2. Connect to the platform</h2>${S.connected?`<div class=row><div><b>Connected</b><small>${e(S.url)}</small></div><button class="btn danger" data-a=disconnect>Disconnect</button></div>`:`<label class=f>Platform address<input type=text id=url value="${e(S.url||'https://projects.ludovicpatey.com')}"></label><label class=f>Personal key<small>Create it on your profile page on the platform.</small><input type=password id=key autocomplete=off placeholder="ouk_…"></label><button class="btn primary" data-a=connect>Connect</button>`}</section><section class=panel><h2>3. How AI use is paid</h2><label class=check><input type=radio name=billing data-billing=subscription ${S.limits.ai_billing==='subscription'?'checked':''}> <span><b>My subscription only</b> (recommended). API keys on this computer are ignored.</span></label><label class=check><input type=radio name=billing data-billing=api ${S.limits.ai_billing==='api'?'checked':''}> <span><b>Allow a paid API key.</b> The provider charges each use.</span></label><div class=note>If you turned on <b>usage credits</b> in your Claude settings, background work can spend them after your plan limit. Keep them off, or set a monthly cap.</div></section>`};
-const danus=()=>{const d=S.danus,j=S.jobs.danus?.running,on=S.limits.danus_enabled;return`<h1>Danus</h1><p class=sub>A team of AI agents that searches for new proofs. The app installs and runs it for you.</p><section class=panel>${d.error?`<div class=err>${e(d.error)}</div>`:''}${d.login?`<div class=note><b>Sign in to ChatGPT for Danus</b><br>Open <a href="${e(d.login.url)}" target=_blank rel="noopener noreferrer">${e(d.login.url)}</a> and enter:<div class=code>${e(d.login.code)}</div></div>`:''}${d.ready?`<div class=row><div><b>Danus is ready</b><small>Runs in an isolated ${e(d.backend||'machine')}. "Derive new facts" requests use it.</small></div><span class="pill good">Ready</span></div>`:d.unavailable?`<div class=note>${e(d.unavailable)}</div>`:j?`<div class=row><div><b>${e(d.step||'Installing')}</b><small>You can keep using your computer.</small></div><span class=pill>In progress</span></div>`:`<p>The first installation downloads about 2 GB and takes several minutes. Danus never sees your files: it runs in a separate machine.</p><button class="btn primary" data-a=danus>Install Danus</button>`}</section>${d.ready?`<section class=panel><h2>Limits for Danus</h2><div class=note>Danus is the heaviest use of your subscription. Your usage limits are checked every minute while it runs.</div>${num('danus_workers','Parallel agents','Each one uses your subscription at the same time.',1,7)}${num('danus_minutes','Maximum minutes per request','Danus stops after this time.',5,1440)}<label class=check><input type=checkbox data-danus ${on?'checked':''}> Use Danus for "Derive new facts"</label><p><button class="btn primary" data-a=save>Save</button> <button class="btn danger" data-a=danusremove ${j?'disabled':''}>Remove Danus</button></p></section>`:''}`};
-const render=()=>{const a=document.activeElement;if(a&&['INPUT','SELECT'].includes(a.tagName)&&view!=='home')return;for(const b of document.querySelectorAll('nav button')){b.classList.toggle('on',b.dataset.v===view);b.setAttribute('aria-current',b.dataset.v===view?'page':'false')}const m=document.getElementById('m');const sc=m.querySelector('.log')?.scrollTop;m.innerHTML=(msg?`<div class=err role=alert>${e(msg)}</div>`:'')+{home,limits,danus,account}[view]();if(sc)m.querySelector('.log').scrollTop=sc};
-document.addEventListener('click',ev=>{const b=ev.target.closest('button');if(!b)return;if(b.dataset.v){view=b.dataset.v;msg='';draft={...S.limits};return render()}if(b.dataset.go){view=b.dataset.go;return render()}if(b.dataset.tool)return call('/api/tool/'+b.dataset.tool,{tool:b.dataset.n});if(b.dataset.use)return call('/api/limits',{}).then(()=>call('/api/start',{provider:b.dataset.use}));const x=b.dataset.a;if(x==='start')call('/api/start',{provider:S.provider});if(x==='stop')call('/api/stop');if(x==='disconnect'&&confirm('Disconnect this computer?'))call('/api/disconnect');if(x==='connect')call('/api/connect',{url:document.getElementById('url').value,key:document.getElementById('key').value});if(x==='save'){const{paused,...rest}=draft;document.activeElement?.blur();call('/api/limits',rest).then(()=>{if(!msg)draft={...S.limits}})}if(x==='danus')call('/api/danus/setup');if(x==='danusremove'&&confirm('Remove Danus and its isolated machine?'))call('/api/danus/remove')});
-document.addEventListener('input',ev=>{const t=ev.target;if(t.dataset.l){draft[t.dataset.l]=t.type==='text'?t.value:+t.value;if(t.type==='range'){t.closest('label').firstChild.textContent=t.closest('label').firstChild.textContent.replace(/\d+%/,t.value+'%')}}if(t.dataset.k){draft.kinds=['extract','ask','bib','derive'].filter(k=>k===t.dataset.k?t.checked:draft.kinds.includes(k))}if('danus'in t.dataset)draft.danus_enabled=t.checked});
+const fmtMin=m=>{m=Math.round(m);return m>=60?`${Math.floor(m/60)} h ${String(m%60).padStart(2,'0')}`:`${m} min`};
+const runLabels={starting:['Starting','warn'],running:['Running','good'],waiting:['Waiting for the reset','warn'],stopping:['Stopping','warn'],stopped:['Finished',''],failed:['Failed','bad'],cancelled:['Cancelled',''],interrupted:['Interrupted','warn']};
+const runStatus=r=>{if(!r.status||r.status==='idle')return'';const l=runLabels[r.status]||[r.status,''];const active=r.active;let h=`<section class="panel hero ${r.status==='running'?'on':active?'hold':''}"><span class=dot></span><div><b>Proof search: ${e(l[0])}</b><span>${r.status==='waiting'?e(r.wait_reason||'')+(r.retry_at?' · continues around '+e(when(r.retry_at)):''):active?'Your limits are checked continuously.':r.stop_reason?'Stopped at '+e(r.stop_reason)+'.':''}</span></div>${active?`<button class="btn danger" data-a=danusstop ${r.status==='stopping'?'disabled':''}>${r.status==='stopping'?'Stopping…':'Stop now'}</button>`:''}</section>`;
+ if(active){const sec=r.active_seconds||0;h+='<section class=panel><h2>This run</h2>'+(r.minutes?meter('Running time',sec/60,r.minutes,`${fmtMin(sec/60)} of ${fmtMin(r.minutes)}`):meter('Running time',0,0,`${fmtMin(sec/60)}, no time limit`));for(const w of S.windows||[]){const cap=w.name==='weekly'?Math.min(r.stop_weekly,S.limits.max_weekly_percent):Math.min(r.stop_session,S.limits.max_session_percent);h+=meter(`${w.name==='weekly'?'Weekly':'Session'} usage`,w.used,100,`${w.used}%, stops at ${cap}%`+(w.resets_at?' · resets '+when(w.resets_at):''),cap)}h+=`<div class=row><div><b>New facts</b><small>${r.on_limit==='resume'?'Continues automatically after each reset':'Ends at the first limit'}</small></div><span class="pill good">${r.fact_count}</span></div></section>`}
+ else if(r.status&&r.status!=='idle')h+=`<section class=panel><div class=row><div><b>Last run</b><small>${fmtMin((r.active_seconds||0)/60)} of computing</small></div><span class="pill good">${r.fact_count} new fact(s)</span></div></section>`;return h};
+const runForm=()=>{const l=S.limits;if(!R||!S.projects.some(p=>p.id===R.project_id)){R={project_id:S.projects[0]?.id||0,goal:'',prompt:R?.prompt||'',minutes:120,stop_session:Math.min(40,l.max_session_percent),stop_weekly:Math.min(50,l.max_weekly_percent),on_limit:'stop',workers:l.danus_workers};options()}
+ if(!S.projects.length)return'<section class=panel><div class=empty>Join a project on the platform first.</div></section>';
+ const o=O[R.project_id]||{questions:[],requests:[]};const time=R.minutes?fmtMin(R.minutes):'no time limit';return`<section class="panel run-form"><h2>New proof search</h2><div class=grid><div><label class=f>Project<select data-r=project_id>${S.projects.map(p=>`<option value=${p.id} ${p.id===R.project_id?'selected':''}>${e(p.title)}</option>`).join('')}</select></label><label class=f>Goal<select data-r=goal><option value="">The whole project</option>${o.requests.length?`<optgroup label="Waiting requests">${o.requests.map(x=>`<option value="t${x.id}" ${R.goal==='t'+x.id?'selected':''}>${e(x.label)}</option>`).join('')}</optgroup>`:''}${o.questions.length?`<optgroup label="Questions">${o.questions.map(x=>`<option value="q${x.id}" ${R.goal==='q'+x.id?'selected':''}>${e(x.title)}</option>`).join('')}</optgroup>`:''}</select></label><label class=f>Instructions (optional)<textarea data-r=prompt rows=3 maxlength=4000 placeholder="For example: focus on the case k = 3">${e(R.prompt)}</textarea></label><label class=f><span>Parallel agents: <span id=rw>${R.workers}</span></span><small>More agents use your subscription faster.</small><input type=range min=1 max=7 data-r=workers value="${R.workers}"></label></div><div><h3>Stop when</h3><label class=f>Running time (minutes)<small>Time spent waiting does not count. 0 means no time limit.</small><input type=number min=0 max=43200 step=15 data-r=minutes value="${R.minutes}"></label><label class=f><span>Session usage reaches <span id=rs>${R.stop_session}</span>%</span><small>Your general limit is ${l.max_session_percent}%.</small><input type=range min=5 max=${l.max_session_percent} step=5 data-r=stop_session value="${R.stop_session}"></label><label class=f><span>Weekly usage reaches <span id=rk>${R.stop_weekly}</span>%</span><small>Your general limit is ${l.max_weekly_percent}%.</small><input type=range min=5 max=${l.max_weekly_percent} step=5 data-r=stop_weekly value="${R.stop_weekly}"></label><h3>When a usage limit is reached</h3><label class=check><input type=radio name=onlimit data-r=on_limit value=stop ${R.on_limit==='stop'?'checked':''}> <span><b>End the run</b></span></label><label class=check><input type=radio name=onlimit data-r=on_limit value=resume ${R.on_limit==='resume'?'checked':''}> <span><b>Wait, and continue after the reset</b></span></label></div></div><div class=note id=runsum>${runSummary(time)}</div><button class="btn primary run-btn" data-a=danusrun>▶ Start proving</button></section>`};
+const runSummary=t=>`Runs for <b>${t}</b>, and stops at <b>${R.stop_session}%</b> of the session or <b>${R.stop_weekly}%</b> of the week. ${R.on_limit==='resume'?(R.minutes?'It waits for each reset, then continues until the time is used.':'<b>It continues after every reset until you stop it.</b>'):'It ends at the first limit.'}`;
+const options=async()=>{const id=R?.project_id;if(!id||O[id])return;try{const r=await fetch('/api/danus/options',{method:'POST',headers:{'Content-Type':'application/json','X-OQ-Token':T},body:JSON.stringify({project_id:id})});if(r.ok){O[id]=await r.json();if(view==='danus'){const a=document.activeElement;if(a?.dataset?.r!=='goal')render()}}}catch{}};
+const danus=()=>{const d=S.danus,j=S.jobs.danus?.running,r=S.danus_run||{};return`<h1>Prove new facts</h1><p class=sub>A team of AI agents searches for new proofs, using the open-source system Danus. It is the heaviest use of your subscription, so it runs only when you press Start.</p>${d.error?`<div class=err>${e(d.error)}</div>`:''}${d.login?`<section class=panel><div class=note><b>Sign in to ChatGPT to start proving</b><br>Open <a href="${e(d.login.url)}" target=_blank rel="noopener noreferrer">${e(d.login.url)}</a> and enter:<div class=code>${e(d.login.code)}</div></div></section>`:''}${d.ready?runStatus(r)+(r.active?'':runForm())+`<section class=panel><div class=row><div><b>Installed</b><small>Runs in an isolated ${e(d.backend||'machine')}.</small></div><button class="btn danger" data-a=danusremove ${j||r.active?'disabled':''}>Remove the prover</button></div></section>`:`<section class=panel>${d.unavailable?`<div class=note>${e(d.unavailable)}</div>`:j?`<div class=row><div><b>${e(d.step||'Installing')}</b><small>You can keep using your computer.</small></div><span class=pill>In progress</span></div>`:`<p>The first installation downloads about 2 GB and takes several minutes. The agents never see your files: they run in a separate machine.</p><button class="btn primary" data-a=danus>Set up proving</button>`}</section>`}`};
+const render=()=>{const a=document.activeElement;if(a&&['INPUT','SELECT','TEXTAREA'].includes(a.tagName)&&view!=='home')return;for(const b of document.querySelectorAll('nav button')){b.classList.toggle('on',b.dataset.v===view);b.setAttribute('aria-current',b.dataset.v===view?'page':'false')}const m=document.getElementById('m');const sc=m.querySelector('.log')?.scrollTop;m.innerHTML=(msg?`<div class=err role=alert>${e(msg)}</div>`:'')+{home,limits,danus,account}[view]();if(sc)m.querySelector('.log').scrollTop=sc};
+document.addEventListener('click',ev=>{const b=ev.target.closest('button');if(!b)return;if(b.dataset.v){view=b.dataset.v;msg='';draft={...S.limits};return render()}if(b.dataset.go){view=b.dataset.go;return render()}if(b.dataset.tool)return call('/api/tool/'+b.dataset.tool,{tool:b.dataset.n});if(b.dataset.use)return call('/api/limits',{}).then(()=>call('/api/start',{provider:b.dataset.use}));const x=b.dataset.a;if(x==='start')call('/api/start',{provider:S.provider});if(x==='stop')call('/api/stop');if(x==='disconnect'&&confirm('Disconnect this computer?'))call('/api/disconnect');if(x==='connect')call('/api/connect',{url:document.getElementById('url').value,key:document.getElementById('key').value});if(x==='save'){const{paused,...rest}=draft;document.activeElement?.blur();call('/api/limits',rest).then(()=>{if(!msg)draft={...S.limits}})}if(x==='danus')call('/api/danus/setup');if(x==='danusstop'&&confirm('Stop the proof search now? Its facts so far are kept.'))call('/api/danus/stop');if(x==='danusrun'){document.activeElement?.blur();const g=R.goal||'',b={project_id:R.project_id,prompt:R.prompt,minutes:R.minutes,stop_session:R.stop_session,stop_weekly:R.stop_weekly,on_limit:R.on_limit,workers:R.workers,task_id:g[0]==='t'?+g.slice(1):null,question_id:g[0]==='q'?+g.slice(1):null};if(R.on_limit==='resume'&&!R.minutes&&!confirm('This run continues after every reset until you stop it. Start it?'))return;call('/api/danus/run',b).then(()=>{if(!msg)O={}})}if(x==='danusremove'&&confirm('Remove the prover and its isolated machine?'))call('/api/danus/remove')});
+document.addEventListener('input',ev=>{const t=ev.target;if(t.dataset.l){draft[t.dataset.l]=t.type==='text'?t.value:+t.value;if(t.type==='range'){t.closest('label').firstChild.textContent=t.closest('label').firstChild.textContent.replace(/\d+%/,t.value+'%')}}if(t.dataset.k){draft.kinds=['extract','ask','bib','derive'].filter(k=>k===t.dataset.k?t.checked:draft.kinds.includes(k))}if('danus'in t.dataset)draft.danus_enabled=t.checked;if(t.dataset.r&&R){const k=t.dataset.r;R[k]=['goal','prompt','on_limit'].includes(k)?t.value:+t.value;if(k==='project_id'){R.goal='';t.blur();options();render()}const set=(i,v)=>{const x=document.getElementById(i);if(x)x.textContent=v};if(k==='workers')set('rw',t.value);if(k==='stop_session')set('rs',t.value);if(k==='stop_weekly')set('rk',t.value);const n=document.getElementById('runsum');if(n)n.innerHTML=runSummary(R.minutes?fmtMin(R.minutes):'no time limit')}});
 document.addEventListener('change',ev=>{const b=ev.target.dataset?.billing;if(!b)return;ev.target.blur();if(b==='api'&&!confirm('Allow a paid API key? The AI provider will charge each use to that key.'))return load();call('/api/limits',{ai_billing:b}).then(()=>{if(!msg)draft={...S.limits}})});
 load();setInterval(()=>{if(!document.hidden)load()},3000);
 </script></body></html>

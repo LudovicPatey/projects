@@ -16,6 +16,7 @@ import { TourGuide } from './tour.js';
 import { FeedbackDialog, FeedbackView, openFeedback } from './views/feedback.js';
 import { RefPreview } from './refs-client.js';
 import { AiView } from './views/ai.js';
+import { ArchitectureDiagram, ClientCard, ClientView } from './views/client.js';
 import { SectionActivity, SectionHome } from './dashboard.js';
 import { VIEW_HELP } from './help/content.js';
 import { ProjectsView, OverviewView, MembersView, ProfileView, NotificationsDrawer } from './views/misc.js';
@@ -102,6 +103,7 @@ const App = {
       </template>
       <a v-else class="rail-item" :class="{on: route.name === 'projects'}" href="#/projects" title="Projects" data-tour="nav-projects"><icon name="grid" :size="21"/><span>Projects</span></a>
       <div class="grow"></div>
+      <a class="rail-item" :class="{on: route.name === 'client'}" href="#/client" title="Download the AI client" data-tour="client"><icon name="download" :size="21"/><span>Client</span></a>
       <a class="rail-item" :class="{on: isHelp}" :href="helpHome" title="Help center" data-tour="help"><icon name="help" :size="21"/><span>Help</span></a>
       <a class="rail-item" :class="{on: route.name === 'feedback'}" href="#/feedback" title="Report a bug or request a feature" data-tour="feedback" @click.prevent="feedbackClick"><icon name="megaphone" :size="21"/><span>Feedback</span><b v-if="store.counters.feedback" class="badge">{{ store.counters.feedback }}</b></a>
       <button class="rail-item" :class="{on: showNotifs}" @click="showNotifs = !showNotifs" title="Notifications" data-tour="alerts">
@@ -119,6 +121,7 @@ const App = {
       <projects-view v-if="route.name === 'projects'"/>
       <profile-view v-else-if="route.name === 'profile'"/>
       <help-view v-else-if="route.name === 'help'" :pid="null" :query="route.query"/>
+      <client-view v-else-if="route.name === 'client'"/>
       <feedback-view v-else-if="route.name === 'feedback'" :id="route.id"/>
       <template v-else-if="route.name === 'project'">
         <div v-if="projectError" class="placeholder"><p>{{ projectError }}</p><a class="btn" href="#/projects">Back to projects</a></div>
@@ -168,6 +171,9 @@ app.component('bib-view', BibView);
 app.component('facts-view', FactsView);
 app.component('questions-view', QuestionsView);
 app.component('ai-view', AiView);
+app.component('client-view', ClientView);
+app.component('client-card', ClientCard);
+app.component('architecture-diagram', ArchitectureDiagram);
 app.component('landing-page', LandingPage);
 app.component('global-search', GlobalSearch);
 app.component('help-view', HelpView);

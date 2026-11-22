@@ -217,7 +217,7 @@ final class References
             case 'aitask':
                 foreach (Db::all("SELECT t.id, t.kind, t.status, t.summary_text, t.ai_model, t.updated_at, u.name AS who FROM ai_tasks t LEFT JOIN users u ON u.id = t.requested_by
                                   WHERE t.project_id = ? AND t.id IN $in AND (t.conversation_id IS NULL OR EXISTS (SELECT 1 FROM conversation_participants cp WHERE cp.conversation_id = t.conversation_id AND cp.user_id = ?))", array_merge([$pid], $p, [$uid])) as $r) {
-                    $name = ['extract' => 'Fact extraction', 'ask' => 'Question to AI', 'bib' => 'Reference search', 'derive' => 'Fact derivation'][$r['kind']] ?? 'AI task';
+                    $name = ['extract' => 'Fact extraction', 'ask' => 'Question to AI', 'bib' => 'Reference search', 'derive' => 'Proof search'][$r['kind']] ?? 'AI task';
                     $out[(int)$r['id']] = self::item($type, (int)$r['id'], "$name #{$r['id']}", $name, 'AI task', 'task_' . $r['status'], (string)$r['summary_text'], $r['who'], $r['ai_model'], $r['updated_at'], ['view' => 'ai', 'id' => (int)$r['id']]);
                 }
                 break;

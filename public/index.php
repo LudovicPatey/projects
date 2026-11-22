@@ -44,6 +44,8 @@ $routes = [
     ['GET',    '/api/agent/context',                      [AgentController::class, 'context']],
     // AI work queue, processed by the users' own AI clients
     ['GET',    '/api/client/oq.py',                       [AiTaskController::class, 'download'], false],
+    ['GET',    '/api/client/info',                        [AiTaskController::class, 'clientInfo'], false],
+    ['GET',    '/api/client/download',                    [AiTaskController::class, 'clientDownload'], false],
     ['GET',    '/api/projects/{id}/ai',                   [AiTaskController::class, 'overview']],
     ['POST',   '/api/projects/{id}/ai/tasks',             [AiTaskController::class, 'request']],
     ['POST',   '/api/projects/{id}/ai/suggestions',       [AiTaskController::class, 'suggest']],

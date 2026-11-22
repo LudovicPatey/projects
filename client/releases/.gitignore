@@ -1,0 +1,5 @@
+# Built installers stay out of Git until they have been tested.
+*.dmg
+*.exe
+*.AppImage
+*.sha256

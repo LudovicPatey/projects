@@ -186,6 +186,7 @@ for (const provider of ['claude', 'codex']) {
     await app.call(ann, 'POST', '/api/comments', { target_type: 'oquestion', target_id: q.id, body_text: '@AI thoughts?' });
     await app.call(ann, 'POST', `/api/projects/${pid}/ai/tasks`, { kind: 'derive', source_type: 'question', source_id: q.id });
     if (provider === 'claude') await app.call(ann, 'POST', `/api/projects/${pid}/ai/tasks`, { kind: 'bib' });
+    oq(['limits', '--only', 'extract,ask,bib,derive'], env);
     const run = oq(['run', '--once', '--provider', provider, '--project', String(pid), '--model', provider === 'codex' ? 'gpt-test' : ''], env);
     assert.equal(run.status, 0, run.stdout + run.stderr);
     assert.ok(!(run.stdout + run.stderr).includes(annKey.token), 'the key is never printed');
@@ -364,41 +365,173 @@ test('graphic interface: reachable only with its token, from this computer, and 
   } finally { py.kill(); }
 });
 
-test('managed Danus: installed in isolation, stopped by the limits, and its facts reach the project', async () => {
-  await drain(annKey); useFake('codex');
-  const bin = path.join(tmp, 'bin'); const log = path.join(tmp, 'vm.log');
-  const facts = path.join(tmp, 'vmdata/fact_graph/facts'); fs.mkdirSync(facts, { recursive: true });
-  fs.writeFileSync(path.join(facts, 'dddddddddddddddd.md'), '---\nfact_id: dddddddddddddddd\npredecessors: []\n---\n\n## statement\n\nFound by Danus.\n\n## proof\n\nVerified.\n');
+// A stand-in for the isolated machine: it records every command, and exposes a fact graph.
+function fakeMachine(name) {
+  const bin = path.join(tmp, 'bin'); const dir = path.join(tmp, `vm-${name}`); const log = path.join(dir, 'vm.log');
+  const facts = path.join(dir, 'data/fact_graph/facts'); fs.mkdirSync(facts, { recursive: true });
+  fs.writeFileSync(path.join(facts, `${(name + 'dddddddddddddddd').replace(/[^0-9a-f]/g, 'd').slice(0, 16)}.md`), `---\nfact_id: ${(name + 'dddddddddddddddd').replace(/[^0-9a-f]/g, 'd').slice(0, 16)}\npredecessors: []\n---\n\n## statement\n\nFound by Danus in ${name}.\n\n## proof\n\nVerified.\n`);
   fs.writeFileSync(path.join(bin, 'docker'), `#!/bin/bash
 echo "$*" >> "${log}"
-case "$1" in inspect) [ -f "${tmp}/vm.exists" ]; exit $?;; run) touch "${tmp}/vm.exists"; echo id; exit 0;; start|stop|rm) exit 0;; esac
+case "$1" in inspect) [ -f "${dir}/exists" ]; exit $?;; run) touch "${dir}/exists"; echo id; exit 0;; start|stop|rm) exit 0;; esac
 s="\${@: -1}"
 [ -p /dev/stdin ] && cat >/dev/null
-case "$s" in *"status"*"--json"*) echo '{"workers":[{"name":"w1"}]}';; *"tar -cf"*) tar -C "${tmp}/vmdata" -cf - fact_graph;; esac
+case "$s" in *"status"*"--json"*) echo '{"workers":[{"name":"w1"}]}';; *"tar -cf"*) COPYFILE_DISABLE=1 tar -C "${dir}/data" -cf - fact_graph;; esac
 exit 0
 `, { mode: 0o755 });
-  const env = limitEnv('danus', { OQ_DANUS_BACKEND: 'docker', OQ_DANUS_POLL: '1' });
+  return log;
+}
+// Codex with a usage level read from a file, so that a test can change it while Danus runs.
+function usageCodex(file) {
+  fs.writeFileSync(file, '5');
+  fs.writeFileSync(path.join(tmp, 'bin', 'codex'), `#!/usr/bin/env python3
+import json, sys
+a = sys.argv[1:]
+if a[:2] == ["login", "status"]: print("Logged in using ChatGPT"); sys.exit()
+if a[:1] == ["app-server"]:
+    for line in sys.stdin:
+        m = json.loads(line)
+        if m.get("id") == 1: print(json.dumps({"id": 1, "result": {}}), flush=True)
+        if m.get("id") == 2:
+            u = int(open("${file}").read())
+            print(json.dumps({"id": 2, "result": {"rateLimits": {"primary": {"usedPercent": u, "windowDurationMins": 300, "resetsAt": 4102444800}, "secondary": {"usedPercent": 1, "windowDurationMins": 10080}}}}), flush=True); sys.exit()
+`, { mode: 0o755 });
+}
+const danusEnv = (name) => limitEnv(`danus-${name}`, { OQ_DANUS_BACKEND: 'docker', OQ_DANUS_POLL: '1' });
+const procEnv = (env) => ({ PATH: `${path.join(tmp, 'bin')}:/usr/bin:/bin:/usr/local/bin`, HOME: tmp, FAKE_LOG: path.join(tmp, 'log'), ...env });
+const launch = (env, args) => new Promise((resolve) => {
+  const c = spawn('python3', [CLIENT, 'danus', 'run', '--project', String(pid), '--model', 'dm', ...args], { env: procEnv(env) });
+  let out = ''; c.stdout.on('data', (d) => { out += d; }); c.stderr.on('data', (d) => { out += d; });
+  launch.last = c; c.on('close', (code) => resolve({ code, out }));
+});
+const runState = (env) => JSON.parse(fs.readFileSync(path.join(env.OQ_CONFIG_DIR, 'danus_run.json')));
+const until = async (fn, ms = 15000) => { const end = Date.now() + ms; while (Date.now() < end) { if (await fn()) return true; await new Promise((r) => setTimeout(r, 100)); } return false; };
+
+test('Danus: installed in isolation, and never started by the ordinary client', async () => {
+  await drain(annKey); useFake('codex'); const log = fakeMachine('install');
+  const env = danusEnv('install');
   const s = oq(['danus', 'setup'], env);
   assert.equal(s.status, 0, s.stdout + s.stderr);
   const vm = fs.readFileSync(log, 'utf8');
   assert.match(vm, /run -d --name oq-danus/); assert.match(vm, /--cap-drop ALL/); assert.ok(!/ -v | --volume /.test(vm), 'no folder of the computer is mounted');
   assert.ok(!vm.includes(annKey.token), 'the platform key never enters the machine');
-  oq(['limits', '--danus-minutes', '5'], env);
-  const q = (await app.call(ann, 'POST', `/api/projects/${pid}/questions`, { title: 'For Danus' })).data;
-  const t = (await app.call(ann, 'POST', `/api/projects/${pid}/ai/tasks`, { kind: 'derive', source_type: 'question', source_id: q.id })).data;
-  // The usage crosses the limit while Danus runs: it is stopped at the next check.
-  const r = await new Promise((resolve) => {
-    const c = spawn('python3', [CLIENT, 'run', '--once', '--provider', 'codex', '--project', String(pid)], { env: { PATH: `${bin}:/usr/bin:/bin:/usr/local/bin`, HOME: tmp, FAKE_LOG: path.join(tmp, 'log'), ...env } });
-    let out = ''; c.stdout.on('data', (d) => { out += d; }); c.stderr.on('data', (d) => { out += d; });
-    setTimeout(() => oq(['limits', '--pause'], env), 1500);
-    c.on('close', (code) => resolve({ code, out }));
-  });
-  assert.equal(r.code, 0, r.out);
-  const done = await taskById(t.id);
-  assert.equal(done.status, 'done', done.error_text); assert.match(done.summary_text, /Paused by you/); assert.ok(done.result.fact_ids.length >= 1);
+  const t = (await app.call(ann, 'POST', `/api/projects/${pid}/ai/tasks`, { kind: 'derive', prompt_text: 'must wait for Run' })).data;
+  fs.writeFileSync(log, '');
+  assert.equal(oq(['run', '--once', '--provider', 'codex', '--project', String(pid)], env).status, 0);
+  assert.equal((await taskById(t.id)).status, 'pending', 'a derivation request waits for a person to press Run');
+  assert.ok(!/danus start/.test(fs.readFileSync(log, 'utf8')));
+  assert.equal(aiCalls(), 0);
+  await app.call(ann, 'POST', `/api/ai/tasks/${t.id}/cancel`, {});
+});
+
+test('Danus run: a person can stop it, and its facts are sent', async () => {
+  await drain(annKey); useFake('codex'); const log = fakeMachine('aaa1'); const env = danusEnv('time');
+  usageCodex(path.join(tmp, 'u-time')); fs.mkdirSync(env.OQ_CONFIG_DIR, { recursive: true }); fs.writeFileSync(path.join(env.OQ_CONFIG_DIR, 'danus.json'), '{"ready":true}');
+  const q = (await app.call(ann, 'POST', `/api/projects/${pid}/questions`, { title: 'Timed' })).data;
+  const started = launch(env, ['--question', String(q.id), '--minutes', '0', '--stop-session', '40', '--stop-weekly', '60', '--workers', '2', '--goal', 'try k=3']);
+  assert.ok(await until(() => { try { return runState(env).status === 'running'; } catch { return false; } }), 'it runs');
+  const st = runState(env);
+  assert.equal(st.stop_session, 40); assert.equal(st.workers, 2);
+  assert.match(fs.readFileSync(log, 'utf8'), /danus new oq\d+t\d+ --roles high:2/);
+  assert.match(fs.readFileSync(log, 'utf8'), /oq-heartbeat[\s\S]*danus stop .* --force/, 'a watchdog stops the workers if the client dies');
+  assert.equal(oq(['danus', 'stop'], env).status, 0);
+  const r = await started;
+  assert.equal(r.code, 0, r.out); assert.match(r.out, /stopped, 1 new fact/);
+  const done = await taskById(st.task_id);
+  assert.equal(done.status, 'done', done.error_text); assert.match(done.summary_text, /your request/); assert.equal(done.result.fact_ids.length, 1);
+  assert.ok((await app.call(ann, 'GET', `/api/questions/${q.id}`)).data.links.some((l) => l.target_type === 'fact'));
+  assert.ok((await app.call(ann, 'GET', `/api/projects/${pid}/facts`)).data.facts.some((f) => f.tool === 'danus' && f.id === done.result.fact_ids[0]));
+});
+
+test('Danus run: refuses to start above a limit, unless it may wait', async () => {
+  await drain(annKey); useFake('codex'); fakeMachine('bbb2'); const env = danusEnv('refuse');
+  const u = path.join(tmp, 'u-refuse'); usageCodex(u); fs.writeFileSync(u, '45'); fs.mkdirSync(env.OQ_CONFIG_DIR, { recursive: true }); fs.writeFileSync(path.join(env.OQ_CONFIG_DIR, 'danus.json'), '{"ready":true}');
+  const r = await launch(env, ['--minutes', '60', '--stop-session', '40']);
+  assert.equal(r.code, 2, r.out); assert.match(r.out, /cannot start now.*session usage at 45%/s);
+  assert.equal((await app.call(annKey, 'POST', `/api/projects/${pid}/ai/tasks`, { kind: 'bib' })).status, 403, 'a key can record only a Danus run');
+  for (const bad of [['--minutes', '-1'], ['--stop-session', '0'], ['--stop-weekly', '101'], ['--workers', '9']]) assert.equal((await launch(env, ['--on-limit', 'resume', ...bad])).code, 2, bad.join(' '));
+});
+
+test('Danus run: at a usage stop it ends, or waits and continues after the reset', async () => {
+  await drain(annKey); useFake('codex'); let log = fakeMachine('ccc3'); const env = danusEnv('stop');
+  const u = path.join(tmp, 'u-stop'); usageCodex(u); fs.mkdirSync(env.OQ_CONFIG_DIR, { recursive: true }); fs.writeFileSync(path.join(env.OQ_CONFIG_DIR, 'danus.json'), '{"ready":true}');
+  let started = launch(env, ['--minutes', '0', '--stop-session', '40']);
+  assert.ok(await until(() => { try { return runState(env).status === 'running'; } catch { return false; } }));
+  fs.writeFileSync(u, '41');
+  let r = await started;
+  assert.equal(r.code, 0, r.out); assert.match(r.out, /session usage at 41%/);
   assert.match(fs.readFileSync(log, 'utf8'), /danus stop oq\d+t\d+ --force/);
-  const list = (await app.call(ann, 'GET', `/api/projects/${pid}/facts`)).data.facts;
-  assert.ok(list.some((f) => f.external_id === 'dddddddddddddddd' && f.tool === 'danus'));
+
+  await drain(annKey); log = fakeMachine('ddd4'); const env2 = danusEnv('resume'); const u2 = path.join(tmp, 'u-resume'); usageCodex(u2);
+  fs.mkdirSync(env2.OQ_CONFIG_DIR, { recursive: true }); fs.writeFileSync(path.join(env2.OQ_CONFIG_DIR, 'danus.json'), '{"ready":true}');
+  started = launch(env2, ['--minutes', '0', '--stop-session', '40', '--on-limit', 'resume']);
+  assert.ok(await until(() => { try { return runState(env2).status === 'running'; } catch { return false; } }));
+  fs.writeFileSync(u2, '70');
+  assert.ok(await until(() => runState(env2).status === 'waiting', 40000), 'it waits at the limit');
+  const stops = () => (fs.readFileSync(log, 'utf8').match(/danus stop oq/g) || []).length;
+  assert.ok(stops() >= 1, 'its workers are stopped while it waits');
+  const starts = () => (fs.readFileSync(log, 'utf8').match(/bin\/danus start oq/g) || []).length;
+  assert.equal(starts(), 1);
+  fs.writeFileSync(u2, '3');
+  assert.ok(await until(() => runState(env2).status === 'running' && starts() === 2, 60000), 'it continues after the reset');
+  assert.equal((fs.readFileSync(log, 'utf8').match(/danus new oq/g) || []).length, 1, 'the same project continues');
+  assert.equal(oq(['danus', 'stop'], env2).status, 0);
+  r = await started; assert.equal(r.code, 0, r.out);
+});
+
+test('Danus run: a cancellation on the platform stops it', async () => {
+  await drain(annKey); useFake('codex'); const log = fakeMachine('eee5'); const env = danusEnv('cancel');
+  usageCodex(path.join(tmp, 'u-cancel')); fs.mkdirSync(env.OQ_CONFIG_DIR, { recursive: true }); fs.writeFileSync(path.join(env.OQ_CONFIG_DIR, 'danus.json'), '{"ready":true}');
+  const waiting2 = (await app.call(ann, 'POST', `/api/projects/${pid}/ai/tasks`, { kind: 'derive', prompt_text: 'from the web' })).data;
+  const started = launch(env, ['--task', String(waiting2.id), '--minutes', '0']);
+  assert.ok(await until(() => { try { return runState(env).status === 'running'; } catch { return false; } }));
+  assert.equal(runState(env).task_id, waiting2.id, 'it takes the chosen request');
+  assert.equal((await app.call(ann, 'POST', `/api/ai/tasks/${waiting2.id}/cancel`, {})).status, 200);
+  const r = await started;
+  assert.equal(r.code, 0, r.out); assert.match(r.out, /cancelled/); assert.match(fs.readFileSync(log, 'utf8'), /danus stop oq\d+t\d+ --force/);
+});
+
+test('Danus run: stops at its running time', async () => {
+  await drain(annKey); useFake('codex'); const log = fakeMachine('fff6'); const env = { ...danusEnv('duration'), OQ_DANUS_MINUTE: '2' };
+  usageCodex(path.join(tmp, 'u-duration')); fs.mkdirSync(env.OQ_CONFIG_DIR, { recursive: true }); fs.writeFileSync(path.join(env.OQ_CONFIG_DIR, 'danus.json'), '{"ready":true}');
+  const r = await launch(env, ['--minutes', '1']);
+  assert.equal(r.code, 0, r.out); assert.match(r.out, /the time limit of 1 minutes/);
+  assert.match(fs.readFileSync(log, 'utf8'), /danus stop oq\d+t\d+ --force/);
+});
+
+test('Danus safety: the watchdog in the machine stops workers when the client disappears', async () => {
+  useFake('codex'); const log = fakeMachine('aaa7'); const env = danusEnv('watchdog');
+  usageCodex(path.join(tmp, 'u-watch')); fs.mkdirSync(env.OQ_CONFIG_DIR, { recursive: true }); fs.writeFileSync(path.join(env.OQ_CONFIG_DIR, 'danus.json'), '{"ready":true}');
+  await drain(annKey);
+  const started = launch(env, ['--minutes', '0']);
+  assert.ok(await until(() => fs.existsSync(log) && fs.readFileSync(log, 'utf8').includes('nohup setsid')));
+  const line = fs.readFileSync(log, 'utf8').split('\n').find((l) => l.includes('nohup setsid'));
+  oq(['danus', 'stop'], env); await started;
+  const home = path.join(tmp, 'vmhome'); fs.mkdirSync(path.join(home, 'bin'), { recursive: true }); fs.mkdirSync(path.join(home, 'runtime'), { recursive: true });
+  const marker = path.join(home, 'stopped');
+  fs.writeFileSync(path.join(home, 'bin/danus'), `#!/bin/bash\necho "$*" > "${marker}"\n`, { mode: 0o755 });
+  const fakes = path.join(home, 'fakes'); fs.mkdirSync(fakes);
+  fs.writeFileSync(path.join(fakes, 'stat'), '#!/bin/bash\necho 1000\n', { mode: 0o755 });
+  fs.writeFileSync(path.join(fakes, 'setsid'), '#!/bin/bash\nexec "$@"\n', { mode: 0o755 }); // not available on macOS, present in the Linux machine
+  const script = line.slice(line.indexOf('bash -lc ') + 9).replaceAll('/opt/danus', home).replace('sleep 30', 'sleep 0.1');
+  assert.equal(spawnSync('bash', ['-c', script], { env: { PATH: `${fakes}:/usr/bin:/bin` }, timeout: 5000 }).status, 0);
+  assert.ok(await until(() => fs.existsSync(marker), 5000), 'the watchdog fired');
+  assert.match(fs.readFileSync(marker, 'utf8'), /^stop oq\d+t\d+ --force/);
+});
+
+test('Danus safety: after a crash, a run ends unless it was set to continue', async () => {
+  await drain(annKey); useFake('codex'); fakeMachine('bbb8'); const env = danusEnv('crash');
+  usageCodex(path.join(tmp, 'u-crash')); fs.mkdirSync(env.OQ_CONFIG_DIR, { recursive: true }); fs.writeFileSync(path.join(env.OQ_CONFIG_DIR, 'danus.json'), '{"ready":true}');
+  const started = launch(env, ['--minutes', '0']);
+  assert.ok(await until(() => { try { return runState(env).status === 'running'; } catch { return false; } }));
+  const id = runState(env).task_id; launch.last.kill('SIGKILL'); await started;
+  const state = runState(env); fs.writeFileSync(path.join(env.OQ_CONFIG_DIR, 'danus_run.json'), JSON.stringify({ ...state, updated_at: 1 }));
+  assert.match(oq(['danus', 'status'], env).stdout, /Run: interrupted/);
+  const py = spawn('python3', [CLIENT, 'app', '--no-open'], { env: procEnv(env) });
+  try {
+    await new Promise((res) => py.stdout.on('data', (d) => { if (String(d).includes('OQ_APP_URL')) res(); }));
+    assert.ok(await until(() => runState(env).status === 'stopped'), 'it is closed, not relaunched');
+    assert.equal((await taskById(id)).status, 'done');
+  } finally { py.kill(); }
 });
 
 test('a hostile archive from the machine cannot write outside its folder', () => {
@@ -414,6 +547,12 @@ try:
 except m.Stop: print('refused')`;
   const r = spawnSync('python3', ['-c', code, CLIENT, path.join(dir, 'in')], { encoding: 'utf8' });
   assert.match(r.stdout, /refused/, r.stderr); assert.ok(!fs.existsSync(path.join(dir, 'evil')));
+});
+
+test('installers: the public list is empty until one is published, and a missing file is refused', async () => {
+  const info = await (await fetch(`${base}/api/client/info`)).json();
+  assert.equal(info.installers.length, 0); assert.match(info.version, /^\d+\.\d+\.\d+$/);
+  for (const q of ['mac-arm64', '../../config/config.php', '']) assert.equal((await fetch(`${base}/api/client/download?system=${encodeURIComponent(q)}`)).status, 404);
 });
 
 test('the client is served, and deployed', async () => {

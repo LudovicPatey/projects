@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { test } from 'node:test';
 import { filterTasks, offersAskAi, requestBody, requestError, resultLinks, suggestionLink, taskActions, taskTitle } from '../public/assets/js/ai-model.js';
+import { clientCommand, detectSystem, downloadPlan, formatSize } from '../public/assets/js/client-download.js';
 import { ARTICLES } from '../public/assets/js/help/content.js';
 
 test('a request is validated before it is sent', () => {
@@ -58,4 +59,45 @@ test('the desktop shell keeps web content away from the computer', () => {
   const pkg = JSON.parse(fs.readFileSync('client/desktop/package.json', 'utf8'));
   assert.ok(pkg.build.extraResources.some((r) => r.to === 'engine'), 'the engine is bundled');
   assert.ok(!pkg.build.files.some((f) => /config|\.env/.test(f)));
+});
+
+test('the download page detects the system and never offers a missing installer', () => {
+  const mac = { userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', platform: 'MacIntel' };
+  assert.equal(detectSystem(mac), 'mac-arm64');
+  assert.equal(detectSystem({ ...mac, architecture: 'x86' }), 'mac-x64');
+  assert.equal(detectSystem({ ...mac, touchPoints: 5 }), 'phone', 'an iPad presents itself as a Mac');
+  assert.equal(detectSystem({ userAgent: 'Windows NT 10.0', platform: 'Win32' }), 'windows');
+  assert.equal(detectSystem({ userAgent: 'X11; Linux x86_64', platform: 'Linux x86_64' }), 'linux');
+  assert.equal(detectSystem({ userAgent: 'Linux; Android 14', platform: 'Linux armv8' }), 'phone');
+  assert.equal(detectSystem({}), 'unknown');
+  const none = downloadPlan('mac-arm64', { installers: [] });
+  assert.equal(none.installer, null); assert.equal(none.useScript, true);
+  const one = { system: 'mac-arm64', size: 2097152 };
+  const ready = downloadPlan('mac-arm64', { installers: [one] });
+  assert.equal(ready.installer, one); assert.equal(ready.useScript, false);
+  assert.deepEqual(downloadPlan('windows', { installers: [one] }).others, [one]);
+  assert.equal(downloadPlan('phone', { installers: [] }).useScript, false);
+  assert.match(clientCommand('windows', 'https://x.test'), /curl\.exe .*py oq\.py app/);
+  assert.match(clientCommand('linux', 'https://x.test'), /python3 oq\.py app$/);
+  assert.equal(formatSize(2097152), '2 MB');
+});
+
+test('the front page and dashboards present the client and the architecture', () => {
+  const landing = fs.readFileSync('public/assets/js/views/landing.js', 'utf8');
+  for (const t of ['Decentralized AI computing', 'never runs a model', '<architecture-diagram/>', 'Claude or ChatGPT']) assert.ok(landing.includes(t), t);
+  const shell = fs.readFileSync('public/assets/js/main.js', 'utf8'); const misc = fs.readFileSync('public/assets/js/views/misc.js', 'utf8');
+  assert.ok(shell.includes('href="#/client"')); assert.ok(misc.includes('<client-card/>'));
+  assert.ok(!fs.readFileSync('scripts/lib/deploy.mjs', 'utf8').match(/\.dmg|AppImage/), 'installers are not deployed yet');
+});
+
+test('the interface says Prove new facts, and explains Danus only where it helps', () => {
+  const client = fs.readFileSync('client/oq.py', 'utf8'); const ui = client.split("UI_HTML = r'''")[1];
+  assert.ok(ui.includes('<button data-v="danus">Prove new facts</button>'));
+  assert.ok(ui.includes('▶ Start proving'));
+  assert.equal((ui.match(/Danus/g) || []).length, 1, 'the client names Danus once, in its explanation');
+  assert.ok(ui.includes('using the open-source system Danus'));
+  const article = ARTICLES.find((a) => a.slug === 'danus');
+  assert.equal(article.title, 'Prove new facts');
+  assert.ok(JSON.stringify(article.blocks).includes('powered by [Danus]'));
+  assert.ok(!fs.readFileSync('public/assets/js/ai-model.js', 'utf8').includes('Danus'));
 });

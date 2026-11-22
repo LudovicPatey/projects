@@ -12,8 +12,9 @@ A new or changed feature is not finished until all of the following are part of 
 4. **References.** Every new kind of object must be citable in rich text: add it to `src/References.php` and `public/assets/js/references.js`, with a link that opens exactly that object and the correct visibility.
 5. **Interface.** A new page or panel must use the structured components (`panel`, `kpi`, `pill`, `StackBar`, work lists, `SectionHome`) rather than plain text, and work at phone width.
 6. **First-use tutorial.** A new menu area needs a step in `public/assets/js/help/tour-steps.js`. Update any step whose description has become wrong.
+7. **Front page.** Decide whether the feature changes what the public should know, and update `public/assets/js/views/landing.js` when it does: its text, sections, screenshots and architecture. Remove any claim that has become wrong, and do not advertise what is not available yet. A new menu area must be declared in `FRONT_PAGE_COVERAGE`.
 
-Tests catch a missing article or tour step, but not a stale explanation, so reread the affected text.
+Tests catch a missing article, tour step or front-page decision, but not a stale explanation, so reread the affected text, including the front page.
 
 ## Checks
 

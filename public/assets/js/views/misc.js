@@ -20,6 +20,7 @@ export const ProjectsView = {
         <p>{{ projects.length ? summary : 'Gather researchers and AI around an open problem.' }}</p></div>
       <button v-if="canCreate" class="btn primary" data-tour="new-project" @click="creating = true"><icon name="plus" :size="16"/> New project</button>
     </header>
+    <client-card/>
     <div v-if="projects.length" class="welcome-kpis">
       <div><b>{{ projects.length }}</b><span>{{ projects.length === 1 ? 'project' : 'projects' }}</span></div><div><b>{{ totals.questions }}</b><span>questions</span></div>
       <div><b>{{ totals.facts }}</b><span>facts</span></div><div><b>{{ totals.files }}</b><span>files</span></div><div :class="{hot: totals.unread}"><b>{{ totals.unread }}</b><span>unread</span></div>
@@ -92,6 +93,7 @@ export const OverviewView = {
         <rich-content v-else :html="p.question_html || '<p><em>No statement yet.</em></p>'" class="question"/>
         <div v-if="!editing" class="hero-actions">
           <a class="btn" :href="'api/projects/' + p.id + '/export'" download title="Download everything you can see in this project as a .zip" @click="preparing"><icon name="download" :size="15"/> Download project</a>
+          <a class="btn" href="#/client" title="Download the AI client for your computer"><icon name="sparkles" :size="15"/> Get the AI client</a>
           <template v-if="isOwner"><button class="btn" @click="startEdit"><icon name="edit" :size="15"/> Edit</button>
           <select :value="p.status" @change="setStatus($event.target.value)" aria-label="Project status"><option value="open">Open</option><option value="solved">Solved</option><option value="archived">Archived</option></select></template>
         </div>
@@ -345,7 +347,7 @@ Do not mark anything as verified on my behalf. Humans and other models review th
           <div v-if="!projects.length" class="d-empty">No project yet.</div></section>
         <section class="panel tip-panel"><header><h2><icon name="bot" :size="15"/> Working with AI</h2></header>
           <p class="muted small">Your AI client extracts facts from papers and discussions, and proposes answers. You stay in charge: humans endorse facts and ratify answers.</p>
-          <a class="btn sm" href="#/help?a=ai-setup"><icon name="help" :size="14"/> Install your AI client</a></section>
+          <a class="btn sm" href="#/client"><icon name="download" :size="14"/> Download the AI client</a></section>
       </div>
     </div>
     <modal v-if="newKey" :title="'API key: ' + newKey.name" wide @close="newKey = null">
