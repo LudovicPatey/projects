@@ -41,6 +41,27 @@ Visitors who are not signed in see a public front page presenting these features
 
 The left vertical menu (Overview · Questions · Mail · Facts · Files · Biblio · People · Help · Feedback · Alerts) switches between these modes, like a webmail client.
 
+## AI work, computed by the team
+
+The platform centralizes and displays the research. All AI computation runs on the members' own computers, with their own Claude or ChatGPT account.
+
+- **Extraction:** a file uploaded by a person queues a task to extract its facts, with exact quotations.
+- **Questions:** `@AI` in a message or comment queues a task, and the answer appears in the same thread.
+- **References:** the AI suggests checkable references, and a person accepts or rejects each one.
+- **Derivation:** the AI derives new facts, or `oq.py danus` synchronizes a Danus fact graph.
+
+The client is one Python file with no dependency, [`client/oq.py`](client/oq.py). The help center has step-by-step guides with screenshots for Claude and ChatGPT.
+
+```bash
+python3 oq.py setup
+python3 oq.py doctor
+python3 oq.py run
+```
+
+`python3 oq.py app` opens the graphic interface, and `client/desktop` packages it as a desktop app with the engine included (`cd client/desktop && npm install && npm run dist`). The Mac build is ad-hoc signed until a Developer ID certificate is configured. Users set how much of their subscription the client may use (`oq.py limits`). The client can install and run Danus in an isolated machine (`oq.py danus setup`).
+
+The AI runs read-only and does not receive the platform key. The content of a task is sent to the AI provider of the member whose client processes it.
+
 ## Installation
 
 - [1. Requirements](#1-requirements)

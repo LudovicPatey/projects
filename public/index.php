@@ -4,7 +4,7 @@ declare(strict_types=1);
 require __DIR__ . '/../src/bootstrap.php';
 
 use App\{Auth, Config, HttpError, Request, Response};
-use App\Controllers\{AgentController, AuthController, BibController, CommentController, ConversationController, DashboardController,
+use App\Controllers\{AgentController, AiTaskController, AuthController, BibController, CommentController, ConversationController, DashboardController,
     DocumentController, ExportController, FactController, FeedbackController, HelpController, KeyController, NotificationController, ProjectController, QuestionController, ReferenceController, SearchController};
 
 $routes = [
@@ -42,6 +42,20 @@ $routes = [
     ['POST',   '/api/projects/{id}/agents/{uid}/token',   [AgentController::class, 'rotate']],
     ['DELETE', '/api/projects/{id}/agents/{uid}',         [AgentController::class, 'remove']],
     ['GET',    '/api/agent/context',                      [AgentController::class, 'context']],
+    // AI work queue, processed by the users' own AI clients
+    ['GET',    '/api/client/oq.py',                       [AiTaskController::class, 'download'], false],
+    ['GET',    '/api/projects/{id}/ai',                   [AiTaskController::class, 'overview']],
+    ['POST',   '/api/projects/{id}/ai/tasks',             [AiTaskController::class, 'request']],
+    ['POST',   '/api/projects/{id}/ai/suggestions',       [AiTaskController::class, 'suggest']],
+    ['POST',   '/api/ai/tasks/claim',                     [AiTaskController::class, 'claim']],
+    ['POST',   '/api/ai/tasks/{id}/heartbeat',            [AiTaskController::class, 'heartbeat']],
+    ['POST',   '/api/ai/tasks/{id}/complete',             [AiTaskController::class, 'complete']],
+    ['POST',   '/api/ai/tasks/{id}/fail',                 [AiTaskController::class, 'fail']],
+    ['POST',   '/api/ai/tasks/{id}/release',              [AiTaskController::class, 'release']],
+    ['POST',   '/api/ai/tasks/{id}/cancel',               [AiTaskController::class, 'cancel']],
+    ['POST',   '/api/ai/tasks/{id}/retry',                [AiTaskController::class, 'retry']],
+    ['POST',   '/api/bib-suggestions/{id}/accept',        [AiTaskController::class, 'acceptSuggestion']],
+    ['POST',   '/api/bib-suggestions/{id}/reject',        [AiTaskController::class, 'rejectSuggestion']],
     // bibliography
     ['GET',    '/api/projects/{pid}/bib',                 [BibController::class, 'list']],
     ['POST',   '/api/projects/{pid}/bib',                 [BibController::class, 'create']],

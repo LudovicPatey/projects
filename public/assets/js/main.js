@@ -15,6 +15,7 @@ import { HelpView } from './views/help.js';
 import { TourGuide } from './tour.js';
 import { FeedbackDialog, FeedbackView, openFeedback } from './views/feedback.js';
 import { RefPreview } from './refs-client.js';
+import { AiView } from './views/ai.js';
 import { SectionActivity, SectionHome } from './dashboard.js';
 import { VIEW_HELP } from './help/content.js';
 import { ProjectsView, OverviewView, MembersView, ProfileView, NotificationsDrawer } from './views/misc.js';
@@ -33,6 +34,7 @@ const App = {
         { view: 'facts', icon: 'graph', label: 'Facts', badge: t.fact },
         { view: 'files', icon: 'files', label: 'Files', badge: t.document },
         { view: 'bib', icon: 'book', label: 'Biblio', badge: t.bib },
+        { view: 'ai', icon: 'sparkles', label: 'AI', badge: store.counters.ai_suggestions },
         { view: 'members', icon: 'users', label: 'People', badge: t.member },
       ];
     },
@@ -128,6 +130,7 @@ const App = {
           <facts-view v-else-if="route.view === 'facts'" :pid="route.pid" :id="route.id" :query="route.query"/>
           <files-view v-else-if="route.view === 'files'" :pid="route.pid" :id="route.id" :query="route.query"/>
           <bib-view v-else-if="route.view === 'bib'" :pid="route.pid" :id="route.id" :query="route.query"/>
+          <ai-view v-else-if="route.view === 'ai'" :key="route.pid" :pid="route.pid" :id="route.id" :query="route.query"/>
           <members-view v-else-if="route.view === 'members'" :query="route.query"/>
         </template>
         <div v-else class="placeholder">Loading project…</div>
@@ -164,6 +167,7 @@ app.component('files-view', FilesView);
 app.component('bib-view', BibView);
 app.component('facts-view', FactsView);
 app.component('questions-view', QuestionsView);
+app.component('ai-view', AiView);
 app.component('landing-page', LandingPage);
 app.component('global-search', GlobalSearch);
 app.component('help-view', HelpView);

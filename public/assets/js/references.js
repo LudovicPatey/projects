@@ -12,9 +12,11 @@ export const REF_TYPES = {
   document: { label: 'File', plural: 'Files', icon: 'files', aliases: ['file', 'files', 'doc', 'document'] },
   version: { label: 'File version', plural: 'File versions', icon: 'layers', aliases: ['version', 'v'] },
   bib: { label: 'Reference', plural: 'References', icon: 'book', aliases: ['bib', 'ref', 'cite', 'reference'] },
+  suggestion: { label: 'Suggested reference', plural: 'Suggested references', icon: 'lightbulb', aliases: ['suggestion', 'suggested'] },
   conversation: { label: 'Conversation', plural: 'Conversations', icon: 'mail', aliases: ['conv', 'conversation', 'mail'] },
   message: { label: 'Message', plural: 'Messages', icon: 'reply', aliases: ['msg', 'message', 'messages'] },
   comment: { label: 'Comment', plural: 'Comments', icon: 'comment', aliases: ['comment', 'comments'] },
+  aitask: { label: 'AI task', plural: 'AI tasks', icon: 'sparkles', aliases: ['task', 'tasks', 'aitask'] },
   user: { label: 'Person', plural: 'People', icon: 'user', aliases: ['user', 'person', 'people', 'who'] },
   project: { label: 'Project', plural: 'Project', icon: 'home', aliases: ['project'] },
 };
@@ -50,6 +52,7 @@ const STATUS = {
   proposed: ['Awaiting ratification', 'warn'], ratified: ['Ratified', 'good'], rejected: ['Rejected', 'bad'], revoked: ['Revoked', 'bad'], withdrawn: ['Withdrawn', 'off'],
   unchecked: ['Unchecked', 'neutral'], ai_checked: ['AI-checked', 'info'], human_checked: ['Human-checked', 'good'], double_checked: ['Human + AI checked', 'good'], disputed: ['Disputed', 'bad'], retracted: ['Retracted', 'off'],
   correct: ['Correct', 'good'], gap: ['Gap', 'warn'], incorrect: ['Incorrect', 'bad'], compiles: ['Reported compiling', 'good'], fails: ['Reported failing', 'bad'], incomplete: ['Contains sorry', 'warn'],
+  suggested: ['Awaiting validation', 'warn'], accepted: ['Accepted', 'good'], task_pending: ['Waiting for an AI client', 'neutral'], task_running: ['Running', 'info'], task_done: ['Done', 'good'], task_failed: ['Failed', 'bad'], task_cancelled: ['Cancelled', 'off'],
   human: ['Human', 'good'], ai: ['AI', 'info'], owner: ['Owner', 'info'], member: ['Member', 'neutral'], agent: ['AI agent', 'info'], solved_project: ['Solved', 'good'], archived: ['Archived', 'off'],
 };
 

@@ -5,6 +5,7 @@ import { REF_TYPES, parseRefQuery, sortRefs } from './references.js';
 import { hydrateChips, openChip, searchRefs } from './refs-client.js';
 import { escapeHtml, markTerms } from './util.js';
 import { mentionMatches, mentionQuery } from './questions-model.js';
+import { offersAskAi } from './ai-model.js';
 
 const Embed = Quill.import('blots/embed');
 
@@ -52,10 +53,10 @@ export const RichEditor = {
   template: `<div class="rte" :class="{compact}">
     <div ref="editor" :style="minHeight ? {minHeight: minHeight + 'px'} : null"></div>
     <div v-if="menu.open" class="mention-menu" :style="{top: menu.top + 'px', left: menu.left + 'px'}">
-      <template v-for="(it, i) in menu.items" :key="it.type + it.id"><div v-if="!i || menu.items[i - 1].type !== it.type" class="mi-group">{{ types[it.type].plural }}</div>
+      <template v-for="(it, i) in menu.items" :key="it.type + it.id"><div v-if="!i || menu.items[i - 1].type !== it.type" class="mi-group">{{ it.type === 'askai' ? 'AI' : types[it.type].plural }}</div>
       <div class="mi" :class="{active: i === menu.index}"
            @mousedown.prevent="pick(it)" @mouseenter="menu.index = i">
-        <icon :name="it.agent ? 'bot' : types[it.type].icon" :size="14"/><span class="mi-label"><math-text :text="it.label"/></span><small>{{ it.sub }}</small>
+        <icon :name="it.type === 'askai' ? 'sparkles' : it.agent ? 'bot' : types[it.type].icon" :size="14"/><span class="mi-label"><math-text :text="it.label"/></span><small>{{ it.sub }}</small>
       </div></template>
       <div v-if="!menu.items.length" class="mi empty">No match for “{{ menu.query }}”</div>
       <div class="mi-hint">Narrow with <code>fact:</code> <code>q:</code> <code>file:</code> <code>msg:</code> <code>lean:</code></div>
@@ -108,7 +109,7 @@ export const RichEditor = {
       if (query === null) return this.close();
       const parsed = parseRefQuery(query);
       const local = this.search(parsed.term).filter((x) => !parsed.type || x.type === parsed.type);
-      const items = mentionMatches(query, sortRefs(local));
+      const items = this.withAskAi(query, mentionMatches(query, sortRefs(local)));
       if (items === null) return this.close();
       this.menu.query = query;
       this.menu.start = sel.index - query.length - 1;
@@ -128,7 +129,7 @@ export const RichEditor = {
         const found = await searchRefs(parsed.term, parsed.type);
         if (!this.menu.open || this.menu.query !== query) return;
         const rows = found.filter((x) => x.state === 'ok').map((x) => ({ type: x.type, id: x.id, label: x.label, sub: x.type === 'user' ? x.subtitle : (x.subtitle || x.title), agent: x.status === 'agent' }));
-        const items = mentionMatches(query, sortRefs(rows));
+        const items = this.withAskAi(query, mentionMatches(query, sortRefs(rows)));
         if (items === null) return this.close();
         const current = this.menu.items[this.menu.index];
         this.menu.items = items;
@@ -156,10 +157,20 @@ export const RichEditor = {
           .map((b) => ({ type: 'bib', id: b.id, label: b.cite_key, sub: b.title })),
       ];
     },
+    withAskAi(query, items) {
+      if (items === null || !offersAskAi(query)) return items;
+      return [{ type: 'askai', id: 0, label: 'Ask AI', sub: 'Any member’s AI client answers here' }, ...items];
+    },
     pick(it) {
       const len = this.menu.query.length + 1;
       const at = this.menu.start;
       this.q.deleteText(at, len, 'user');
+      if (it.type === 'askai') {
+        this.q.insertText(at, '@AI ', 'user');
+        this.q.setSelection(at + 4, 0, 'user');
+        this.close();
+        return;
+      }
       this.q.insertEmbed(at, 'mention', { type: it.type, id: it.id, label: it.label }, 'user');
       this.q.insertText(at + 1, ' ', 'user');
       this.q.setSelection(at + 2, 0, 'user');

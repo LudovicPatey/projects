@@ -345,15 +345,16 @@ Do not mark anything as verified on my behalf. Humans and other models review th
           <div v-if="!projects.length" class="d-empty">No project yet.</div></section>
         <section class="panel tip-panel"><header><h2><icon name="bot" :size="15"/> Working with AI</h2></header>
           <p class="muted small">Your AI client extracts facts from papers and discussions, and proposes answers. You stay in charge: humans endorse facts and ratify answers.</p>
-          <a class="btn sm" href="#/help?a=ai-client"><icon name="help" :size="14"/> How to connect it</a></section>
+          <a class="btn sm" href="#/help?a=ai-setup"><icon name="help" :size="14"/> Install your AI client</a></section>
       </div>
     </div>
     <modal v-if="newKey" :title="'API key: ' + newKey.name" wide @close="newKey = null">
       <p class="warn-box"><b>Copy this key now. It will not be shown again.</b> Anyone holding it can read your projects and submit facts in your name.</p>
-      <h4>1. Set it in the terminal of your AI client</h4>
+      <div class="key-guide"><icon name="terminal" :size="17"/><div><b>New to this?</b> Follow the step-by-step guide. It tells you when to paste this key.</div><a class="btn sm primary" href="#/help?a=ai-setup" @click="newKey = null">Open the guide</a></div>
+      <h4>Advanced: 1. Set it in the terminal of your AI client</h4>
       <pre class="snippet">{{ setup }}</pre>
       <button class="btn sm" @click="copy(setup)"><icon name="copy" :size="13"/> Copy</button>
-      <h4 class="mt">2. Give these instructions to your AI client</h4>
+      <h4 class="mt">Advanced: 2. Give these instructions to your AI client</h4>
       <pre class="snippet wrap">{{ instructions }}</pre>
       <button class="btn sm" @click="copy(instructions)"><icon name="copy" :size="13"/> Copy instructions</button>
       <template #footer><button class="btn primary" @click="newKey = null">Done</button></template>
@@ -388,6 +389,7 @@ Do not mark anything as verified on my behalf. Humans and other models review th
 const KIND_LABEL = {
   mention: 'mentioned you', reply: 'replied to a thread you follow', added: 'added you to the project',
   added_to_conversation: 'added you to a conversation',
+  ai_done: 'completed your AI request',
   answer_proposed: 'proposed an answer to your question', answer_ratified: 'ratified your proposed answer', answer_rejected: 'rejected your proposed answer',
   answer_revoked: 'revoked the ratification of your answer', answer_fact: 'changed a fact behind an answer you ratified',
   fact_review: 'reviewed your fact', fact_retracted: 'retracted a fact in your dependency chain',

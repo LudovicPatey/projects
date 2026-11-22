@@ -157,7 +157,7 @@ final class BibController
         exit;
     }
 
-    private static function makeKey(array $f): string
+    public static function makeKey(array $f): string
     {
         $first = preg_split('/\s+and\s+/i', $f['author'] ?? 'anon')[0];
         $last = str_contains($first, ',') ? explode(',', $first)[0] : (preg_split('/\s+/', trim($first)) ?: ['anon'])[count(preg_split('/\s+/', trim($first)) ?: ['anon']) - 1];
@@ -170,7 +170,7 @@ final class BibController
         return strtolower(preg_replace('/[^A-Za-z0-9]/', '', $key)) ?: 'ref';
     }
 
-    private static function uniqueKey(int $pid, string $key): string
+    public static function uniqueKey(int $pid, string $key): string
     {
         $key = preg_replace('/[^\w:\-.+\/]/', '', $key) ?: 'ref';
         $base = $key; $i = 0;

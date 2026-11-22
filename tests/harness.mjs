@@ -13,7 +13,7 @@ const freePort = () => new Promise((resolve, reject) => {
 
 export async function startApp({ feedbackAdmins = [] } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oq-test-'));
-  for (const d of ['src', 'public', 'sql', 'bin']) fs.cpSync(d, path.join(dir, d), { recursive: true });
+  for (const d of ['src', 'public', 'sql', 'bin', 'client']) fs.cpSync(d, path.join(dir, d), { recursive: true });
   fs.mkdirSync(path.join(dir, 'config'));
   fs.mkdirSync(path.join(dir, 'storage'));
   const port = await freePort();
@@ -43,5 +43,5 @@ export async function startApp({ feedbackAdmins = [] } = {}) {
     return { status: r.status, data };
   };
   const stop = () => { server.kill(); fs.rmSync(dir, { recursive: true, force: true }); };
-  return { signIn, call, stop };
+  return { base, signIn, call, stop };
 }

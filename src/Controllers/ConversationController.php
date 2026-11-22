@@ -115,6 +115,7 @@ final class ConversationController
         Db::update('conversation_participants', ['last_read_at' => $now], 'conversation_id = :c AND user_id = :u', ['c' => $c['id'], 'u' => Auth::id()]);
         Notify::mentions((int)$c['project_id'], 'message', $mid, $body['mentions'], ['view' => 'conversations', 'id' => (int)$c['id']],
             $body['text'], Access::audience('conversation', (int)$c['id']));
+        AiTaskController::queueMention((int)$c['project_id'], 'message', $mid, $body['html'], (int)$c['id']);
         Response::json(['id' => $mid], 201);
     }
 

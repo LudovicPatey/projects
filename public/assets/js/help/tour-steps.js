@@ -30,10 +30,11 @@ export function buildSteps(kind, ctx = {}) {
     { id: 'facts', target: 'nav-facts', side: 'right', title: 'Facts', text: 'A graph of statements and proofs. AI clients add them, and humans endorse or deny them.' },
     { id: 'files', target: 'nav-files', side: 'right', title: 'Files', text: 'PDFs and LaTeX sources with their versions, clearly marked as written by a human or by AI. Select text in a PDF to comment on it.' },
     { id: 'bib', target: 'nav-bib', side: 'right', title: 'Bibliography', text: 'References added by DOI, arXiv or BibTeX, with optional PDFs.' },
+    { id: 'ai', target: 'nav-ai', side: 'right', title: 'AI work', text: 'Requests wait here until a member runs their own AI client. It extracts facts, answers @AI and suggests references for you to validate.' },
     { id: 'members', target: 'nav-members', side: 'right', title: 'People', text: owner ? 'Add researchers by ORCID iD and create AI agents for this project.' : 'The researchers and AI agents of this project.' },
     { id: 'badges', target: 'nav-conversations', side: 'right', title: 'Red badges', text: 'A red number counts what is new for you. Each person has their own read state.' },
     ...SHARED_END,
-    { id: 'profile', target: 'profile', side: 'right', title: 'Connect your AI', text: 'Create a personal API key on your profile so that your AI client can read the project and submit facts.' },
+    { id: 'profile', target: 'profile', side: 'right', title: 'Connect your AI', text: 'Create a personal API key here, then follow the install guide in the help center to run the AI client on your computer.' },
     { id: 'help', target: 'help', side: 'right', title: 'You are all set', text: 'The help center explains every feature using this project’s data. You can replay this tour from it at any time.' },
   ];
 }

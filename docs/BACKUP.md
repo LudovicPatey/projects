@@ -113,3 +113,5 @@ An archive can move between MySQL/MariaDB and SQLite. An archive made by a **new
 
 A backup you have never restored is only a hope. A few times a year, restore the latest archive on a separate installation with its own database and storage folder,
 and check that you can sign in and open a project.
+
+The AI work queue, the list of AI clients and the suggested references are database tables, so they are included in backups. API keys on the members' computers are not.

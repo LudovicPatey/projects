@@ -504,3 +504,78 @@ CREATE TABLE IF NOT EXISTS feedback_reports (
   FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL,
   FOREIGN KEY (responded_by) REFERENCES users(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- AI work queue: the platform stores requests and results, and each user's own AI client does the computing.
+CREATE TABLE IF NOT EXISTS ai_tasks (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  project_id INT UNSIGNED NOT NULL,
+  kind VARCHAR(10) NOT NULL,              -- extract, ask, bib, derive
+  status VARCHAR(10) NOT NULL DEFAULT 'pending',  -- pending, running, done, failed, cancelled
+  source_type VARCHAR(12) NULL,           -- document, message, comment, question, strategy, fact
+  source_id INT UNSIGNED NULL,
+  version_id INT UNSIGNED NULL,
+  conversation_id INT UNSIGNED NULL,      -- set when the task exposes a private conversation
+  prompt_text TEXT NULL,
+  requested_by INT UNSIGNED NULL,
+  dedupe_key VARCHAR(60) NULL,
+  attempts INT UNSIGNED NOT NULL DEFAULT 0,
+  not_before DATETIME NULL,
+  lease_hash CHAR(64) NULL,
+  lease_until DATETIME NULL,
+  claimed_by INT UNSIGNED NULL,
+  client_name VARCHAR(80) NULL,
+  ai_model VARCHAR(120) NULL,
+  ai_user_id INT UNSIGNED NULL,
+  ai_generation_ms INT UNSIGNED NULL,
+  summary_text TEXT NULL,
+  error_text TEXT NULL,
+  result_json TEXT NULL,
+  created_at DATETIME NOT NULL,
+  updated_at DATETIME NOT NULL,
+  finished_at DATETIME NULL,
+  UNIQUE KEY uq_ai_task_dedupe (project_id, dedupe_key),
+  KEY idx_ai_task_queue (status, kind, id),
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+  FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+  FOREIGN KEY (requested_by) REFERENCES users(id) ON DELETE SET NULL,
+  FOREIGN KEY (claimed_by) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS ai_clients (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  user_id INT UNSIGNED NOT NULL,
+  name VARCHAR(80) NOT NULL,
+  ai_model VARCHAR(120) NULL,
+  last_seen_at DATETIME NOT NULL,
+  UNIQUE KEY uq_ai_client (user_id, name),
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS bib_suggestions (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  project_id INT UNSIGNED NOT NULL,
+  task_id INT UNSIGNED NULL,
+  status VARCHAR(10) NOT NULL DEFAULT 'proposed',  -- proposed, accepted, rejected
+  title VARCHAR(500) NOT NULL,
+  authors VARCHAR(1000) NULL,
+  year VARCHAR(4) NULL,
+  venue VARCHAR(255) NULL,
+  doi VARCHAR(200) NULL,
+  arxiv VARCHAR(40) NULL,
+  url VARCHAR(500) NULL,
+  reason_text TEXT NOT NULL,
+  ai_model VARCHAR(120) NOT NULL,
+  ai_user_id INT UNSIGNED NULL,
+  ai_generation_ms INT UNSIGNED NULL,
+  bib_id INT UNSIGNED NULL,
+  decided_by INT UNSIGNED NULL,
+  decided_at DATETIME NULL,
+  decision_note VARCHAR(500) NULL,
+  created_at DATETIME NOT NULL,
+  KEY idx_bib_suggestion (project_id, status),
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+  FOREIGN KEY (task_id) REFERENCES ai_tasks(id) ON DELETE SET NULL,
+  FOREIGN KEY (bib_id) REFERENCES bib_entries(id) ON DELETE SET NULL,
+  FOREIGN KEY (ai_user_id) REFERENCES users(id) ON DELETE SET NULL,
+  FOREIGN KEY (decided_by) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

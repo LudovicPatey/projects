@@ -14,9 +14,9 @@ use App\Controllers\{FactController, SearchController};
 final class References
 {
     public const TYPES = ['user', 'project', 'question', 'strategy', 'revision', 'answer', 'fact', 'review', 'lean',
-        'document', 'version', 'bib', 'conversation', 'message', 'comment'];
+        'document', 'version', 'bib', 'suggestion', 'conversation', 'message', 'comment', 'aitask'];
     /** Their stored label is generic, and a reader without access cannot tell whether they exist. */
-    public const PRIVATE = ['conversation', 'message', 'comment'];
+    public const PRIVATE = ['conversation', 'message', 'comment', 'aitask'];
     private const COMMENT_TARGETS = ['oquestion' => 'question', 'strategy' => 'strategy', 'fact' => 'fact', 'document' => 'document', 'bib' => 'bib', 'conversation' => 'conversation'];
     private const MAX_RESOLVE = 200;
     private const PER_TYPE = 5;
@@ -110,6 +110,8 @@ final class References
             'document' => 'SELECT id FROM documents WHERE project_id = ? AND deleted_at IS NULL',
             'version' => 'SELECT v.id FROM document_versions v JOIN documents d ON d.id = v.document_id WHERE d.project_id = ? AND d.deleted_at IS NULL',
             'bib' => 'SELECT id FROM bib_entries WHERE project_id = ?',
+            'suggestion' => 'SELECT id FROM bib_suggestions WHERE project_id = ?',
+            'aitask' => 'SELECT id FROM ai_tasks WHERE project_id = ?',
             'conversation' => 'SELECT id FROM conversations WHERE project_id = ?',
             'message' => 'SELECT m.id FROM messages m JOIN conversations c ON c.id = m.conversation_id WHERE c.project_id = ?',
             'comment' => 'SELECT id FROM comments WHERE project_id = ?',
@@ -205,6 +207,18 @@ final class References
             case 'bib':
                 foreach ($q("SELECT id, cite_key, title, authors, year, venue, ai_model, updated_at FROM bib_entries WHERE project_id = ? AND id IN $in") as $r) {
                     $out[(int)$r['id']] = self::item($type, (int)$r['id'], $r['cite_key'], $r['title'], trim($r['authors'] . ($r['year'] ? " ({$r['year']})" : '')), null, (string)$r['venue'], null, $r['ai_model'], $r['updated_at'], ['view' => 'bib', 'id' => (int)$r['id']]);
+                }
+                break;
+            case 'suggestion':
+                foreach ($q("SELECT id, title, authors, year, status, reason_text, ai_model, created_at FROM bib_suggestions WHERE project_id = ? AND id IN $in") as $r) {
+                    $out[(int)$r['id']] = self::item($type, (int)$r['id'], $r['title'], $r['title'], trim((string)$r['authors'] . ($r['year'] ? " ({$r['year']})" : '')), $r['status'] === 'proposed' ? 'suggested' : $r['status'], (string)$r['reason_text'], null, $r['ai_model'], $r['created_at'], ['view' => 'ai', 'query' => ['suggestion' => (int)$r['id']]]);
+                }
+                break;
+            case 'aitask':
+                foreach (Db::all("SELECT t.id, t.kind, t.status, t.summary_text, t.ai_model, t.updated_at, u.name AS who FROM ai_tasks t LEFT JOIN users u ON u.id = t.requested_by
+                                  WHERE t.project_id = ? AND t.id IN $in AND (t.conversation_id IS NULL OR EXISTS (SELECT 1 FROM conversation_participants cp WHERE cp.conversation_id = t.conversation_id AND cp.user_id = ?))", array_merge([$pid], $p, [$uid])) as $r) {
+                    $name = ['extract' => 'Fact extraction', 'ask' => 'Question to AI', 'bib' => 'Reference search', 'derive' => 'Fact derivation'][$r['kind']] ?? 'AI task';
+                    $out[(int)$r['id']] = self::item($type, (int)$r['id'], "$name #{$r['id']}", $name, 'AI task', 'task_' . $r['status'], (string)$r['summary_text'], $r['who'], $r['ai_model'], $r['updated_at'], ['view' => 'ai', 'id' => (int)$r['id']]);
                 }
                 break;
             case 'conversation':

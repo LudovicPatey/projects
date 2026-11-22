@@ -86,6 +86,7 @@ final class CommentController
                 Notify::send($uid, $pid, 'reply', ['link' => $link, 'excerpt' => $body['text']]);
             }
         }
+        AiTaskController::queueMention($pid, 'comment', $id, $body['html'], $type === 'conversation' ? $tid : null);
         Response::json(['id' => $id], 201);
     }
 

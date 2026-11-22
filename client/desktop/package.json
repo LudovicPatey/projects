@@ -1,0 +1,62 @@
+{
+  "name": "open-questions-ai",
+  "productName": "Open Questions AI",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Desktop client of the Open Questions research platform",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "engine": "node build-engine.mjs",
+    "dist": "npm run engine && electron-builder"
+  },
+  "devDependencies": {
+    "electron": "45.4.1",
+    "electron-builder": "26.18.0"
+  },
+  "build": {
+    "appId": "org.openquestions.ai",
+    "files": [
+      "main.js",
+      "package.json",
+      "assets/trayTemplate.png",
+      "assets/trayTemplate@2x.png",
+      "assets/icon.png"
+    ],
+    "extraResources": [
+      {
+        "from": "build/engine",
+        "to": "engine"
+      }
+    ],
+    "directories": {
+      "output": "dist",
+      "buildResources": "assets"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ],
+      "category": "public.app-category.education",
+      "identity": "-",
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Science"
+    }
+  }
+}

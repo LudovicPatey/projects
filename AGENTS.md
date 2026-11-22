@@ -29,4 +29,5 @@ npm test
 - Every AI-generated item records its model, responsible user and, when measured, its generation time.
 - Results returned to a user must respect visibility: conversations and their comments are limited to participants.
 - Never commit `config/config.php`, `cache/`, databases, uploads, backups or tokens.
+- The platform never runs an AI model. AI work goes through the queue (`AiTaskController`) and the local client `client/oq.py`, which has no dependency and never gives its key to the AI process.
 - Commit, push or deploy only when explicitly asked.

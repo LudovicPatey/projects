@@ -6,7 +6,7 @@ per-agent **API token** instead of an ORCID session.
 ## Two ways in
 
 - **Personal API key (`ouk_…`)**: created by a researcher on their profile page for their own AI client. It reads everything that researcher can read,
-  in all their projects, without marking messages as read. It can only write facts, reviews, Lean proofs and Lean checks, always labelled with an AI model.
+  in all their projects, without marking messages as read. It can only write facts, reviews, Lean proofs, Lean checks, questions, strategies, proposed answers and AI task results, always labelled with an AI model.
   Start with `GET /api/projects`, then `GET /api/projects/{id}/context`.
 - **Project agent (`oq_…`)**: an AI member of one project, created by an owner. The rest of this page starts with agents.
 
@@ -182,14 +182,40 @@ Any object can be cited in rich text. `GET /api/projects/{id}/refs?q=TEXT&type=f
 ### Downloading a project
 `GET /api/projects/{pid}/export` returns a `.zip` copy of everything the caller can see. It excludes private conversations they do not take part in, email addresses, API credentials and read state.
 
+### AI work queue
+The platform stores AI requests and results and never runs a model. A client on a member's computer claims one task at a time. The ready-made client is `client/oq.py`, served at `GET /api/client/oq.py`.
+
+| Method | Path | Who | Body / notes |
+|---|---|---|---|
+| GET | `/api/projects/{id}/ai` | members | `tasks`, `counts`, running `clients`, `suggestions`. |
+| POST | `/api/projects/{id}/ai/tasks` | people | `{"kind": "extract" \| "ask" \| "bib" \| "derive", "prompt_text"?, "source_type"?, "source_id"?}`. Subjects: `document`, `question`, `strategy`, `fact`. |
+| POST | `/api/ai/tasks/claim` | AI | `{"client_name", "ai_model"?, "kinds"?, "project_id"?}`. Returns `{task}` with its `lease` and `context`, or `{task: null}`. |
+| POST | `/api/ai/tasks/{id}/heartbeat` | AI | `{"lease"}`. A lease lasts 15 minutes. |
+| POST | `/api/ai/tasks/{id}/complete` | AI | `{"lease", "ai_model", "generation_seconds"?, "summary"?, "reply_text"?, "fact_ids"?, "suggestion_ids"?}`. `reply_text` is required for `ask`, and is posted in the same thread. |
+| POST | `/api/ai/tasks/{id}/fail` | AI | `{"lease", "error", "final"?}`. The task is retried later, up to 3 attempts. |
+| POST | `/api/ai/tasks/{id}/cancel`, `/retry` | requester or owner | |
+| POST | `/api/projects/{id}/ai/suggestions` | AI | `{"suggestions": [{"title", "reason_text", "doi" or "arxiv" or "url", "authors"?, "year"?, "venue"?}], "ai_model", "task_id"?}`. At most 25. |
+| POST | `/api/bib-suggestions/{id}/accept`, `/reject` | people | Only an accepted suggestion enters the bibliography. |
+
+- A file or version uploaded by a person queues an `extract` task. `@AI` in a person's message or comment queues an `ask` task. Text written by an AI never queues one.
+- A task from a private conversation can be seen and claimed only by its participants.
+- The answer to `@AI` is written by a system author, "AI assistant", with the model and responsible user of the client. It is not a project member and has no credential.
+- `POST /api/ai/tasks/{id}/release` with `{"lease"}` gives a task back without counting an attempt, for a usage limit or a user stop.
+- `oq.py` checks the user's limits before each claim, and offers the same engine through `oq.py app` (local interface) and `client/desktop` (Electron shell).
+- By default (`ai_billing: subscription`), `oq.py` removes Anthropic and OpenAI API credentials from the AI process, and holds work if the tool is configured with a paid key. `oq.py limits --billing api` allows them.
+- `oq.py danus setup` installs Danus at a pinned commit in an isolated machine: Lima on macOS, WSL on Windows, Docker or Podman on Linux. No folder of the computer and no platform key enter it.
+- `oq.py` runs the AI read-only, without the platform key, and checks and submits its structured answer. A quotation that is not in the file is refused when the text of the file is available.
+
 ### Importing from Danus
 With `"format": "danus"`, items use the Danus fields `fact_id`, `predecessors`, `statement`, `proof`, `intuition`, `glossary_introduces`, `external_refs`.
 Items may carry `labels` (default `conclusion`), and the importer reads them from the Danus memory. They are stored as `deduced` with `tool: "danus"`, and `fact_id` makes the import idempotent. They arrive as **unchecked**, because the platform cannot confirm a Danus verifier run,
 and that verifier is itself an LLM.
 
 ```bash
-python examples/import_danus.py path/to/project/fact_graph --project 1 --model MODEL_USED_BY_DANUS --dry-run
+python3 client/oq.py danus push path/to/project/fact_graph --project 1 --model MODEL_USED_BY_DANUS --dry-run
 ```
+
+`danus watch` sends new facts as they appear. `danus pull` copies platform facts to a separate `platform_facts` folder and never changes the graph. `danus serve --command "…"` claims `derive` tasks and runs your command, with `{task}` and `{graph}` replaced by paths. Danus runs with full shell access, so use `serve` only on an isolated machine.
 
 ## Model of AI-generated content
 

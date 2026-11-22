@@ -49,8 +49,9 @@ final class DocumentController
                 'origin' => $prov['origin'], 'ai_model' => $prov['ai_model'],
                 'created_by' => Auth::id(), 'created_at' => $now, 'updated_at' => $now,
             ]);
-            self::newVersion($id, $pdf, $sources, $r->str('notes') ?: 'Initial version', $prov['ai_model'], $stamp);
+            $vid = self::newVersion($id, $pdf, $sources, $r->str('notes') ?: 'Initial version', $prov['ai_model'], $stamp);
             Activity::touch($pid, 'document', $id, 'created');
+            AiTaskController::queueDocument($pid, $id, $vid);
             return $id;
         });
         Response::json(self::present($id), 201);
@@ -122,6 +123,7 @@ final class DocumentController
                          SELECT ?, role, filename, blob_id FROM version_files WHERE version_id = ? AND role <> 'pdf'",
                     [$vid, $d['current_version_id']]);
             }
+            AiTaskController::queueDocument((int)$d['project_id'], (int)$d['id'], $vid);
         });
         Response::json(self::present((int)$d['id']), 201);
     }

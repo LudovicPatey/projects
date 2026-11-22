@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import test from 'node:test';
 import { ARTICLES, CATEGORIES, CONTROLLER_HELP, VIEW_HELP, articleBySlug, articleText, inlineTokens, nextSteps, pointerHref, resolveTarget, searchHelp } from '../public/assets/js/help/content.js';
 
-const VIEWS = ['overview', 'questions', 'conversations', 'facts', 'files', 'bib', 'members', 'help'];
+const VIEWS = ['overview', 'questions', 'conversations', 'facts', 'files', 'bib', 'ai', 'members', 'help'];
 
 function allInline(a) {
   const out = [a.summary];

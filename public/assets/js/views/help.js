@@ -20,11 +20,20 @@ const HelpBlock = {
       try { return this.block.render(this.ctx).filter(Boolean); } catch { return []; }
     },
   },
-  methods: { startTour, href(to) { return pointerHref(to, this.pid); } },
+  data() { return { copied: false }; },
+  methods: {
+    startTour, href(to) { return pointerHref(to, this.pid); },
+    cmdText(text) { return text.replaceAll('{site}', (location.origin + location.pathname).replace(/\/$/, '')); },
+    async copyCmd(text) {
+      try { await navigator.clipboard.writeText(this.cmdText(text)); this.copied = true; setTimeout(() => { this.copied = false; }, 1500); } catch { /* the text stays selectable */ }
+    },
+  },
   template: `<h2 v-if="block.type === 'h'" :id="'help-h-' + index"><help-inline :text="block.text" :pid="pid"/></h2>
     <p v-else-if="block.type === 'p'"><help-inline :text="block.text" :pid="pid"/></p>
     <ol v-else-if="block.type === 'steps'" class="help-steps"><li v-for="(x, i) in block.items" :key="i"><help-inline :text="x" :pid="pid"/></li></ol>
     <ul v-else-if="block.type === 'list'"><li v-for="(x, i) in block.items" :key="i"><help-inline :text="x" :pid="pid"/></li></ul>
+    <figure v-else-if="block.type === 'shot'" class="help-shot"><img :src="'assets/img/guide/' + block.src" :alt="block.alt" loading="lazy"><figcaption v-if="block.caption"><help-inline :text="block.caption" :pid="pid"/></figcaption></figure>
+    <template v-else-if="block.type === 'cmd'"><p v-if="block.os" class="help-os">{{ block.os }}</p><div class="help-cmd"><pre tabindex="0"><code>{{ cmdText(block.text) }}</code></pre><button type="button" @click="copyCmd(block.text)">{{ copied ? 'Copied' : 'Copy' }}</button></div></template>
     <aside v-else-if="block.type === 'tip'" class="help-note tip"><icon name="check-circle" :size="16"/><div><help-inline :text="block.text" :pid="pid"/></div></aside>
     <aside v-else-if="block.type === 'warn'" class="help-note warn"><icon name="eye" :size="16"/><div><help-inline :text="block.text" :pid="pid"/></div></aside>
     <p v-else-if="block.type === 'tour'"><button type="button" class="btn primary" @click="startTour"><icon name="help" :size="16"/> Replay the tour</button></p>

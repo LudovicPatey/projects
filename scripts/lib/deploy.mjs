@@ -17,6 +17,8 @@ const SINGLE_FILES = [
   ['bin/install.php', 'bin/install.php'],
   ['bin/backup.php', 'bin/backup.php'],
   ['bin/restore.php', 'bin/restore.php'],
+  ['client/.htaccess', 'client/.htaccess'],
+  ['client/oq.py', 'client/oq.py'],             // served by /api/client/oq.py
   ['config/.htaccess', 'config/.htaccess'],
   ['config/config.example.php', 'config/config.example.php'],
 ];

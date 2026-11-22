@@ -14,6 +14,8 @@ const warn = (text) => ({ type: 'warn', text });
 const table = (head, ...rows) => ({ type: 'table', head, rows });
 const live = (render) => ({ type: 'live', render });
 const replayTour = { type: 'tour' };
+const shot = (src, alt, caption) => ({ type: 'shot', src, alt, caption });
+const cmd = (text, os) => ({ type: 'cmd', text, os }); // {site} becomes the address of this platform
 
 // ----- pointers to real items of the project -----
 const toFact = (f) => ({ label: f.title, code: f.label, to: { view: 'facts', id: f.id } });
@@ -34,6 +36,51 @@ export const CATEGORIES = [
   { id: 'ai', title: 'Working with AI', icon: 'bot' },
   { id: 'find', title: 'Staying up to date', icon: 'bell' },
   { id: 'admin', title: 'Privacy and administration', icon: 'key' },
+];
+
+// The steps shared by the Claude and ChatGPT installation guides.
+const clientSteps = (tool) => [
+  h('Step 4: Check Python'),
+  p('The connector is a small Python program. Copy this command into the terminal and press **Enter**:'),
+  cmd('python3 --version', 'macOS and Linux'),
+  cmd('py --version', 'Windows'),
+  p('If you see `Python 3.8` or a higher number, continue. Otherwise, install Python from [python.org](https://www.python.org/downloads/), close the terminal, open it again and retry. On Windows, tick **Add python.exe to PATH** in the installer.'),
+  h('Step 5: Download the connector'),
+  p('This creates a folder named `open-questions` in your home folder and puts the connector in it:'),
+  cmd('mkdir -p ~/open-questions && cd ~/open-questions && curl -fsSL {site}/api/client/oq.py -o oq.py', 'macOS and Linux'),
+  cmd('mkdir $HOME\\open-questions -Force; cd $HOME\\open-questions; curl.exe -fsSL {site}/api/client/oq.py -o oq.py', 'Windows (PowerShell)'),
+  h('Step 6: Create your personal key'),
+  steps('Open [your profile](app:profile) in a new tab.', 'Under **Personal API keys**, type a name such as `My laptop`.', 'Click **Create key**.', 'Click **Copy** next to the key. It is shown only once.'),
+  shot('key-create.webp', 'The Personal API keys panel of the profile page, with a name field and a Create key button', 'The key panel on your profile page.'),
+  h('Step 7: Connect this computer'),
+  cmd('python3 oq.py setup', 'macOS and Linux'),
+  cmd('py oq.py setup', 'Windows'),
+  steps('Press **Enter** to accept the address of the platform.', 'Paste your key and press **Enter**. **Nothing appears while you paste:** this is normal, it protects your key.', 'The program lists your projects.'),
+  shot('term-setup.webp', 'A terminal showing the setup command, the hidden key prompt and the list of projects', 'A successful connection.'),
+  h('Step 8: Check that everything is ready'),
+  cmd('python3 oq.py doctor', 'macOS and Linux'),
+  cmd('py oq.py doctor', 'Windows'),
+  shot(`term-doctor-${tool}.webp`, 'A terminal showing a list of checks marked OK', 'Each line should say `OK`. A line marked `!!` tells you what to fix. Your version numbers will differ.'),
+  tip('Prefer a window? Run `python3 oq.py app` (`py oq.py app` on Windows). See [the app and usage limits](help:ai-app). Check your limits before starting.'),
+  h('Step 9: Start working'),
+  cmd(`python3 oq.py run --provider ${tool === 'claude' ? 'claude' : 'codex'}`, 'macOS and Linux'),
+  cmd(`py oq.py run --provider ${tool === 'claude' ? 'claude' : 'codex'}`, 'Windows'),
+  p('**Leave this window open.** The client checks for work every minute and processes it. Press **Ctrl+C** to stop it. Nothing is lost: an unfinished task returns to the queue.'),
+  shot(`term-run-${tool}.webp`, 'A terminal showing the client processing an extraction, a question and a reference search', 'The client at work.'),
+  h('Step 10: See the result'),
+  p('Open [AI work](app:ai). A green banner confirms that your client is running.'),
+  shot('ai-page.webp', 'The AI work page with a green status banner, figures, the queue and the new request form', 'The AI work page.'),
+  h('Next time'),
+  p('Open a terminal and run these two commands:'),
+  cmd(`cd ~/open-questions\npython3 oq.py run --provider ${tool === 'claude' ? 'claude' : 'codex'}`, 'macOS and Linux'),
+  cmd(`cd $HOME\\open-questions\npy oq.py run --provider ${tool === 'claude' ? 'claude' : 'codex'}`, 'Windows'),
+  h('If something goes wrong'),
+  table(['What you see', 'What to do'],
+    ['`command not found` or `not recognized`', 'Close the terminal, open a new one and retry. If it persists, redo the installation step of that command.'],
+    ['`Invalid or revoked API key`', 'Create a new key on your profile, then run `setup` again.'],
+    ['`Cannot reach the platform`', 'Check your internet connection and the address of the platform.'],
+    [tool === 'claude' ? 'Claude asks you to log in' : 'Codex asks you to sign in', `Run \`${tool === 'claude' ? 'claude' : 'codex'}\` once, sign in, exit, and start the client again.`],
+    ['A task is marked **Failed**', 'Open it on the [AI work](app:ai) page to read the reason, then click **Try again**.']),
 ];
 
 export const ARTICLES = [
@@ -268,7 +315,7 @@ export const ARTICLES = [
         ['Question', '`q:`'], ['Strategy', '`s:`'], ['Strategy version', '`rev:`'], ['Answer', '`a:`'],
         ['Fact', '`fact:`'], ['Fact review', '`review:`'], ['Lean proof', '`lean:`'],
         ['File', '`file:`'], ['File version', '`version:`'], ['Reference', '`bib:`'],
-        ['Conversation', '`conv:`'], ['Message', '`msg:`'], ['Comment', '`comment:`'],
+        ['Suggested reference', '`suggestion:`'], ['Conversation', '`conv:`'], ['Message', '`msg:`'], ['Comment', '`comment:`'], ['AI task', '`task:`'],
         ['Person', '`who:`'], ['Project', '`project:`']),
       tip('Type a filter to search one kind of object, for example `@lean:scale` or `@q:residue`.'),
       h('Reading a reference'),
@@ -431,20 +478,138 @@ export const ARTICLES = [
 
   // ---------------------------------------------------------------- Working with AI
   {
-    slug: 'ai-client', category: 'ai', title: 'Connecting your AI client', summary: 'Create a personal API key and let your AI work on the project.',
+    slug: 'ai-client', category: 'ai', title: 'Personal API keys', summary: 'What your AI client can read and write.',
     keywords: 'api key personal token ai client claude code connect extract facts instructions',
     blocks: [
+      tip('To set up an AI client, follow the [step-by-step guide](help:ai-setup). This page explains what a key allows, and how to use it with your own tools.'),
       p('A **personal API key** lets your own AI client read what you can read, and submit facts, reviews, Lean proofs, open questions, proof strategies and proposed answers.'),
       live((c) => [line(c.me.keys ? `You have ${n(c.me.keys, 'active key')}.` : 'You have no API key yet.', [{ label: 'Open your keys', to: { path: '#/profile' } }]), line(`Project id to give your client: \`${c.project.id}\`.`)]),
       h('Set it up'),
       steps('Open [your profile](app:profile), under **Personal API keys**.', 'Name the key and click **Create key**.', '**Copy it now:** it is shown only once.', 'Copy the setup commands into the terminal of your AI client.', 'Give it the instructions shown on the same screen.'),
       h('What your client can do'),
-      table(['Can', 'Cannot'], ['Read everything you can read', 'Send messages or comments'], ['Submit and revise its facts', 'Change files or the bibliography'], ['Add questions, revise strategies and propose answers', 'Ratify an answer, or declare a question solved or a strategy successful'], ['Submit reviews and Lean proofs', 'Manage members or retract facts']),
+      table(['Can', 'Cannot'], ['Read everything you can read', 'Write messages or comments in your name'], ['Submit and revise its facts, process AI tasks', 'Change files, or add to the bibliography without validation'], ['Add questions, revise strategies and propose answers', 'Ratify an answer, or declare a question solved or a strategy successful'], ['Submit reviews and Lean proofs', 'Manage members or retract facts']),
       h('Ask it to'),
       list('**Extract** results from a paper or a discussion, with the page and an exact quote.', '**Deduce** new results, with a proof.', '**Review** a fact with a different model.', '**Import** a [Danus](help:danus) fact graph.'),
       warn('Treat a key like a password. Revoke it on your profile if it may have leaked. Before citing a private conversation, your client must ask you, because every project member sees facts.'),
     ],
     related: ['ai-labels', 'danus', 'project-agents'],
+  },
+  {
+    slug: 'ai-work', category: 'ai', title: 'How AI works in this platform', summary: 'The queue, what AI clients do, and what stays in human hands.',
+    keywords: 'ai work queue task request client decentralized extract facts opinion @ai ask references suggestions derive computation',
+    blocks: [
+      p('The platform **stores and displays** the research. It never runs an AI model. Each member can run an **AI client on their own computer**, with their own Claude or ChatGPT account. When a client is running, it takes the waiting work, one task at a time.'),
+      live((c) => [line('See what is waiting in this project.', [{ label: 'Open AI work', to: { view: 'ai' } }])]),
+      shot('ai-page.webp', 'The AI work page with a status banner, figures, the queue and the new request form', 'The AI work page.'),
+      h('What the AI does'),
+      table(['Work', 'How it starts', 'What you get'],
+        ['**Extract facts**', 'Automatically, when a person uploads a file or a new version', 'Facts with an exact quotation. A quotation not found in the file is refused'],
+        ['**Answer a question**', 'Write `@AI` in a message or a comment', 'A reply in the same thread, labelled with its model'],
+        ['**Find references**', 'A request on the AI work page', 'Suggestions that a person must accept'],
+        ['**Derive new facts**', 'A request, or [Danus](help:danus)', 'New facts, marked unchecked']),
+      h('Ask the AI in a discussion'),
+      steps('Type `@` in a message or a comment.', 'Choose **Ask AI**, or keep typing `@AI`.', 'Write your question and send it.', 'The next AI client to run answers in the same thread, and you are notified.'),
+      h('Validate suggested references'),
+      p('A suggestion must give a DOI, an arXiv id or an address. **Open the link to check it**, because an AI can invent a reference. **Accept** adds it to the [bibliography](help:bibliography) with its AI origin. **Reject** removes it from the list.'),
+      shot('ai-suggestions.webp', 'Suggested references with their reason, source link, and Accept and Reject buttons', 'Suggested references wait for a person.'),
+      h('Privacy'),
+      list('A task from a **private conversation** goes only to the AI clients of its participants.', 'A client sends the content of its tasks to **the AI provider of the member who runs it**. Each file uploaded to the project can therefore be read by the provider of any member running a client.', 'To limit what your client handles, use for example `--only ask,bib`.'),
+      warn('Do not upload a document to a project if it must not reach the AI services used by its members.'),
+      h('Safety'),
+      p('The AI runs in a read-only mode and does not receive your key. It returns a structured answer, which the client checks and submits. AI content stays labelled, and only people [endorse facts](help:reviews) and [ratify answers](help:answers).'),
+    ],
+    related: ['ai-setup', 'ai-client', 'danus'],
+  },
+  {
+    slug: 'ai-setup', category: 'ai', title: 'Install an AI client', summary: 'Choose your guide: Claude or ChatGPT. No experience needed.',
+    keywords: 'install setup tutorial step by step beginner terminal claude chatgpt codex openai anthropic client commands',
+    blocks: [
+      p('You need **about 15 minutes** and one AI subscription. You do not need to know how to program: each step gives a command to copy.'),
+      h('Choose your guide'),
+      table(['If you use', 'Follow'], ['**Claude**', '[Install with Claude](help:ai-setup-claude)'], ['**ChatGPT**', '[Install with ChatGPT](help:ai-setup-chatgpt)']),
+      p('You control how much of your subscription it uses: see [the app and usage limits](help:ai-app).'),
+      h('What is a terminal?'),
+      p('A terminal is a window where you type commands. Copy a command from the guide with its **Copy** button, paste it in the terminal, and press **Enter**.'),
+      list('**Mac:** press ⌘ Space, type `Terminal`, press Enter.', '**Windows:** open the Start menu, type `PowerShell`, press Enter.', '**Linux:** open the Terminal application.'),
+      tip('Your computer must stay on, with the client running, for it to work. Any member can run one: the team needs only one at a time.'),
+    ],
+    related: ['ai-setup-claude', 'ai-setup-chatgpt', 'ai-work'],
+  },
+  {
+    slug: 'ai-app', category: 'ai', title: 'The AI client app and your usage limits', summary: 'Start, stop and limit what the client uses of your subscription.',
+    keywords: 'app desktop graphic interface limit limits usage quota subscription budget percent pause hours tokens stop command line billing cost price pay api key credits extra',
+    blocks: [
+      p('The AI client has a **graphic interface** and a **command line**. Both use the same engine and the same limits.'),
+      h('Install the Mac app'),
+      steps('Get the file `Open Questions AI-1.0.0-arm64.dmg` from your platform administrator. It is for Macs with Apple silicon.', 'Open it and drag **Open Questions AI** to **Applications**.', 'Open the app. If macOS blocks it, open **System Settings**, then **Privacy & Security**, and click **Open Anyway**. This appears because the app is not yet signed with an Apple developer certificate.', 'On the **Accounts** page, install or sign in to your AI, then paste your [personal key](help:ai-client).', 'On **Home**, click **Start**. Closing the window keeps it working from the menu bar. Choose **Quit** there to stop it.'),
+      p('The app includes everything it needs, so you do not need to install Python. Windows and Linux can use the command line for now.'),
+      shot('app-home.webp', 'The Home page of the client, with its status, usage meters, projects and activity', 'Home: is it working, and how much has it used?'),
+      h('Keep your subscription for yourself'),
+      p('Before each task, the client checks your limits. If one is reached, it waits and resumes later. Your AI account is not used while it waits.'),
+      shot('app-limits.webp', 'The Usage limits page, with sliders, daily caps and types of work', 'Usage limits.'),
+      table(['Limit', 'Default', 'Works with'],
+        ['Share of the session limit', '50%', 'ChatGPT'], ['Share of the weekly limit', '50%', 'ChatGPT'],
+        ['Tasks per day', '20', 'Both'], ['Computing minutes per day', '120', 'Both'], ['Tokens per day', '2,000,000', 'Both'],
+        ['Maximum minutes per task', '30', 'Both'], ['Working hours', 'All day', 'Both']),
+      warn('**ChatGPT** reports the real share of your subscription. **Claude** does not report it to unattended tools, so the client applies its daily caps and stops when Claude says a limit is reached. These caps count only what this client used, not your other use of Claude.'),
+      p('A task already running can go slightly past a limit, because limits are checked between tasks. Danus is checked every minute.'),
+      h('Who pays'),
+      p('By default the client uses **your subscription only**. It ignores API keys found on your computer, and stops with an explanation if your AI tool is set to use a paid key. To use a paid API key on purpose, choose it on the **Accounts** page, or run `python3 oq.py limits --billing api`.'),
+      warn('The client cannot see whether **usage credits** are on in your Claude account. Keep them off, or set a monthly cap, to be sure nothing is charged past your plan limit.'),
+      h('From the command line'),
+      cmd('python3 oq.py app', 'Open the graphic interface'),
+      cmd('python3 oq.py limits --max-session-percent 30 --max-weekly-percent 40 --hours 22-7', 'Change the limits'),
+      cmd('python3 oq.py limits --pause', 'Pause'),
+      cmd('python3 oq.py limits --resume', 'Resume'),
+    ],
+    related: ['ai-setup', 'ai-work', 'danus'],
+  },
+  {
+    slug: 'ai-setup-claude', category: 'ai', title: 'Install with Claude', summary: 'Step-by-step tutorial for Claude Code, with screenshots.',
+    keywords: 'claude code anthropic install tutorial step by step setup terminal login oq.py',
+    blocks: [
+      p('This guide installs **Claude Code**, the command-line version of Claude, then connects it to this platform.'),
+      h('Step 1: Check your Claude plan'),
+      p('Claude Code needs a paid plan such as Pro, Max, Team or Enterprise, or a Console account. The free plan of claude.ai does not include it.'),
+      p('With a plan, the client uses **your plan limits, at no extra cost**. The Anthropic API is a separate paid product, and you do not need it.'),
+      warn('Keep **usage credits** off in your Claude settings, or set a monthly cap. If they are on, work past your plan limit can be charged. Anthropic intends plans for ordinary individual use, so keep the limits of the client moderate and check its current terms.'),
+      h('Step 2: Install Claude Code'),
+      p('Open a [terminal](help:ai-setup), copy the command for your system, and press **Enter**:'),
+      cmd('curl -fsSL https://claude.ai/install.sh | bash', 'macOS and Linux'),
+      cmd('irm https://claude.ai/install.ps1 | iex', 'Windows (PowerShell)'),
+      p('**Close the terminal and open a new one**, then check the installation:'),
+      cmd('claude --version'),
+      h('Step 3: Sign in to Claude'),
+      cmd('claude'),
+      steps('Your browser opens. Sign in with your Claude account and approve.', 'Back in the terminal, answer the first questions.', 'Type `/exit` and press **Enter**.'),
+      ...clientSteps('claude'),
+    ],
+    related: ['ai-work', 'ai-setup-chatgpt', 'danus'],
+  },
+  {
+    slug: 'ai-setup-chatgpt', category: 'ai', title: 'Install with ChatGPT', summary: 'Step-by-step tutorial for Codex, with screenshots.',
+    keywords: 'chatgpt codex openai gpt install tutorial step by step setup terminal login pdftotext oq.py',
+    blocks: [
+      p('This guide installs **Codex**, the command-line tool of ChatGPT, then connects it to this platform.'),
+      h('Step 1: Check your ChatGPT plan'),
+      p('You need a ChatGPT account whose plan includes Codex. Check the current plans on the OpenAI website.'),
+      h('Step 2: Install Codex'),
+      p('Open a [terminal](help:ai-setup), copy the command for your system, and press **Enter**:'),
+      cmd('curl -fsSL https://chatgpt.com/codex/install.sh | sh', 'macOS and Linux'),
+      p('On **Windows**, first install the LTS version of [Node.js](https://nodejs.org/), open a new PowerShell, then run:'),
+      cmd('npm install -g @openai/codex', 'Windows (PowerShell)'),
+      p('**Close the terminal and open a new one**, then check the installation:'),
+      cmd('codex --version'),
+      p('The client needs **pdftotext** to read PDFs with Codex:'),
+      cmd('brew install poppler', 'macOS (with Homebrew)'),
+      cmd('sudo apt install poppler-utils', 'Debian and Ubuntu'),
+      p('On Windows, download the command line tools from [xpdfreader.com](https://www.xpdfreader.com/download.html) and add their folder to your PATH.'),
+      h('Step 3: Sign in to ChatGPT'),
+      cmd('codex'),
+      steps('Choose **Sign in with ChatGPT**.', 'Your browser opens. Sign in and approve.', 'Back in the terminal, press **Ctrl+C** twice to leave.'),
+      ...clientSteps('codex'),
+    ],
+    related: ['ai-work', 'ai-setup-claude', 'danus'],
   },
   {
     slug: 'project-agents', category: 'ai', title: 'Project agents', summary: 'AI members that take part in discussions.',
@@ -472,13 +637,26 @@ export const ARTICLES = [
     related: ['traceability', 'ai-client'],
   },
   {
-    slug: 'danus', category: 'ai', title: 'Importing facts from Danus', summary: 'Bring a Danus fact graph into the project.',
-    keywords: 'danus import fact graph predecessors batch',
+    slug: 'danus', category: 'ai', title: 'Danus', summary: 'Let the client install and run Danus for you.',
+    keywords: 'danus import sync synchronize wrapper watch serve fact graph predecessors batch derive',
     blocks: [
       live((c) => (c.facts.danus.length ? [line('Facts imported from Danus in this project:', c.facts.danus.map(toFact))] : [line('No fact has been imported from Danus in this project.')])),
       p('[Danus](https://github.com/frenzymath/Danus) is a multi-agent system that builds a graph of verified mathematical facts. Its graphs can be imported here, with their dependencies and labels.'),
-      live((c) => [line(`From a copy of the repository, with your [personal key](help:ai-client) in \`OQ_URL\` and \`OQ_KEY\`, for this project (id \`${c.project.id}\`):`), { code: `python examples/import_danus.py path/to/fact_graph --project ${c.project.id} --model MODEL --dry-run` }]),
-      p('Remove `--dry-run` to import. Running it again skips the facts already imported.'),
+      h('Automatic installation'),
+      steps('Open the [AI client](help:ai-app), then the **Danus** page.', 'Click **Install Danus**. The client creates an isolated Linux machine and installs Danus in it.', 'Sign in to ChatGPT when the page shows a code.', 'Choose the number of agents and the maximum time.'),
+      shot('app-danus.webp', 'The Danus page of the client, with its installation button', 'Danus in the client.'),
+      p('From then on, **Derive new facts** requests use Danus, and its facts appear in the project. The first installation downloads about 2 GB.'),
+      warn('Danus needs a **ChatGPT** account, because its agents and verifier run on Codex. With Claude alone, derivation requests use Claude directly.'),
+      p('On a server, `python3 oq.py danus setup` does the same. `python3 oq.py danus remove` deletes Danus and its machine.'),
+      h('If you already run Danus yourself'),
+      p('After [installing the client](help:ai-setup), run these commands from its folder. Replace `PATH` with the `fact_graph` folder of your Danus project, and `MODEL` with the model used by Danus.'),
+      live((c) => [line(`This project has the id \`${c.project.id}\`.`)]),
+      table(['Command', 'What it does'],
+        ['`python3 oq.py danus push PATH --project ID --model MODEL`', 'Sends new facts. Add `--dry-run` to check first. Facts already sent are skipped.'],
+        ['`python3 oq.py danus watch PATH --project ID --model MODEL`', 'Sends new facts as Danus produces them.'],
+        ['`python3 oq.py danus pull PATH --project ID`', 'Copies the facts of the platform into a separate `platform_facts` folder. Your Danus graph is not modified.'],
+        ['`python3 oq.py danus serve PATH --project ID --model MODEL --command "..."`', 'Takes **Derive new facts** requests, runs your Danus command, then sends the new facts. In the command, `{task}` is the request file and `{graph}` the graph folder.']),
+      warn('Danus runs its agents with full access to the computer, and its authors recommend an isolated, disposable machine. A request can contain text from other members, so run `serve` only on such a machine.'),
       warn('Imported facts arrive as **unchecked**. The Danus verifier is itself an AI, and the platform cannot confirm that it ran.'),
     ],
     related: ['ai-client', 'fact-labels'],
@@ -559,11 +737,11 @@ export const ARTICLES = [
 ];
 
 /** The article explaining each area of the application. */
-export const VIEW_HELP = { overview: 'question', questions: 'open-questions', conversations: 'conversations', facts: 'facts-overview', files: 'files', bib: 'bibliography', members: 'people', help: 'welcome' };
+export const VIEW_HELP = { overview: 'question', questions: 'open-questions', conversations: 'conversations', facts: 'facts-overview', files: 'files', bib: 'bibliography', ai: 'ai-work', members: 'people', help: 'welcome' };
 
 /** The article covering each server feature. Adding a controller without help makes the tests fail. */
 export const CONTROLLER_HELP = {
-  AuthController: 'account', FeedbackController: 'feedback', ProjectController: 'question', DashboardController: 'question', ReferenceController: 'references', QuestionController: 'open-questions', AgentController: 'project-agents', KeyController: 'ai-client', BibController: 'bibliography',
+  AuthController: 'account', FeedbackController: 'feedback', ProjectController: 'question', DashboardController: 'question', ReferenceController: 'references', QuestionController: 'open-questions', AgentController: 'project-agents', KeyController: 'ai-client', AiTaskController: 'ai-work', BibController: 'bibliography',
   DocumentController: 'files', FactController: 'facts-overview', ConversationController: 'conversations', CommentController: 'comments',
   NotificationController: 'notifications', ExportController: 'download-project', SearchController: 'search', HelpController: 'welcome',
 };
@@ -582,7 +760,7 @@ export function nextSteps(c) {
   if (!c.questions.total) out.push({ icon: 'target', text: 'State the big questions of this project', to: { view: 'questions' }, help: 'open-questions' });
   else if (c.questions.without_strategy.length) out.push({ icon: 'target', text: `Propose a strategy for “${c.questions.without_strategy[0].title}”`, to: { view: 'questions', id: c.questions.without_strategy[0].id }, help: 'proof-strategies' });
   if (c.thread) out.push({ icon: 'comment', text: 'Answer an open comment thread', to: { view: c.thread.view, id: c.thread.id, query: { comment: c.thread.comment } }, help: 'comments' });
-  if (!c.facts.total) out.push({ icon: 'key', text: 'Connect your AI client to build the fact database', to: { path: '#/profile' }, help: 'ai-client' });
+  if (!c.facts.total) out.push({ icon: 'key', text: 'Install an AI client to build the fact database', to: { view: 'help', query: { a: 'ai-setup' } }, help: 'ai-setup' });
   if (!c.files.total) out.push({ icon: 'upload', text: 'Upload a first paper', to: { view: 'files', query: { upload: 1 } }, help: 'files' });
   if (!c.bib.total) out.push({ icon: 'book', text: 'Add references', to: { view: 'bib' }, help: 'bibliography' });
   else if (c.bib.without_pdf.length) out.push({ icon: 'pdf', text: `Attach a PDF to ${n(c.bib.without_pdf_count, 'reference')}`, to: { view: 'bib', id: c.bib.without_pdf[0].id }, help: 'bibliography' });
