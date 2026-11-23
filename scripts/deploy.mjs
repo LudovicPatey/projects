@@ -3,11 +3,12 @@
 // deployment. Nothing is ever deleted on the server, and its config/config.php and
 // data (projects-data/, outside the web root) are not touched.
 //
-//   npm run deploy -- [--dry-run] [--all] [--config] [--protocol sftp|ftp] [--host H] [--user U] [--dir projects] [--no-tls]
+//   npm run deploy -- [--dry-run] [--all] [--config] [--installers] [--protocol sftp|ftp] [--host H] [--user U] [--dir projects] [--no-tls]
 //
 //   --dry-run  list what would be uploaded, upload nothing
 //   --all      upload every file, not only those changed since the last deployment
 //   --config   also upload cache/config.prod.php as config/config.php
+//   --installers  also upload the installers built in client/desktop/dist
 //
 // Settings are read from cache/deploy.json (git-ignored), e.g.
 //   { "protocol": "sftp", "host": "ftp.clusterXXX.hosting.ovh.net", "user": "LOGIN", "dir": "projects" }
@@ -18,11 +19,11 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { changedFiles, curlConfig, deployFiles, sftpBatch, updatedManifest } from './lib/deploy.mjs';
+import { changedFiles, curlConfig, deployFiles, installerFiles, sftpBatch, updatedManifest } from './lib/deploy.mjs';
 
 const SITE = 'https://projects.ludovicpatey.com';
 process.chdir(path.resolve(import.meta.dirname, '..'));
-const usage = 'npm run deploy -- [--dry-run] [--all] [--config] [--protocol sftp|ftp] [--host H] [--user U] [--dir projects] [--no-tls]';
+const usage = 'npm run deploy -- [--dry-run] [--all] [--config] [--installers] [--protocol sftp|ftp] [--host H] [--user U] [--dir projects] [--no-tls]';
 
 // ---- options -------------------------------------------------------------------
 const argv = process.argv.slice(2);
@@ -30,7 +31,7 @@ const flags = new Set();
 const values = new Map();
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i];
-  if (['--dry-run', '--all', '--config', '--no-tls'].includes(a)) flags.add(a);
+  if (['--dry-run', '--all', '--config', '--installers', '--no-tls'].includes(a)) flags.add(a);
   else if (['--protocol', '--host', '--user', '--dir'].includes(a) && i + 1 < argv.length) values.set(a, argv[++i]);
   else fail(`Unknown option ${a}\nUsage: ${usage}`);
 }
@@ -55,6 +56,9 @@ try {
 } catch { /* not a git checkout */ }
 
 const files = deployFiles('.');
+if (flags.has('--installers')) {
+  try { files.push(...installerFiles('.')); } catch (e) { fail(`${e.message}. Nothing uploaded.`); }
+}
 for (const f of files) {
   const check = f.remote.endsWith('.php') ? ['php', ['-l', f.local]] : f.remote.endsWith('.js') ? null : null;
   if (check && spawnSync(check[0], check[1], { stdio: 'ignore' }).status !== 0) fail(`PHP syntax error in ${f.local}: nothing uploaded.`);

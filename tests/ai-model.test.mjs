@@ -88,7 +88,6 @@ test('the front page and dashboards present the client and the architecture', ()
   for (const t of ['Decentralized AI computing', 'never runs a model', '<architecture-diagram/>', 'Claude or ChatGPT']) assert.ok(landing.includes(t), t);
   const shell = fs.readFileSync('public/assets/js/main.js', 'utf8'); const misc = fs.readFileSync('public/assets/js/views/misc.js', 'utf8');
   assert.ok(shell.includes('href="#/client"')); assert.ok(misc.includes('<client-card/>'));
-  assert.ok(!fs.readFileSync('scripts/lib/deploy.mjs', 'utf8').match(/\.dmg|AppImage/), 'installers are not deployed yet');
 });
 
 test('the interface says Prove new facts, and explains Danus only where it helps', () => {

@@ -209,6 +209,7 @@ The platform stores AI requests and results and never runs a model. A client on 
 - `POST /api/projects/{id}/ai/tasks` also accepts a personal key for `kind: derive` only, so that a client records the Danus run its user launched. `claim` accepts `task_id` to take that task.
 - Danus starts only from the client's Run button or `oq.py danus run`, with stops on running time, session usage and weekly usage, and a choice to end or wait for the reset. A watchdog in the machine stops its workers if the client disappears.
 - `oq.py danus setup --native --accept-risk` is an opt-in on macOS. It installs Danus in the client's own folder with Codex's sandbox on: agents can read the user's files, can write only in their folder and temporary folders, and have no direct network access.
+- `oq.py danus setup --engine claude --accept-risk` (macOS, experimental) runs Danus unmodified through an adapter that replaces its `codex exec` command with `claude -p`: no shell, scoped file permissions, no API keys, the user's Claude settings ignored. Claude reports no usage percentage, so a run needs a time limit and also stops at daily caps and reported limits.
 - `oq.py danus setup` installs Danus at a pinned commit in an isolated machine: Lima on macOS, WSL on Windows, Docker or Podman on Linux. No folder of the computer and no platform key enter it.
 - `oq.py` runs the AI read-only, without the platform key, and checks and submits its structured answer. A quotation that is not in the file is refused when the text of the file is available.
 

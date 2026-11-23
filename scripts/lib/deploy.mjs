@@ -67,6 +67,37 @@ export function deployFiles(root = '.') {
   return files.sort((a, b) => uploadRank(a.remote) - uploadRank(b.remote) || a.remote.localeCompare(b.remote));
 }
 
+const INSTALLERS = ['open-questions-ai-mac-arm64.dmg', 'open-questions-ai-mac-x64.dmg', 'open-questions-ai-windows.exe', 'open-questions-ai-linux.AppImage'];
+
+/**
+ * The installers built in client/desktop/dist, each followed by its checksum and version files.
+ * Refuses a build older than the client it should contain, or versions that disagree.
+ */
+export function installerFiles(root = '.') {
+  const client = path.join(root, 'client/oq.py');
+  const pkg = path.join(root, 'client/desktop/package.json');
+  const version = JSON.parse(fs.readFileSync(pkg, 'utf8')).version;
+  const own = fs.readFileSync(client, 'utf8').match(/^VERSION = "([^"]+)"/m)?.[1];
+  if (!/^\d+\.\d+\.\d+$/.test(String(version)) || version !== own) throw new Error(`client versions differ: oq.py ${own}, desktop ${version}`);
+  const newest = Math.max(fs.statSync(client).mtimeMs, fs.statSync(pkg).mtimeMs);
+  const releases = path.join(root, 'client/releases');
+  const out = [];
+  for (const name of INSTALLERS) {
+    const local = path.join(root, 'client/desktop/dist', name);
+    if (!fs.existsSync(local)) continue;
+    if (fs.statSync(local).mtimeMs < newest) throw new Error(`${name} is older than the client: run npm run dist in client/desktop`);
+    const hash = crypto.createHash('sha256').update(fs.readFileSync(local)).digest('hex');
+    out.push({ local, remote: `client/releases/${name}`, size: fs.statSync(local).size, hash });
+    for (const [ext, text] of [['sha256', `${hash}  ${name}\n`], ['version', `${version}\n`]]) {
+      const file = path.join(releases, `${name}.${ext}`);
+      fs.writeFileSync(file, text);
+      out.push({ local: file, remote: `client/releases/${name}.${ext}`, size: Buffer.byteLength(text), hash: crypto.createHash('sha256').update(text).digest('hex') });
+    }
+  }
+  if (!out.length) throw new Error('no installer found in client/desktop/dist: run npm run dist in client/desktop');
+  return out;
+}
+
 export const changedFiles = (files, manifest = {}) => files.filter((f) => manifest[f.remote] !== f.hash);
 
 export function updatedManifest(manifest, uploaded) {

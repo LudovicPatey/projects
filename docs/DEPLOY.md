@@ -14,11 +14,14 @@ The live site is <https://projects.ludovicpatey.com>, on OVH web hosting. Files 
 npm test                     # checks what would be uploaded
 npm run deploy -- --dry-run  # lists what would be uploaded
 npm run deploy               # uploads what changed
+npm run deploy -- --installers  # also uploads the desktop installers
 ```
 
 There is no build step. `npm run deploy` checks the PHP syntax, then uploads over SFTP the files whose content changed since
 the last deployment to the same target. ssh asks for the **FTP password** in the terminal (an SSH key works too).
 The hashes of uploaded files are kept in `cache/deploy-manifest.json`, and `--all` uploads everything again.
+
+`--installers` takes the installers built in `client/desktop/dist` (`npm run dist` in `client/desktop`), and uploads each one to `client/releases` with its checksum and version files. It refuses a build older than `client/oq.py`, or client versions that differ. A download started during the upload can be incomplete.
 
 Nothing is ever deleted on the server, so files removed from the repository stay there, unused. A failed upload stops the transfer and
 leaves the manifest unchanged, so the next deployment sends those files again.

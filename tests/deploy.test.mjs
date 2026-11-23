@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
-import { changedFiles, curlConfig, deployFiles, sftpBatch, updatedManifest, uploadRank } from '../scripts/lib/deploy.mjs';
+import { changedFiles, curlConfig, deployFiles, installerFiles, sftpBatch, updatedManifest, uploadRank } from '../scripts/lib/deploy.mjs';
 
 const files = deployFiles('.');
 const remotes = files.map((f) => f.remote);
@@ -46,6 +49,30 @@ test('the sftp batch creates parents and never deletes', () => {
   assert.ok(lines.some((l) => l.startsWith('put ') && l.endsWith('"projects/public/assets/js/x.js"')));
   assert.ok(lines.includes('chmod 600 "projects/config/config.php"'));
   assert.ok(!/^(rm|rmdir|rename)\b/m.test(batch));
+});
+
+test('installers are sent only on request, with their checksum and version, and never when stale', () => {
+  assert.ok(!remotes.some((r) => /\.(dmg|exe|AppImage|sha256|version)$/.test(r)), 'a normal deployment has no installer');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'oq-installers-'));
+  try {
+    for (const d of ['client/desktop/dist', 'client/releases']) fs.mkdirSync(path.join(root, d), { recursive: true });
+    const put = (f, text) => fs.writeFileSync(path.join(root, f), text);
+    put('client/oq.py', 'VERSION = "2.0.0"\n'); put('client/desktop/package.json', '{"version":"2.0.0"}');
+    assert.throws(() => installerFiles(root), /no installer/);
+    const dmg = path.join(root, 'client/desktop/dist/open-questions-ai-mac-arm64.dmg');
+    put('client/desktop/dist/open-questions-ai-mac-arm64.dmg', 'image');
+    const future = new Date(Date.now() + 5000); fs.utimesSync(dmg, future, future);
+    const list = installerFiles(root);
+    assert.deepEqual(list.map((f) => path.posix.basename(f.remote)), ['open-questions-ai-mac-arm64.dmg', 'open-questions-ai-mac-arm64.dmg.sha256', 'open-questions-ai-mac-arm64.dmg.version']);
+    assert.ok(list.every((f) => f.remote.startsWith('client/releases/')));
+    assert.equal(fs.readFileSync(list[2].local, 'utf8'), '2.0.0\n');
+    assert.equal(fs.readFileSync(list[1].local, 'utf8').split(' ')[0], list[0].hash);
+    const past = new Date(Date.now() - 60000); fs.utimesSync(dmg, past, past);
+    assert.throws(() => installerFiles(root), /older than the client/);
+    fs.utimesSync(dmg, future, future);
+    put('client/oq.py', 'VERSION = "2.0.1"\n');
+    assert.throws(() => installerFiles(root), /versions differ/);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
 test('ftp requires TLS by default', () => {
