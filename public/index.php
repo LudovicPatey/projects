@@ -61,6 +61,7 @@ $routes = [
     // bibliography
     ['GET',    '/api/projects/{pid}/bib',                 [BibController::class, 'list']],
     ['POST',   '/api/projects/{pid}/bib',                 [BibController::class, 'create']],
+    ['POST',   '/api/projects/{id}/bib/extract-all',      [AiTaskController::class, 'extractAll']],
     ['GET',    '/api/projects/{pid}/bib/export',          [BibController::class, 'export']],
     ['GET',    '/api/bib/{id}',                           [BibController::class, 'show']],
     ['PATCH',  '/api/bib/{id}',                           [BibController::class, 'update']],

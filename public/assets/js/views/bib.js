@@ -1,6 +1,7 @@
 import { api } from '../api.js';
 import { store, go, link, attempt, toast, refreshMentionables, unreadCount, markRead, markItemUnread } from '../store.js';
 import { timeAgo, fullDate, fileSize } from '../util.js';
+import { EXTRACTION_LABEL, bibProgress } from '../ai-model.js';
 
 const TYPES = ['article', 'inproceedings', 'book', 'incollection', 'phdthesis', 'mastersthesis', 'techreport', 'misc', 'unpublished'];
 
@@ -8,7 +9,7 @@ export const BibView = {
   props: { pid: Number, id: Number, query: Object },
   data() {
     return {
-      entries: [], loaded: false, search: '', sort: 'key', extracting: false,
+      entries: [], loaded: false, search: '', sort: 'key', extracting: false, progressData: null, extractingAll: false,
       entry: null, entryError: null, tab: 'pdf',
       adding: false, addMode: 'doi', addDoi: '', addBibtex: '', addManual: { entry_type: 'article', title: '', author: '', year: '', journal: '', url: '', doi: '' }, busy: false,
       editBib: null, uploadProgress: null,
@@ -30,6 +31,9 @@ export const BibView = {
       if (this.pending?.anchor.rects) h.push({ id: 'pending', page: this.pending.anchor.page, rects: this.pending.anchor.rects });
       return h;
     },
+    progress() { return bibProgress(this.progressData); },
+    listed() { return this.entries.find((e) => e.id === this.entry?.id) || null; },
+    extractState() { return this.listed?.extraction?.state || 'none'; },
     canDelete() { return this.entry && (this.entry.created_by === store.user.id || store.project.my_role === 'owner'); },
   },
   watch: { id: { immediate: true, handler() { this.onRoute(); } } },
@@ -40,7 +44,16 @@ export const BibView = {
       <div class="row-gap">
         <mark-all-read type="bib"/>
         <a class="icon-btn" :href="'api/projects/' + pid + '/bib/export'" title="Export as .bib"><icon name="download" :size="16"/></a>
+        <ai-action kind="bib" label="Find" title="Ask an AI client to search the literature for references"/>
         <button class="btn primary sm" @click="adding = true"><icon name="plus" :size="14"/> Add</button></div></header>
+    <section v-if="progress.total" class="bib-progress" aria-label="Bibliography progress">
+      <div class="bib-progress-row"><span>PDFs</span><b>{{ progress.with_pdf }} / {{ progress.total }}</b></div>
+      <div class="progress" role="progressbar" :aria-valuenow="progress.pdfPercent" aria-valuemin="0" aria-valuemax="100" aria-label="References with a PDF"><div :style="{width: progress.pdfPercent + '%'}"></div></div>
+      <div class="bib-progress-row"><span>Facts extracted</span><b>{{ progress.extracted }} / {{ progress.with_pdf }}</b></div>
+      <div class="progress" role="progressbar" :aria-valuenow="progress.extractedPercent" aria-valuemin="0" aria-valuemax="100" aria-label="PDFs with extracted facts"><div :style="{width: progress.extractedPercent + '%'}"></div></div>
+      <div class="bib-progress-foot"><small><template v-if="progress.queued">{{ progress.queued }} queued</template><template v-if="progress.queued && progress.failed"> · </template><template v-if="progress.failed">{{ progress.failed }} failed</template></small>
+        <button v-if="progress.toQueue" class="btn sm" :disabled="extractingAll" @click="extractAll"><icon name="sparkles" :size="13"/> Extract {{ progress.toQueue }} remaining</button></div>
+    </section>
     <div class="col-tools">
       <div class="search"><icon name="search" :size="15"/><input v-model="search" placeholder="Search key, title, author…"></div>
       <div class="seg small">
@@ -57,6 +70,7 @@ export const BibView = {
         <div class="li-meta">
           <span v-if="e.has_pdf" class="tag red"><icon name="pdf" :size="11"/> PDF</span>
           <span v-else class="tag muted-tag">no PDF</span>
+          <span v-if="extractionLabel[e.extraction?.state]" class="tag" :title="(e.extraction.models || []).join(', ')">{{ extractionLabel[e.extraction.state] }}</span>
           <ai-meta compact :model="e.ai_model" :user="e.ai_user_name" :ms="e.ai_generation_ms"/>
           <span v-if="e.comment_count"><icon name="comment" :size="12"/> {{ e.comment_count }}</span>
           <span class="muted small ellipsis">{{ e.venue }}</span>
@@ -86,7 +100,7 @@ export const BibView = {
         <div class="doc-actions">
           <label class="btn sm"><icon name="upload" :size="14"/> {{ entry.has_pdf ? 'Replace PDF' : 'Upload PDF' }}
             <input type="file" accept="application/pdf,.pdf" hidden @change="uploadPdf"></label>
-          <button v-if="entry.has_pdf" class="btn sm" :disabled="extracting" title="Ask an AI client to extract the results stated in this PDF" @click="extractFacts"><icon name="sparkles" :size="14"/> Extract facts</button>
+          <button class="btn sm" :disabled="extracting || !entry.has_pdf || extractState === 'queued'" :title="!entry.has_pdf ? 'Upload a PDF first' : extractState === 'queued' ? 'Already in the AI queue' : 'Ask an AI client to extract the results stated in this PDF'" @click="extractFacts"><icon name="sparkles" :size="14"/> {{ extractState === 'done' ? 'Extract again' : 'Extract facts' }}</button>
           <button v-if="entry.has_pdf" class="icon-btn" title="Remove PDF" @click="removePdf"><icon name="x"/></button>
           <button class="icon-btn" title="Mark as unread" @click="markItemUnread('bib', entry.id)"><icon name="mail-unread"/></button>
           <button v-if="canDelete" class="icon-btn" title="Delete entry" @click="remove"><icon name="trash"/></button>
@@ -158,7 +172,7 @@ export const BibView = {
       <button class="btn primary" :disabled="busy" @click="addEntries">{{ busy ? 'Adding…' : 'Add' }}</button></template>
   </modal>
 </div>`,
-  created() { this.types = TYPES; },
+  created() { this.types = TYPES; this.extractionLabel = EXTRACTION_LABEL; },
   methods: {
     timeAgo, fullDate, fileSize, link, markItemUnread,
     unreadOf(id) { return unreadCount('bib', id); },
@@ -167,7 +181,7 @@ export const BibView = {
     threadFilter(t) { return !t.anchor?.blob_id || t.anchor.blob_id === this.entry?.pdf?.blob_id; },
     describe(t) { return t.anchor?.page ? `Page ${t.anchor.page}` : ''; },
     async loadList() {
-      try { this.entries = (await api.get(`api/projects/${this.pid}/bib`)).entries; this.loaded = true; } catch (e) { /* ignore */ }
+      try { const r = await api.get(`api/projects/${this.pid}/bib`); this.entries = r.entries; this.progressData = r.progress; this.loaded = true; } catch (e) { /* ignore */ }
     },
     onRoute() {
       this.pending = null; this.backlinks = [];
@@ -188,6 +202,15 @@ export const BibView = {
       this.extracting = true;
       await attempt(() => api.post(`api/projects/${this.pid}/ai/tasks`, { kind: 'extract', source_type: 'bib', source_id: this.entry.id }), 'Added to the AI queue. A running AI client will extract the facts.');
       this.extracting = false;
+      this.loadList();
+    },
+    async extractAll() {
+      const n = this.progress.toQueue;
+      if (!confirm(`Queue ${n} PDF${n > 1 ? 's' : ''} for fact extraction? Each one uses the AI subscription of the member whose client processes it.`)) return;
+      this.extractingAll = true;
+      const r = await attempt(() => api.post(`api/projects/${this.pid}/bib/extract-all`, {}));
+      this.extractingAll = false;
+      if (r) { this.progressData = r.progress; toast(`${r.queued} added to the AI queue`, 'success'); this.loadList(); }
     },
     async loadBacklinks() {
       if (!this.entry) return;

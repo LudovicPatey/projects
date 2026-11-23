@@ -206,6 +206,8 @@ export const FactsView = {
           <button v-if="!fact.retracted_at" class="btn sm endorse" :class="{on: endorsed}" :aria-pressed="endorsed" :title="endorsed ? 'Withdraw your endorsement' : 'Endorse this revision: you checked it and consider it correct'" @click="toggleEndorse">
             <icon name="check" :size="14"/> {{ endorsed ? 'Endorsed' : 'Endorse' }}</button>
           <button v-if="!fact.retracted_at" class="btn sm deny" :class="{on: denied}" :aria-pressed="denied" :title="denied ? 'Withdraw your denial' : 'Deny this revision: you found an error'" @click="toggleDeny"><icon name="x" :size="14"/> {{ denied ? 'Denied' : 'Deny' }}</button>
+          <ai-action v-if="!fact.retracted_at" kind="ask" source-type="fact" :source-id="fact.id" label="Ask AI"/>
+          <ai-action v-if="!fact.retracted_at" kind="derive" source-type="fact" :source-id="fact.id" label="Prove from this"/>
           <button v-if="!fact.retracted_at" class="btn sm warn" @click="retracting = {reason: ''}">Retract</button>
           <button v-else class="btn sm" @click="reinstate">Reinstate</button>
           <button class="icon-btn" title="Mark as unread" @click="markItemUnread('fact', fact.id)"><icon name="mail-unread"/></button>

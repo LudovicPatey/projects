@@ -102,7 +102,7 @@ export const LandingPage = {
       <architecture-diagram/>
       <div class="lp-arch-points">
         <div><b>No shared AI bill</b><span>Each member uses their own Claude or ChatGPT account, or none at all.</span></div>
-        <div><b>Your limits are respected</b><span>The client pauses at the daily caps and usage limits you choose.</span></div>
+        <div><b>Your models, your limits</b><span>Choose the model for each kind of work. The client pauses at the caps you set.</span></div>
         <div><b>People have the last word</b><span>AI proposes facts, answers and references. Researchers validate them.</span></div>
       </div>
     </section>

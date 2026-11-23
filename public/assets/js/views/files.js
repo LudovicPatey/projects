@@ -178,6 +178,8 @@ export const FilesView = {
             <option v-for="v in doc.versions" :key="v.id" :value="v.id">v{{ v.version_no }}{{ v.is_current ? ' (current)' : '' }} — {{ timeAgo(v.created_at) }}</option>
           </select>
           <button class="btn sm" @click="newVersion = true"><icon name="upload" :size="14"/> New version</button>
+          <ai-action kind="extract" source-type="document" :source-id="doc.id"/>
+          <ai-action kind="ask" source-type="document" :source-id="doc.id" label="Ask AI"/>
           <button v-if="!version.is_current" class="btn sm warn" @click="restore(version)"><icon name="restore" :size="14"/> Restore v{{ version.version_no }}</button>
           <a class="btn sm" :href="'api/versions/' + version.id + '/zip'" title="PDF + sources as .zip"><icon name="download" :size="14"/> .zip</a>
           <button class="icon-btn" title="Mark as unread" @click="markItemUnread('document', doc.id)"><icon name="mail-unread"/></button>

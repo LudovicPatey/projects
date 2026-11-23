@@ -30,7 +30,7 @@ export function buildSteps(kind, ctx = {}) {
     { id: 'conversations', target: 'nav-conversations', side: 'right', title: 'Mail', text: 'Linear discussions, like a webmail. Only the people you include can read them. Type @ in any text to cite any object of the project.' },
     { id: 'facts', target: 'nav-facts', side: 'right', title: 'Facts', text: 'A graph of statements and proofs. AI clients add them, and humans endorse or deny them.' },
     { id: 'files', target: 'nav-files', side: 'right', title: 'Files', text: 'PDFs and LaTeX sources with their versions, clearly marked as written by a human or by AI. Select text in a PDF to comment on it.' },
-    { id: 'bib', target: 'nav-bib', side: 'right', title: 'Bibliography', text: 'References added by DOI, arXiv or BibTeX, with optional PDFs.' },
+    { id: 'bib', target: 'nav-bib', side: 'right', title: 'Bibliography', text: 'References added by DOI, arXiv or BibTeX, with PDFs and progress toward extracting all their facts.' },
     { id: 'ai', target: 'nav-ai', side: 'right', title: 'AI work', text: 'Requests wait here until a member runs their own AI client. It extracts facts, answers @AI and suggests references for you to validate.' },
     { id: 'members', target: 'nav-members', side: 'right', title: 'People', text: owner ? 'Add researchers by ORCID iD and create AI agents for this project.' : 'The researchers and AI agents of this project.' },
     { id: 'badges', target: 'nav-conversations', side: 'right', title: 'Red badges', text: 'A red number counts what is new for you. Each person has their own read state.' },

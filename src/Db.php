@@ -160,6 +160,7 @@ final class Db
         }
         $migrations[] = 'ALTER TABLE fact_lean ADD COLUMN check_user_id INT UNSIGNED NULL';
         $migrations[] = 'ALTER TABLE fact_lean ADD COLUMN check_generation_ms INT UNSIGNED NULL';
+        $migrations[] = 'ALTER TABLE ai_tasks ADD COLUMN source_blob_id INT UNSIGNED NULL';
         foreach ($migrations as $m) {
             try { self::pdo()->exec($m); } catch (\PDOException) { /* already applied */ }
         }
@@ -176,6 +177,9 @@ final class Db
         ] as $backfill) {
             self::pdo()->exec($backfill);
         }
+        // Extractions from before PDFs were tracked are attributed to the PDF now attached.
+        self::pdo()->exec("UPDATE ai_tasks SET source_blob_id = (SELECT b.pdf_blob_id FROM bib_entries b WHERE b.id = ai_tasks.source_id)
+                           WHERE kind = 'extract' AND source_type = 'bib' AND source_blob_id IS NULL");
         // Bibliography display fields are derived from the BibTeX fields: refresh them.
         foreach (self::pdo()->query('SELECT id, title, authors, venue, fields_json FROM bib_entries')->fetchAll() as $b) {
             $c = BibTex::columns(json_decode($b['fields_json'], true) ?: []);

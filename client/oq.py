@@ -51,7 +51,7 @@ import webbrowser
 import zipfile
 import zlib
 
-VERSION = "1.4.0"
+VERSION = "1.5.0"
 API_LEVEL = 1  # raise with the server's AiTaskController::API_LEVEL when a client needs new server features
 GITHUB_REPO = "LudovicPatey/projects"
 KINDS = ["extract", "ask", "bib", "derive"]
@@ -179,6 +179,73 @@ def codex_default_model():
     return m.group(1) if m else None
 
 
+# ----- which model does which work -----
+
+# Aliases follow each new Claude release. Codex uses the model configured in the user's Codex.
+MODEL_AUTO = {"claude": {"extract": "sonnet", "ask": "sonnet", "bib": "sonnet", "derive": "opus"}, "codex": {}}
+MODEL_ALIASES = ("opus", "sonnet", "haiku")
+MODEL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,79}")
+ALIAS_MEMORY_SECONDS = 86400
+
+
+def chosen_model(provider, kind):
+    """The model set for this work, or None to let the AI tool decide."""
+    value = ((load_prefs().get("models") or {}).get(provider) or {}).get(kind)
+    return value if value and value != "auto" else MODEL_AUTO.get(provider, {}).get(kind)
+
+
+def remember_alias(alias, used):
+    if alias in MODEL_ALIASES and str(used).startswith("claude-"):
+        known = load_prefs().get("model_aliases") or {}
+        save_prefs(model_aliases={**known, alias: {"id": used, "at": int(time.time())}})
+
+
+def known_model(provider, model):
+    """The exact name when it is recent. A stale one could hide a new release from the platform's ordering."""
+    if not model:
+        return codex_default_model() if provider == "codex" else None
+    seen = (load_prefs().get("model_aliases") or {}).get(model) or {}
+    return seen["id"] if seen.get("id") and time.time() - seen.get("at", 0) < ALIAS_MEMORY_SECONDS else model
+
+
+def claim_models(opts, kinds):
+    out = {k: known_model(opts.provider, opts.model or chosen_model(opts.provider, k)) for k in kinds}
+    return {k: v for k, v in out.items() if v}
+
+
+def model_fits(provider, model):
+    claude = model in MODEL_ALIASES or model.lower().startswith("claude")
+    return claude if provider == "claude" else not claude
+
+
+def save_models(provider, choices, danus=None):
+    if provider not in MODEL_AUTO:
+        raise Stop("Unknown AI tool.")
+    clean = {}
+    for kind, value in (choices or {}).items():
+        value = str(value or "").strip()
+        if kind not in KINDS or (value and value != "auto" and not MODEL_NAME.fullmatch(value)):
+            raise Stop(f"Invalid model name: {value[:40]}")
+        if value and value != "auto":
+            if not model_fits(provider, value):
+                raise Stop(f"{value} is not a model of {'Claude' if provider == 'claude' else 'ChatGPT'}.")
+            clean[kind] = value
+    all_models = load_prefs().get("models") or {}
+    update = {"models": {**all_models, provider: clean}}
+    if danus is not None:
+        danus = str(danus).strip()
+        if danus and (not MODEL_NAME.fullmatch(danus) or not model_fits("codex", danus)):
+            raise Stop(f"Proof search runs on ChatGPT models: {danus[:40]} cannot be used.")
+        update["danus_model"] = danus
+    save_prefs(**update)
+
+
+def models_public():
+    prefs = load_prefs().get("models") or {}
+    return {"choices": prefs, "auto": MODEL_AUTO, "suggest": {"claude": ["auto", *MODEL_ALIASES], "codex": ["auto"]},
+            "danus": load_prefs().get("danus_model") or "", "danus_default": codex_default_model() or "gpt-5.6-sol"}
+
+
 PAID_ENV = {
     "claude": ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY"),
     "codex": ("OPENAI_API_KEY", "CODEX_API_KEY", "OPENAI_BASE_URL"),
@@ -247,7 +314,8 @@ def run_ai(provider, prompt, schema, workdir, model, web, timeout):
         if answer is None:
             answer = parse_json(outer.get("result") or "")
         usage = list((outer.get("modelUsage") or {}).keys())
-        used = used or (max(usage, key=lambda k: (outer["modelUsage"][k] or {}).get("outputTokens", 0)) if usage else None)
+        # What actually ran: a requested alias such as "sonnet" must not be recorded as the model.
+        used = max(usage, key=lambda k: (outer["modelUsage"][k] or {}).get("outputTokens", 0)) if usage else used
     else:
         if not out_path.exists():
             raise RuntimeError("Codex did not write an answer.")
@@ -488,7 +556,9 @@ def process(api, task, opts):
                     raise
         public = {k: task.get(k) for k in ("id", "kind", "source_type", "source_id", "prompt_text")}
         (workdir / "task.json").write_text(json.dumps({"task": public, **task["context"]}, ensure_ascii=False, indent=1), encoding="utf-8")
-        answer, model, seconds = run_ai(opts.provider, build_prompt(task), SCHEMAS[kind], workdir, opts.model, kind == "bib", opts.timeout)
+        wanted = opts.model or chosen_model(opts.provider, kind)
+        answer, model, seconds = run_ai(opts.provider, build_prompt(task), SCHEMAS[kind], workdir, wanted, kind == "bib", opts.timeout)
+        remember_alias(wanted, model)
     answer = scrub(answer, api.key)
     result = {"lease": task["lease"], "ai_model": model, "generation_seconds": seconds}
     summary = str(answer.get("summary") or "").strip()
@@ -655,7 +725,7 @@ def work_once(api, opts, name, stop=None):
     if not kinds:
         opts.hold = ("All kinds of work are turned off in your limits.", None)
         return False
-    body = {"kinds": kinds, "client_name": name, "ai_model": opts.model or opts.provider, "features": ["extract_bib"]}
+    body = {"kinds": kinds, "client_name": name, "ai_model": opts.model or opts.provider, "models": claim_models(opts, kinds), "features": ["extract_bib"]}
     task, opts.hold = claim_task(api, opts, body)
     if not task:
         return False
@@ -2495,7 +2565,7 @@ class Service:
         if allowed and projects and all(p["paused"] for p in projects):
             allowed, reason, retry = False, "All your projects are paused.", None
         dm = DanusManager()
-        return {"backup": backup_public(projects), "update": read_update(), "danus_run": DanusRun().public(), "version": VERSION, "connected": bool(cfg.get("key")) and not error, "url": cfg.get("url", ""), "error": error, "projects": projects, "tools": tools, "provider": provider,
+        return {"models": models_public(), "backup": backup_public(projects), "update": read_update(), "danus_run": DanusRun().public(), "version": VERSION, "connected": bool(cfg.get("key")) and not error, "url": cfg.get("url", ""), "error": error, "projects": projects, "tools": tools, "provider": provider,
                 "running": self.running(), "allowed": allowed, "reason": reason, "retry_at": retry, "limits": limits, "day": day, "windows": windows,
                 "log": list(self.log)[-60:], "jobs": self.jobs, "danus": {**dm.state(), "mode": danus_mode(), "can_native": sys.platform == "darwin", "isolated_installed": sys.platform == "darwin" and danus_mode() == "native" and LimaVm().exists(), "unavailable": dm.unavailable_reason()}}
 
@@ -2601,6 +2671,8 @@ def make_handler(service, token, port):
                 service.stop()
             elif path == "/api/limits":
                 save_limits(b)
+            elif path == "/api/models":
+                save_models(b.get("provider"), b.get("choices"), b.get("danus"))
             elif path == "/api/tool/install":
                 name = b.get("tool")
                 if name not in TOOL_INSTALL:
@@ -2737,6 +2809,21 @@ def cmd_app(a):
     except KeyboardInterrupt:
         pass
     service.stop()
+    return 0
+
+
+def cmd_models(a):
+    provider = a.provider or load_prefs().get("provider") or detect_provider()
+    if a.set:
+        current = dict(((load_prefs().get("models") or {}).get(provider) or {}))
+        for item in a.set:
+            kind, sep, value = item.partition("=")
+            if not sep:
+                raise Stop("Write each choice as kind=model, for example extract=opus.")
+            current[kind.strip()] = value.strip()
+        save_models(provider, current)
+    for k in KINDS:
+        print(f"{KIND_NAMES[k]}: {chosen_model(provider, k) or 'default of ' + provider}")
     return 0
 
 
@@ -3439,13 +3526,17 @@ def parser():
     u = sub.add_parser("update", help="check for a new version, and install it")
     u.add_argument("--check", action="store_true", help="only check")
     u.set_defaults(fn=cmd_update)
+    mo = sub.add_parser("models", help="choose the model for each kind of work")
+    mo.add_argument("--provider", choices=["claude", "codex"])
+    mo.add_argument("--set", action="append", metavar="KIND=MODEL", help="for example extract=opus, or extract=auto")
+    mo.set_defaults(fn=cmd_models)
     r = sub.add_parser("run", help="process the work")
     r.add_argument("--once", action="store_true", help="process what is waiting, then stop")
     r.add_argument("--limit", type=int, help="stop after this many tasks")
     r.add_argument("--project", type=int, help="only this project")
     r.add_argument("--only", help="comma-separated: extract, ask, bib, derive")
     r.add_argument("--provider", choices=["claude", "codex"])
-    r.add_argument("--model", help="model to use (default: that of your AI tool)")
+    r.add_argument("--model", help="use this model for all work (default: your choices in: oq.py models)")
     r.add_argument("--name", help="name of this computer on the platform")
     r.add_argument("--interval", type=int, default=60, help="seconds between checks")
     r.add_argument("--timeout", type=int, default=3600, help="maximum seconds per task")
@@ -3566,7 +3657,7 @@ const updateBanner=()=>{const u=S.update;if(!u?.available)return'';return`<secti
 const versionBox=()=>{const u=S.update||{};const label=u.available?`Version ${u.latest} available`:u.error?'Check failed':u.checked_at?'Up to date':'Not checked yet';return`<small>Version ${e(S.version)}</small><small>${e(label)}</small><button data-a=updatecheck ${checking?'disabled':''}>${checking?'Checking…':'Check for updates'}</button><a href="https://github.com/LudovicPatey/projects" target=_blank rel="noopener noreferrer">Source code (AGPL-3.0)</a>`};
 const home=()=>`<h1>Home</h1><p class=sub>Your computer helps your research projects, within the limits you set.</p>${updateBanner()}${hero()}<div class=grid>${usage()}<section class=panel><h2>Your projects</h2>${S.projects.map(p=>`<div class="row ${p.paused?'off':''}"><div><b>${e(p.title)}</b><small>${p.unavailable?'Could not read its work queue':p.waiting+' waiting'}${p.review?' · '+p.review+' reference(s) to validate':''}</small></div><button class=toggle role=switch aria-checked=${!p.paused} aria-label="${e(p.title)}: ${p.paused?'paused':'active'}" data-pswitch=${p.id}>${p.paused?'Paused':'Active'}<i></i></button></div>`).join('')||'<div class=empty>No project yet.</div>'}</section></div><section class=panel style="margin-top:14px"><h2>Activity</h2><div class=log tabindex=0>${S.log.slice().reverse().map(x=>`<div><span>${e(x.at)}</span>${e(x.text)}</div>`).join('')||'<div class=empty>Nothing yet.</div>'}</div></section>`;
 const num=(k,l,h,min,max,unit)=>`<label class=f>${e(l)}<small>${e(h)}</small><input type=number data-l=${k} min=${min} max=${max} value="${e(draft[k])}"></label>`;
-const limits=()=>`<h1>Usage limits</h1><p class=sub>Keep your AI subscription for your own work. These limits apply to all your active projects together.</p><div class=grid><section class=panel><h2>Share of your subscription</h2><label class=f>Stop at this share of the session limit: ${draft.max_session_percent}%<small>ChatGPT reports this directly.</small><input type=range min=5 max=100 step=5 data-l=max_session_percent value="${draft.max_session_percent}"></label><label class=f>Stop at this share of the weekly limit: ${draft.max_weekly_percent}%<input type=range min=5 max=100 step=5 data-l=max_weekly_percent value="${draft.max_weekly_percent}"></label><label class=f>Working hours<small>For example 22-7 for nights. Empty means all day.</small><input type=text data-l=hours value="${e(draft.hours)}" placeholder="All day"></label></section><section class=panel><h2>Daily caps</h2>${num('tasks_per_day','Tasks per day','0 means no cap.',0,1000)}${num('minutes_per_day','Computing minutes per day','0 means no cap.',0,1440)}${num('tokens_per_day','Tokens per day','0 means no cap.',0,10000000000)}${num('task_minutes','Maximum minutes per task','A longer task is stopped.',1,720)}</section></div><section class=panel style="margin-top:14px"><h2>What this computer may do</h2>${[['extract','Extract facts from new files'],['ask','Answer @AI questions'],['bib','Suggest references'],['derive','Prove new facts automatically, without pressing Start (uses more of your subscription)']].map(([k,l])=>`<label class=check><input type=checkbox data-k=${k} ${draft.kinds.includes(k)?'checked':''}> ${l}</label>`).join('')}<p><button class="btn primary" data-a=save>Save limits</button></p></section>`;
+let MD=null;const modelsPanel=()=>{const m=S.models;if(!m)return'';const p=S.provider==='codex'?'codex':'claude',c=m.choices[p]||{},v=k=>MD?.[k]??(c[k]||'auto'),hint=k=>m.auto[p]?.[k]||'your '+toolName(p)+' default';return`<section class=panel style="margin-bottom:14px"><h2>AI models</h2><p class=sub>Automatic follows new releases. A weaker model never repeats an extraction that a stronger one finished.</p><datalist id=mnames>${m.suggest[p].map(x=>`<option value="${e(x)}">`).join('')}</datalist><div class=grid>${[['extract','Extract facts'],['ask','Answer @AI'],['bib','Find references'],['derive','Automatic proving']].map(([k,l])=>`<label class=f>${l}<small>Automatic: ${e(hint(k))}</small><input type=text list=mnames data-md=${k} value="${e(v(k))}"></label>`).join('')}<label class=f>Proof search (Prove new facts)<small>Empty: ${e(m.danus_default)}</small><input type=text data-md=danus value="${e(MD?.danus??m.danus)}"></label></div><p><button class=btn data-a=modelsave>Save models</button></p></section>`};const limits=()=>`<h1>Usage limits</h1><p class=sub>Keep your AI subscription for your own work. These limits apply to all your active projects together.</p>${modelsPanel()}<div class=grid><section class=panel><h2>Share of your subscription</h2><label class=f>Stop at this share of the session limit: ${draft.max_session_percent}%<small>ChatGPT reports this directly.</small><input type=range min=5 max=100 step=5 data-l=max_session_percent value="${draft.max_session_percent}"></label><label class=f>Stop at this share of the weekly limit: ${draft.max_weekly_percent}%<input type=range min=5 max=100 step=5 data-l=max_weekly_percent value="${draft.max_weekly_percent}"></label><label class=f>Working hours<small>For example 22-7 for nights. Empty means all day.</small><input type=text data-l=hours value="${e(draft.hours)}" placeholder="All day"></label></section><section class=panel><h2>Daily caps</h2>${num('tasks_per_day','Tasks per day','0 means no cap.',0,1000)}${num('minutes_per_day','Computing minutes per day','0 means no cap.',0,1440)}${num('tokens_per_day','Tokens per day','0 means no cap.',0,10000000000)}${num('task_minutes','Maximum minutes per task','A longer task is stopped.',1,720)}</section></div><section class=panel style="margin-top:14px"><h2>What this computer may do</h2>${[['extract','Extract facts from new files'],['ask','Answer @AI questions'],['bib','Suggest references'],['derive','Prove new facts automatically, without pressing Start (uses more of your subscription)']].map(([k,l])=>`<label class=check><input type=checkbox data-k=${k} ${draft.kinds.includes(k)?'checked':''}> ${l}</label>`).join('')}<p><button class="btn primary" data-a=save>Save limits</button></p></section>`;
 const account=()=>{const t=n=>{const x=S.tools[n],j=S.jobs['install-'+n]?.running,g=S.jobs['login-'+n]?.running;return`<div class=row><div><b>${toolName(n)}</b><small>${x.installed?(x.signed_in?'Installed and signed in':'Installed, sign-in needed'):'Not installed'}${x.via_app?' · from Claude for Mac':''}</small></div>${!x.installed?`<button class=btn data-tool=install data-n=${n} ${j?'disabled':''}>${j?'Installing…':'Install'}</button>`:!x.signed_in?`<button class="btn primary" data-tool=login data-n=${n} ${g?'disabled':''}>${g?'Check your browser…':'Sign in'}</button>`:`<button class=btn data-use=${n} ${S.provider===n?'disabled':''}>${S.provider===n?'In use':'Use this'}</button>`}</div>`};
  return`<h1>Accounts</h1><p class=sub>The app uses your own AI account, on this computer.</p><section class=panel><h2>1. Choose your AI</h2>${t('claude')}${t('codex')}</section><section class=panel><h2>2. Connect to the platform</h2>${S.connected?`<div class=row><div><b>Connected</b><small>${e(S.url)}</small></div><button class="btn danger" data-a=disconnect>Disconnect</button></div>`:`<label class=f>Platform address<input type=text id=url data-c=url value="${e(CF.url??(S.url||'https://projects.ludovicpatey.com'))}"></label><label class=f>Personal key<small>Create it on your profile page on the platform, then paste it here.</small><input type=password id=key data-c=key autocomplete=off placeholder="ouk_…" value="${e(CF.key||'')}"></label>${connectErr||S.error?`<div class=err id=cerr role=alert>${e(connectErr||S.error)}</div>`:''}<button class="btn primary" data-a=connect ${connecting?'disabled':''}>${connecting?'Connecting…':'Connect'}</button>`}</section><section class=panel><h2>3. How AI use is paid</h2><label class=check><input type=radio name=billing data-billing=subscription ${S.limits.ai_billing==='subscription'?'checked':''}> <span><b>My subscription only</b> (recommended). API keys on this computer are ignored.</span></label><label class=check><input type=radio name=billing data-billing=api ${S.limits.ai_billing==='api'?'checked':''}> <span><b>Allow a paid API key.</b> The provider charges each use.</span></label><div class=note>If you turned on <b>usage credits</b> in your Claude settings, background work can spend them after your plan limit. Keep them off, or set a monthly cap.</div></section>`};
 const fmtMin=m=>{m=Math.round(m);return m>=60?`${Math.floor(m/60)} h ${String(m%60).padStart(2,'0')}`:`${m} min`};
@@ -3590,7 +3681,7 @@ const backup=()=>{const b=S.backup,s=b.settings,j=S.jobs.backup;BD=BD||{...s};co
 const render=()=>{if(pressing)return;const a=document.activeElement;if(a&&['INPUT','SELECT','TEXTAREA'].includes(a.tagName)&&view!=='home')return;for(const b of document.querySelectorAll('nav button')){b.classList.toggle('on',b.dataset.v===view);b.setAttribute('aria-current',b.dataset.v===view?'page':'false')}document.getElementById('ver').innerHTML=versionBox();const m=document.getElementById('m');const sc=m.querySelector('.log')?.scrollTop;m.innerHTML=(msg?`<div class=err role=alert>${e(msg)}</div>`:'')+{home,limits,danus,backup,account}[view]();if(sc)m.querySelector('.log').scrollTop=sc};
 document.addEventListener('click',ev=>{const b=ev.target.closest('button');if(!b)return;if(b.dataset.v){view=b.dataset.v;msg='';draft={...S.limits};BD=null;return render()}if(b.dataset.go){view=b.dataset.go;return render()}if(b.dataset.pswitch){const q=S.projects.find(p=>p.id===+b.dataset.pswitch);return call('/api/project/pause',{project_id:q.id,paused:!q.paused})}if(b.dataset.tool)return call('/api/tool/'+b.dataset.tool,{tool:b.dataset.n});if(b.dataset.use)return call('/api/limits',{}).then(()=>call('/api/start',{provider:b.dataset.use}));const x=b.dataset.a;if(x==='start')call('/api/start',{provider:S.provider});if(x==='stop')call('/api/stop');if(x==='disconnect'&&confirm('Disconnect this computer?'))call('/api/disconnect');if(x==='connect'&&!connecting){CF={url:document.getElementById('url').value,key:document.getElementById('key').value};connecting=true;connectErr='';render();call('/api/connect',CF).then(()=>{connecting=false;if(msg){connectErr=msg;msg=''}else{CF={};connectErr=''}render();document.getElementById('cerr')?.scrollIntoView({block:'center'})})}if(x==='save'){const{paused,...rest}=draft;document.activeElement?.blur();call('/api/limits',rest).then(()=>{if(!msg)draft={...S.limits}})}if(x==='updatecheck'){checking=true;render();call('/api/update/check').finally(()=>{checking=false;render()})}if(x==='updateapply'&&confirm('Install version '+S.update.latest+' now? The client restarts.')){updating=true;render();call('/api/update/apply').finally(()=>{setTimeout(()=>{updating=false;load()},2500)})}if(x==='backupnow')call('/api/backup/run');if(x==='backupopen')call('/api/backup/open');if(x==='backupsave'){document.activeElement?.blur();call('/api/backup/settings',BD).then(()=>{if(!msg){BD=null;render()}})}if(x==='danus')call('/api/danus/setup');if(x==='danusmode'){const m=S.danus.mode==='native'?'isolated':'native';if(m==='isolated'||confirm(NATIVE_WARNING))call('/api/danus/mode',{mode:m,accept:m==='native'})}if(x==='danusremoveiso'&&confirm('Remove the isolated machine and free its disk space?'))call('/api/danus/remove',{mode:'isolated'});if(x==='danusstop'&&confirm('Stop the proof search now? Its facts so far are kept.'))call('/api/danus/stop');if(x==='danusrun'){document.activeElement?.blur();const g=R.goal||'',b={project_id:R.project_id,prompt:R.prompt,minutes:R.minutes,stop_session:R.stop_session,stop_weekly:R.stop_weekly,on_limit:R.on_limit,workers:R.workers,task_id:g[0]==='t'?+g.slice(1):null,question_id:g[0]==='q'?+g.slice(1):null};if(R.on_limit==='resume'&&!R.minutes&&!confirm('This run continues after every reset until you stop it. Start it?'))return;call('/api/danus/run',b).then(()=>{if(!msg)O={}})}if(x==='danusremove'&&confirm('Remove the prover and its isolated machine?'))call('/api/danus/remove')});
 document.addEventListener('pointerdown',()=>{pressing=true});for(const n of ['pointerup','pointercancel'])document.addEventListener(n,()=>setTimeout(()=>{pressing=false},0));document.addEventListener('input',ev=>{const t=ev.target;if(t.dataset.c){CF[t.dataset.c]=t.value;connectErr=''}if(t.dataset.b&&BD){const k=t.dataset.b;BD[k]=k==='enabled'?t.checked:k==='folder'?t.value:+t.value;if(t.type==='checkbox'||t.tagName==='SELECT')t.blur()}if(t.dataset.l){draft[t.dataset.l]=t.type==='text'?t.value:+t.value;if(t.type==='range'){t.closest('label').firstChild.textContent=t.closest('label').firstChild.textContent.replace(/\d+%/,t.value+'%')}}if(t.dataset.k){draft.kinds=['extract','ask','bib','derive'].filter(k=>k===t.dataset.k?t.checked:draft.kinds.includes(k))}if('danus'in t.dataset)draft.danus_enabled=t.checked;if(t.dataset.r&&R){const k=t.dataset.r;R[k]=['goal','prompt','on_limit'].includes(k)?t.value:+t.value;if(k==='project_id'){R.goal='';t.blur();options();render()}const set=(i,v)=>{const x=document.getElementById(i);if(x)x.textContent=v};if(k==='workers')set('rw',t.value);if(k==='stop_session')set('rs',t.value);if(k==='stop_weekly')set('rk',t.value);const n=document.getElementById('runsum');if(n)n.innerHTML=runSummary(R.minutes?fmtMin(R.minutes):'no time limit')}});
-document.addEventListener('change',ev=>{const dm=ev.target.dataset?.dmode;if(dm){ev.target.blur();if(dm==='native'&&!confirm(NATIVE_WARNING))return load();return call('/api/danus/mode',{mode:dm,accept:dm==='native'})}const b=ev.target.dataset?.billing;if(!b)return;ev.target.blur();if(b==='api'&&!confirm('Allow a paid API key? The AI provider will charge each use to that key.'))return load();call('/api/limits',{ai_billing:b}).then(()=>{if(!msg)draft={...S.limits}})});
+document.addEventListener('input',ev=>{const k=ev.target.dataset?.md;if(k)MD={...(MD||{}),[k]:ev.target.value}});document.addEventListener('click',ev=>{if(ev.target.closest('button')?.dataset.a!=='modelsave')return;document.activeElement?.blur();const p=S.provider==='codex'?'codex':'claude',{danus,...edits}=MD||{};call('/api/models',{provider:p,choices:{...(S.models.choices[p]||{}),...edits},...(danus===undefined?{}:{danus})}).then(()=>{if(!msg){MD=null;render()}})});document.addEventListener('change',ev=>{const dm=ev.target.dataset?.dmode;if(dm){ev.target.blur();if(dm==='native'&&!confirm(NATIVE_WARNING))return load();return call('/api/danus/mode',{mode:dm,accept:dm==='native'})}const b=ev.target.dataset?.billing;if(!b)return;ev.target.blur();if(b==='api'&&!confirm('Allow a paid API key? The AI provider will charge each use to that key.'))return load();call('/api/limits',{ai_billing:b}).then(()=>{if(!msg)draft={...S.limits}})});
 load();setInterval(()=>{if(!document.hidden)load()},3000);
 </script></body></html>
 '''

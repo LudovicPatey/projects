@@ -17,7 +17,10 @@ final class BibController
                     (SELECT COUNT(*) FROM comments c WHERE c.target_type = 'bib' AND c.target_id = b.id) AS comment_count
              FROM bib_entries b JOIN users u ON u.id = b.created_by LEFT JOIN users au ON au.id = b.ai_user_id
              WHERE b.project_id = ? ORDER BY b.cite_key", [$pid]);
-        Response::json(['entries' => $rows]);
+        $state = AiTaskController::bibExtraction($pid);
+        foreach ($rows as &$row) $row['extraction'] = $state['entries'][(int)$row['id']] ?? ['state' => 'none', 'models' => []];
+        unset($row);
+        Response::json(['entries' => $rows, 'progress' => $state['progress']]);
     }
 
     public static function show(Request $r): never

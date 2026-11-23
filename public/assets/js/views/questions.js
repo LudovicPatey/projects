@@ -116,6 +116,8 @@ export const QuestionsView = {
       <header class="q-head">
         <h1><math-text :text="question.title"/></h1>
         <div class="row-gap q-actions">
+          <ai-action kind="ask" source-type="question" :source-id="question.id" label="Ask AI"/>
+          <ai-action kind="derive" source-type="question" :source-id="question.id"/>
           <button class="icon-btn" title="Mark as unread" aria-label="Mark as unread" @click="markUnread('oquestion', question.id)"><icon name="mail" :size="16"/></button>
           <button class="btn sm" @click="editQuestion"><icon name="edit" :size="14"/> Edit</button>
           <button v-if="canDelete" class="icon-btn" title="Delete this question" aria-label="Delete this question" @click="removeQuestion"><icon name="trash" :size="16"/></button>

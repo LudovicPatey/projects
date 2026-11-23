@@ -514,6 +514,7 @@ CREATE TABLE IF NOT EXISTS ai_tasks (
   source_type VARCHAR(12) NULL,           -- document, bib, message, comment, question, strategy, fact
   source_id INT UNSIGNED NULL,
   version_id INT UNSIGNED NULL,
+  source_blob_id INT UNSIGNED NULL,       -- the PDF of a reference that an extraction reads
   conversation_id INT UNSIGNED NULL,      -- set when the task exposes a private conversation
   prompt_text TEXT NULL,
   requested_by INT UNSIGNED NULL,

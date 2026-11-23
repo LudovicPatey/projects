@@ -2,13 +2,13 @@ import { api } from '../api.js';
 import { store, link, attempt, refreshCounters, toast } from '../store.js';
 import { timeAgo, fullDate } from '../util.js';
 import { Pill, Kpi, StackBar } from '../dashboard.js';
-import { AI_KINDS, TASK_SEGMENTS, TASK_STATUS, filterTasks, requestBody, requestError, resultLinks, suggestionLink, taskActions, taskTitle } from '../ai-model.js';
+import { bibProgress, AI_KINDS, TASK_SEGMENTS, TASK_STATUS, filterTasks, requestBody, requestError, resultLinks, suggestionLink, taskActions, taskTitle } from '../ai-model.js';
 
 export const AiView = {
   components: { Pill, Kpi, StackBar },
   props: { pid: Number, id: Number, query: Object },
   data() {
-    return { d: null, filter: 'all', draft: { kind: 'bib', prompt: '', document: '', question: '' }, documents: [], references: [], questions: [], busy: false, timer: null };
+    return { d: null, filter: 'all', draft: { kind: 'bib', prompt: '', document: '', question: '' }, documents: [], references: [], questions: [], busy: false, timer: null, bibData: null };
   },
   computed: {
     tasks() { return filterTasks(this.d?.tasks || [], this.filter); },
@@ -18,6 +18,7 @@ export const AiView = {
     error() { return requestError(this.draft); },
     online() { return this.d?.clients || []; },
     actions() { return this.task ? taskActions(this.task, { me: store.user.id, owner: store.project?.my_role === 'owner' }) : {}; },
+    bib() { return bibProgress(this.bibData); },
     open() { return (this.d?.counts.pending || 0) + (this.d?.counts.running || 0); },
   },
   created() { this.kinds = AI_KINDS; this.statuses = TASK_STATUS; this.segments = TASK_SEGMENTS; },
@@ -25,6 +26,7 @@ export const AiView = {
     await this.load();
     const [docs, qs, bib] = await Promise.all([attempt(() => api.get(`api/projects/${this.pid}/documents`)), attempt(() => api.get(`api/projects/${this.pid}/questions`)), attempt(() => api.get(`api/projects/${this.pid}/bib`))]);
     this.references = (bib?.entries || []).filter((e) => e.has_pdf);
+    this.bibData = bib?.progress || null;
     this.documents = docs?.documents || (Array.isArray(docs) ? docs : []);
     this.questions = qs?.questions || [];
     this.timer = setInterval(() => { if (!document.hidden) this.load(); }, 15000);
@@ -50,6 +52,12 @@ export const AiView = {
       const r = await attempt(() => api.post(`api/projects/${this.pid}/ai/tasks`, requestBody(this.draft)), 'Request added to the queue');
       this.busy = false;
       if (r) { this.draft.prompt = ''; await this.load(); }
+    },
+    async extractAll() {
+      const n = this.bib.toQueue;
+      if (!confirm(`Queue ${n} PDF${n > 1 ? 's' : ''} for fact extraction? Each one uses the AI subscription of the member whose client processes it.`)) return;
+      const r = await attempt(() => api.post(`api/projects/${this.pid}/bib/extract-all`, {}));
+      if (r) { this.bibData = r.progress; toast(`${r.queued} added to the AI queue`, 'success'); await this.load(); }
     },
     async act(verb) {
       if (await attempt(() => api.post(`api/ai/tasks/${this.task.id}/${verb}`, {}))) await this.load();
@@ -100,7 +108,7 @@ export const AiView = {
             <div class="ai-list">
               <a v-for="t in tasks" :key="t.id" class="ai-row" :class="{active: t.id === id}" :href="t.id === id ? link('ai') : link('ai', t.id)">
                 <span class="action-icon t-info"><icon :name="kinds[t.kind].icon" :size="14"/></span>
-                <span class="ai-row-main"><b><math-text :text="taskTitle(t)"/></b><small>{{ t.requested_by_name || 'Platform' }} · {{ timeAgo(t.created_at) }}<template v-if="t.ai_model"> · {{ t.ai_model }}</template></small></span>
+                <span class="ai-row-main"><b><math-text :text="taskTitle(t)"/></b><small>{{ t.requested_by_name || 'Platform' }} · {{ timeAgo(t.created_at) }}<template v-if="t.ai_model"> · {{ t.ai_model }}</template><template v-if="t.already_done_by?.length"> · waits for a model not weaker than {{ t.already_done_by.join(', ') }}</template></small></span>
                 <span class="pill" :class="'t-' + statuses[t.status].tone">{{ statuses[t.status].short }}</span>
               </a>
               <div v-if="!tasks.length" class="d-empty">No task here. Upload a file, write @AI in a discussion, or make a request.</div>
@@ -133,10 +141,11 @@ export const AiView = {
             </div>
             <p class="ai-hint">{{ kinds[draft.kind].hint }}</p>
             <label v-if="draft.kind === 'extract'" class="field"><span>File or reference</span><select v-model="draft.document"><option value="">Choose…</option><optgroup v-if="documents.length" label="Files"><option v-for="f in documents" :key="f.id" :value="f.id">{{ f.title }}</option></optgroup><optgroup v-if="references.length" label="References with a PDF"><option v-for="b in references" :key="b.id" :value="'bib:' + b.id">{{ b.title }}</option></optgroup></select></label>
+            <button v-if="draft.kind === 'extract' && bib.toQueue" class="btn block" @click="extractAll"><icon name="sparkles" :size="14"/> Extract all {{ bib.toQueue }} remaining reference PDFs</button>
             <label v-if="draft.kind === 'derive'" class="field"><span>Toward a question (optional)</span><select v-model="draft.question"><option value="">The whole project</option><option v-for="q in questions" :key="q.id" :value="q.id">{{ q.title }}</option></select></label>
             <label class="field"><span>{{ draft.kind === 'ask' ? 'Your question' : 'Instructions (optional)' }}</span><textarea v-model="draft.prompt" rows="3" maxlength="4000" :placeholder="draft.kind === 'bib' ? 'For example: work on sunflower bounds since 2019' : ''"></textarea></label>
             <button class="btn primary block" :disabled="!!error || busy" @click="send">Add to the queue</button>
-            <p class="ai-note">The next member's AI client to run will process it, with that member's AI account.</p>
+            <p class="ai-note">The next member's AI client to run will process it, with the model that member chose for this work.</p>
           </section>
         </aside>
       </div>

@@ -1,5 +1,7 @@
 import { initials, colorFor, formatDuration } from './util.js';
-import { store, unreadCount, markAllRead } from './store.js';
+import { store, unreadCount, markAllRead, attempt } from './store.js';
+import { api } from './api.js';
+import { AI_KINDS } from './ai-model.js';
 
 export const ICONS = {
   sparkles: '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 15v4"/><path d="M17 17h4"/><path d="M5 3v3"/><path d="M3.5 4.500h3"/>',
@@ -93,6 +95,35 @@ export const AiMeta = {
   template: `<span v-if="model" class="ai-meta" :class="{compact}" :title="title"><icon name="bot" :size="11"/> <b>{{ model }}</b><span v-if="user && !compact"> · for {{ user }}</span><span v-if="duration"> · {{ duration }}</span></span>`,
 };
 
+/** The same AI request from anywhere it is relevant. It joins the queue shown on the AI page. */
+export const AiAction = {
+  props: { kind: String, sourceType: String, sourceId: Number, label: String, disabled: Boolean, title: String },
+  data() { return { busy: false, asking: false, prompt: '' }; },
+  computed: {
+    info() { return AI_KINDS[this.kind]; },
+    text() { return this.label || this.info.label; },
+    needsPrompt() { return this.kind === 'ask'; },
+  },
+  methods: {
+    click() { if (this.needsPrompt) this.asking = true; else this.send(); },
+    async send() {
+      if (this.needsPrompt && !this.prompt.trim()) return;
+      this.busy = true;
+      const body = { kind: this.kind, ...(this.sourceType ? { source_type: this.sourceType, source_id: this.sourceId } : {}), ...(this.needsPrompt ? { prompt_text: this.prompt.trim() } : {}) };
+      const done = await attempt(() => api.post(`api/projects/${store.project.id}/ai/tasks`, body), 'Added to the AI queue. A running AI client will process it.');
+      this.busy = false;
+      if (done) { this.asking = false; this.prompt = ''; this.$emit('queued', done); }
+    },
+  },
+  emits: ['queued'],
+  template: `<button class="btn sm" :disabled="busy || disabled" :title="title || info.hint" @click="click"><icon :name="info.icon === 'files' ? 'sparkles' : info.icon" :size="14"/> {{ text }}</button>
+  <modal v-if="asking" :title="text" @close="asking = false">
+    <label class="field"><span>Your question</span><textarea v-model="prompt" rows="4" maxlength="4000"></textarea></label>
+    <p class="muted small">The answer appears on the AI work page.</p>
+    <template #footer><button class="btn ghost" @click="asking = false">Cancel</button><button class="btn primary" :disabled="busy || !prompt.trim()" @click="send">Add to the queue</button></template>
+  </modal>`,
+};
+
 /** Red counter, like the badge of an iPhone app. */
 export const UnreadBadge = {
   props: { type: String, id: Number },
@@ -140,6 +171,7 @@ export function registerCommon(app) {
   app.component('origin-badge', OriginBadge);
   app.component('agent-tag', AgentTag);
   app.component('ai-meta', AiMeta);
+  app.component('ai-action', AiAction);
   app.component('unread-badge', UnreadBadge);
   app.component('mark-all-read', MarkAllRead);
 }

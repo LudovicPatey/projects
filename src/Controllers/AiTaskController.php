@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 namespace App\Controllers;
 
-use App\{Access, Activity, Auth, BibTex, Db, HttpError, Notify, Provenance, Request, Response, Sanitizer};
+use App\{Access, Activity, Auth, BibTex, Db, HttpError, ModelOrder, Notify, Provenance, Request, Response, Sanitizer};
 
 /**
  * The AI work queue. The platform stores requests and results and never runs a model:
@@ -45,7 +45,7 @@ final class AiTaskController
         return preg_match('/(?<![\w@.])@AI\b/iu', $text) === 1;
     }
 
-    private static function insertTask(int $pid, string $kind, ?string $sourceType, ?int $sourceId, ?int $versionId, ?int $conversationId, ?string $prompt, ?string $dedupe): int
+    private static function insertTask(int $pid, string $kind, ?string $sourceType, ?int $sourceId, ?int $versionId, ?int $conversationId, ?string $prompt, ?string $dedupe, ?int $blobId = null): int
     {
         if ($dedupe !== null) {
             $old = Db::value('SELECT id FROM ai_tasks WHERE project_id = ? AND dedupe_key = ?', [$pid, $dedupe]);
@@ -54,7 +54,7 @@ final class AiTaskController
         $now = Db::now();
         return Db::insert('ai_tasks', [
             'project_id' => $pid, 'kind' => $kind, 'status' => 'pending', 'source_type' => $sourceType, 'source_id' => $sourceId,
-            'version_id' => $versionId, 'conversation_id' => $conversationId, 'prompt_text' => $prompt,
+            'version_id' => $versionId, 'source_blob_id' => $blobId, 'conversation_id' => $conversationId, 'prompt_text' => $prompt,
             'requested_by' => Auth::id(), 'dedupe_key' => $dedupe, 'created_at' => $now, 'updated_at' => $now,
         ]);
     }
@@ -112,8 +112,65 @@ final class AiTaskController
                            AND " . ($sourceType === null ? 'source_type IS NULL AND source_id IS NULL' : 'source_type = ? AND source_id = ?') . " AND COALESCE(prompt_text, '') = ?",
             array_merge([$pid, $kind], $sourceType === null ? [] : [$sourceType, $sourceId], [$prompt]));
         if ($open) throw new HttpError(409, 'The same request is already waiting.');
-        $id = self::insertTask($pid, $kind, $sourceType, $sourceId, $versionId, null, $prompt !== '' ? $prompt : null, null);
+        $blobId = $kind === 'extract' && $sourceType === 'bib' ? (int)Db::value('SELECT pdf_blob_id FROM bib_entries WHERE id = ?', [$sourceId]) : null;
+        $id = self::insertTask($pid, $kind, $sourceType, $sourceId, $versionId, null, $prompt !== '' ? $prompt : null, null, $blobId);
         Response::json(self::present(self::row($id)), 201);
+    }
+
+    /** Queues every reference whose current PDF has no finished or waiting extraction. */
+    public static function extractAll(Request $r): never
+    {
+        self::humanOnly();
+        $pid = $r->int('id');
+        Access::member($pid);
+        $state = self::bibExtraction($pid);
+        $queued = 0;
+        foreach (Db::all('SELECT id, pdf_blob_id FROM bib_entries WHERE project_id = ? AND pdf_blob_id IS NOT NULL ORDER BY id', [$pid]) as $b) {
+            $e = $state['entries'][(int)$b['id']];
+            if (!in_array($e['state'], ['none', 'failed'], true)) continue;
+            // The key differs after each failed attempt, and stops two simultaneous clicks from queuing twice.
+            self::insertTask($pid, 'extract', 'bib', (int)$b['id'], null, null, null, "bibx:{$b['id']}:{$b['pdf_blob_id']}:{$e['last_task']}", (int)$b['pdf_blob_id']);
+            $queued++;
+        }
+        Response::json(['queued' => $queued, 'progress' => self::bibExtraction($pid)['progress']], 201);
+    }
+
+    /**
+     * Where each reference stands, for its current PDF only: replacing a PDF starts over.
+     * @return array{entries: array<int, array>, progress: array<string, int>}
+     */
+    public static function bibExtraction(int $pid): array
+    {
+        $entries = [];
+        $progress = ['total' => 0, 'with_pdf' => 0, 'extracted' => 0, 'queued' => 0, 'failed' => 0, 'remaining' => 0];
+        $tasks = [];
+        foreach (Db::all("SELECT id, source_id, source_blob_id, status, ai_model FROM ai_tasks WHERE project_id = ? AND kind = 'extract' AND source_type = 'bib' ORDER BY id", [$pid]) as $t) {
+            $tasks[(int)$t['source_id']][] = $t;
+        }
+        foreach (Db::all('SELECT id, pdf_blob_id FROM bib_entries WHERE project_id = ?', [$pid]) as $b) {
+            $progress['total']++;
+            $id = (int)$b['id'];
+            if (!$b['pdf_blob_id']) { $entries[$id] = ['state' => 'no_pdf', 'models' => [], 'last_task' => 0]; continue; }
+            $progress['with_pdf']++;
+            $own = array_values(array_filter($tasks[$id] ?? [], fn($t) => (int)$t['source_blob_id'] === (int)$b['pdf_blob_id']));
+            $statuses = array_column($own, 'status');
+            $models = array_values(array_unique(array_filter(array_map(fn($t) => $t['status'] === 'done' ? $t['ai_model'] : null, $own))));
+            $last = $own ? end($own) : null;
+            $state = in_array('done', $statuses, true) ? 'done' : (array_intersect(['pending', 'running'], $statuses) ? 'queued' : ($last && $last['status'] === 'failed' ? 'failed' : 'none'));
+            $entries[$id] = ['state' => $state, 'models' => $models, 'last_task' => $last ? (int)$last['id'] : 0];
+            $progress[['done' => 'extracted', 'queued' => 'queued', 'failed' => 'failed', 'none' => 'remaining'][$state]]++;
+        }
+        return ['entries' => $entries, 'progress' => $progress];
+    }
+
+    /** The models that already finished this extraction, on this exact file or PDF. */
+    private static function extractedBy(array $t): array
+    {
+        if ($t['kind'] !== 'extract' || !$t['source_type']) return [];
+        [$col, $value] = $t['source_type'] === 'bib' ? ['source_blob_id', $t['source_blob_id']] : ['version_id', $t['version_id']];
+        if (!$value) return [];
+        return array_column(Db::all("SELECT DISTINCT ai_model FROM ai_tasks WHERE project_id = ? AND kind = 'extract' AND status = 'done' AND source_type = ? AND source_id = ? AND $col = ?",
+            [$t['project_id'], $t['source_type'], $t['source_id'], $value]), 'ai_model');
     }
 
     public static function cancel(Request $r): never
@@ -189,22 +246,29 @@ final class AiTaskController
         $where = ($project ? ' AND t.project_id = ?' : '') . ($only ? ' AND t.id = ?' : '');
         // A client from before this feature would fail these tasks and use up their attempts.
         if (!in_array('extract_bib', (array)$r->input('features', []), true)) $where .= " AND (t.kind <> 'extract' OR t.source_type IS NULL OR t.source_type <> 'bib')";
-        $candidates = Db::all(
-            "SELECT t.id, t.status FROM ai_tasks t JOIN project_members m ON m.project_id = t.project_id AND m.user_id = ?
-             WHERE t.kind IN $in AND (t.status = 'pending' OR (t.status = 'running' AND t.lease_until < ?))
-               AND (t.not_before IS NULL OR t.not_before <= ?) AND " . self::visibleSql('t') . "$where
-             ORDER BY CASE t.kind WHEN 'ask' THEN 0 ELSE 1 END, t.id LIMIT 10",
-            array_merge([$me], $params, [$now, $now, $me], $project ? [$project] : [], $only ? [$only] : []));
-        foreach ($candidates as $c) {
-            $lease = bin2hex(random_bytes(24));
-            $won = Db::run(
-                "UPDATE ai_tasks SET status = 'running', lease_hash = ?, lease_until = ?, attempts = attempts + 1, claimed_by = ?, client_name = ?, ai_model = ?, updated_at = ?
-                 WHERE id = ? AND (status = 'pending' OR (status = 'running' AND lease_until < ?))",
-                [hash('sha256', $lease), gmdate('Y-m-d H:i:s', time() + self::LEASE_SECONDS), $me, $name, $model, $now, $c['id'], $now])->rowCount();
-            if ($won === 1) {
-                $t = self::row((int)$c['id']);
-                Response::json(['task' => self::present($t) + ['lease' => $lease, 'lease_seconds' => self::LEASE_SECONDS, 'context' => self::context($t)]]);
+        $perKind = is_array($r->input('models')) ? $r->input('models') : [];
+        // Tasks this model must leave to a stronger one are skipped, so they cannot hide the work behind them.
+        for ($offset = 0; ; $offset += 100) {
+            $candidates = Db::all(
+                "SELECT t.* FROM ai_tasks t JOIN project_members m ON m.project_id = t.project_id AND m.user_id = ?
+                 WHERE t.kind IN $in AND (t.status = 'pending' OR (t.status = 'running' AND t.lease_until < ?))
+                   AND (t.not_before IS NULL OR t.not_before <= ?) AND " . self::visibleSql('t') . "$where
+                 ORDER BY CASE t.kind WHEN 'ask' THEN 0 ELSE 1 END, t.id LIMIT 100 OFFSET $offset",
+                array_merge([$me], $params, [$now, $now, $me], $project ? [$project] : [], $only ? [$only] : []));
+            foreach ($candidates as $c) {
+                $used = is_string($perKind[$c['kind']] ?? null) ? (mb_substr($perKind[$c['kind']], 0, 120) ?: $model) : $model;
+                if (ModelOrder::covered(self::extractedBy($c), $used)) continue;
+                $lease = bin2hex(random_bytes(24));
+                $won = Db::run(
+                    "UPDATE ai_tasks SET status = 'running', lease_hash = ?, lease_until = ?, attempts = attempts + 1, claimed_by = ?, client_name = ?, ai_model = ?, updated_at = ?
+                     WHERE id = ? AND (status = 'pending' OR (status = 'running' AND lease_until < ?))",
+                    [hash('sha256', $lease), gmdate('Y-m-d H:i:s', time() + self::LEASE_SECONDS), $me, $name, $used, $now, $c['id'], $now])->rowCount();
+                if ($won === 1) {
+                    $t = self::row((int)$c['id']);
+                    Response::json(['task' => self::present($t) + ['lease' => $lease, 'lease_seconds' => self::LEASE_SECONDS, 'context' => self::context($t)]]);
+                }
             }
+            if (count($candidates) < 100) break;
         }
         Response::json(['task' => null]);
     }
@@ -556,7 +620,8 @@ final class AiTaskController
         foreach (['id', 'project_id', 'source_id', 'version_id', 'conversation_id', 'requested_by', 'claimed_by', 'attempts'] as $k) $t[$k] = $t[$k] === null ? null : (int)$t[$k];
         $out = array_intersect_key($t, array_flip(['id', 'project_id', 'kind', 'status', 'source_type', 'source_id', 'version_id', 'conversation_id', 'prompt_text', 'requested_by', 'requested_by_name',
             'claimed_by', 'claimed_by_name', 'client_name', 'ai_model', 'ai_generation_ms', 'attempts', 'summary_text', 'error_text', 'created_at', 'updated_at', 'finished_at']));
-        return $out + ['subject' => $subject, 'result' => $result];
+        $waiting = $t['status'] === 'pending' ? self::extractedBy($t) : [];
+        return $out + ['subject' => $subject, 'result' => $result, 'already_done_by' => $waiting];
     }
 
     private static function presentSuggestion(array $s): array
