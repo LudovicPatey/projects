@@ -199,6 +199,7 @@ The platform stores AI requests and results and never runs a model. A client on 
 | POST | `/api/projects/{id}/ai/suggestions` | AI | `{"suggestions": [{"title", "reason_text", "doi" or "arxiv" or "url", "authors"?, "year"?, "venue"?}], "ai_model", "task_id"?}`. At most 25. |
 | POST | `/api/bib-suggestions/{id}/accept`, `/reject` | people | Only an accepted suggestion enters the bibliography. |
 
+- `extract` tasks include `context.comments`: the comments on that file version or PDF, with their passage and page. A client that reads them sends `"extract_comments"` in `features`. An extracted fact can cite one as `{"type": "comment", "id": …, "quote": …, "covers": "context", "role": "supports" | "disputes" | "clarifies"}`, in addition to its text source. `POST /api/facts/{id}/comment-links` with `{"comment_id", "quote", "role"}` links a comment to an existing fact from the same text, without a new revision.
 - A person can queue an `extract` task for a reference with a PDF. Clients that handle it send `"features": ["extract_bib"]` when claiming, and cite the fact sources as `{"type": "bib", "id": …, "page": …, "quote": …}`.
 - A file or version uploaded by a person queues an `extract` task. `@AI` in a person's message or comment queues an `ask` task. Text written by an AI never queues one.
 - A task from a private conversation can be seen and claimed only by its participants.

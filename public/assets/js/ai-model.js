@@ -83,13 +83,13 @@ export function suggestionLink(s) {
 
 /** The bibliography progress: PDFs attached, and PDFs whose facts were extracted. */
 export function bibProgress(p) {
-  const x = { total: 0, with_pdf: 0, extracted: 0, queued: 0, failed: 0, remaining: 0, ...(p || {}) };
+  const x = { total: 0, with_pdf: 0, extracted: 0, new_comments: 0, queued: 0, failed: 0, remaining: 0, ...(p || {}) };
   const share = (n, d) => (d ? Math.round((n / d) * 100) : 0);
-  return { ...x, pdfPercent: share(x.with_pdf, x.total), extractedPercent: share(x.extracted, x.with_pdf), toQueue: x.remaining + x.failed };
+  return { ...x, pdfPercent: share(x.with_pdf, x.total), extractedPercent: share(x.extracted, x.with_pdf), toQueue: x.remaining + x.failed + x.new_comments };
 }
 
 export const EXTRACTION_LABEL = {
-  done: 'facts extracted', queued: 'extraction queued', failed: 'extraction failed',
+  done: 'facts extracted', comments: 'new comments', queued: 'extraction queued', failed: 'extraction failed',
 };
 
 /** "@AI" is offered first in the @ menu when the text typed so far can still become it. */

@@ -161,6 +161,8 @@ final class Db
         $migrations[] = 'ALTER TABLE fact_lean ADD COLUMN check_user_id INT UNSIGNED NULL';
         $migrations[] = 'ALTER TABLE fact_lean ADD COLUMN check_generation_ms INT UNSIGNED NULL';
         $migrations[] = 'ALTER TABLE ai_tasks ADD COLUMN source_blob_id INT UNSIGNED NULL';
+        $migrations[] = 'ALTER TABLE ai_tasks ADD COLUMN comments_hash CHAR(40) NULL';
+        $migrations[] = 'ALTER TABLE fact_sources ADD COLUMN comment_role VARCHAR(10) NULL';
         foreach ($migrations as $m) {
             try { self::pdo()->exec($m); } catch (\PDOException) { /* already applied */ }
         }

@@ -175,7 +175,7 @@ final class References
                 foreach ($ids as $id) {
                     if (!isset($graph[$id])) continue;
                     $f = $graph[$id];
-                    $out[$id] = self::item($type, $id, $f['label'], $f['title'], ucfirst($f['kind']), $f['status'], (string)$f['statement_text'], null, $f['ai_model'], $f['updated_at'] ?? null, ['view' => 'facts', 'id' => $id]);
+                    $out[$id] = self::item($type, $id, $f['label'], $f['title'], ucfirst($f['display_kind']), $f['status'], (string)$f['statement_text'], null, $f['ai_model'], $f['updated_at'] ?? null, ['view' => 'facts', 'id' => $id]);
                 }
                 break;
             case 'review':

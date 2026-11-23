@@ -1447,8 +1447,6 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: non
 .fact-view-switch { display: flex; justify-content: flex-end; margin-bottom: -6px; }
 .fact-readable { max-width: 86ch; line-height: 1.68; font-size: 15px; }
 .fact-readable p { margin: 0 0 .8em; }
-.fact-readable .ff-head { margin: 1.25em 0 .4em; padding-bottom: 3px; font-size: 13.5px; font-weight: 700; color: var(--accent); border-bottom: 1px solid var(--line); }
-.fact-readable > .ff-head:first-child { margin-top: 0; }
 .fact-readable .ff-lead { font-weight: 700; }
 .fact-readable .ff-item, .fact-readable .ff-eq { display: grid; grid-template-columns: 3em minmax(0, 1fr); gap: 2px 6px; margin: 0 0 .7em; }
 .fact-readable .ff-label { color: var(--muted, #667085); font-weight: 600; text-align: right; padding-right: 6px; }
@@ -1463,3 +1461,31 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: non
 .ext-link { display: inline-flex; align-items: center; gap: 4px; margin-top: 5px; font-size: 12.5px; }
 .ext-raw { white-space: pre-wrap; overflow-wrap: anywhere; }
 @media (max-width: 640px) { .fact-readable .ff-item, .fact-readable .ff-eq { grid-template-columns: 2.4em minmax(0, 1fr); } }
+
+/* Mathematical types: definitions, statements and proofs, as in a paper */
+.kind-tag { flex: none; display: inline-flex; align-items: center; padding: 1px 7px; border-radius: 10px; font-size: 11px; font-weight: 700; background: var(--k-bg, var(--line-2)); color: var(--k, #475467); }
+.k-theorem { --k: #3730a3; --k-bg: #eef0fe; }
+.k-proposition { --k: #0f766e; --k-bg: #e6f6f3; }
+.k-lemma { --k: #0369a1; --k-bg: #e8f4fb; }
+.k-corollary { --k: #6d28d9; --k-bg: #f3edff; }
+.k-claim { --k: #0369a1; --k-bg: #e8f4fb; }
+.k-definition { --k: #92400e; --k-bg: #fdf3e3; }
+.k-conjecture { --k: #b42318; --k-bg: #fdecea; }
+.k-remark, .k-proof { --k: #475467; --k-bg: #f2f4f7; }
+.kind-filter { display: flex; flex-wrap: wrap; gap: 4px; }
+.kind-filter button { display: inline-flex; gap: 4px; align-items: center; padding: 2px 8px; border: 1px solid var(--line); border-radius: 12px; background: transparent; color: var(--k, #475467); font-size: 12px; cursor: pointer; }
+.kind-filter button b { font-weight: 700; opacity: .75; }
+.kind-filter button.on { background: var(--k-bg, var(--line-2)); border-color: var(--k, #98a2b3); font-weight: 600; }
+.fact-outline { flex: none; min-height: 34px; align-items: center; position: sticky; top: 0; z-index: 3; display: flex; gap: 5px; overflow-x: auto; padding: 6px 2px; background: var(--panel, #fff); border-bottom: 1px solid var(--line); }
+.fact-outline button { flex: none; min-height: 22px; line-height: 18px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 2px 9px; border: 0; border-radius: 11px; background: var(--k-bg, var(--line-2)); color: var(--k, #475467); font-size: 12px; font-weight: 600; cursor: pointer; }
+.fact-readable .ff-env { --k-line: var(--k, var(--line)); margin: 0 0 1em; padding: 9px 13px 4px; border-left: 3px solid var(--k-line); border-radius: 0 7px 7px 0; background: color-mix(in srgb, var(--k-bg, #f7f8fc) 45%, transparent); scroll-margin-top: 44px; }
+.fact-readable .ff-env .ff-env { margin: .7em 0; }
+.fact-readable .ff-proof { background: transparent; border-left-color: var(--line); padding-right: 0; }
+.fact-readable .ff-env-head { margin-bottom: 4px; color: var(--k, #475467); font-size: 13.5px; font-weight: 700; }
+.fact-readable .ff-proof > .ff-env-head { font-style: italic; }
+.fact-readable > .ff-proof::after, .fact-readable .ff-proof > .ff-proof::after { content: ""; display: block; width: 8px; height: 8px; margin: 2px 0 6px auto; border: 1px solid #667085; }
+@media (max-width: 640px) { .fact-readable .ff-env { padding-left: 9px; padding-right: 6px; } }
+
+.comment-role.r-disputes { background: var(--bad-bg) !important; color: var(--bad) !important; }
+.comment-role.r-supports { background: var(--good-bg) !important; color: var(--good) !important; }
+.comment-role.r-clarifies { background: var(--info-bg) !important; color: var(--info) !important; }

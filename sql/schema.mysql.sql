@@ -334,6 +334,7 @@ CREATE TABLE IF NOT EXISTS fact_sources (
   quote TEXT NOT NULL,
   is_human TINYINT(1) NOT NULL DEFAULT 1,
   covers VARCHAR(10) NOT NULL DEFAULT 'context', -- 'statement' | 'proof' | 'both' | 'context'
+  comment_role VARCHAR(10) NULL,          -- for a comment: 'supports' | 'disputes' | 'clarifies'
   author_user_id INT UNSIGNED NULL,
   author_name VARCHAR(500) NULL,
   author_basis VARCHAR(20) NULL,          -- how the credit is known
@@ -515,6 +516,7 @@ CREATE TABLE IF NOT EXISTS ai_tasks (
   source_id INT UNSIGNED NULL,
   version_id INT UNSIGNED NULL,
   source_blob_id INT UNSIGNED NULL,       -- the PDF of a reference that an extraction reads
+  comments_hash CHAR(40) NULL,            -- the people's comments that an extraction took into account
   conversation_id INT UNSIGNED NULL,      -- set when the task exposes a private conversation
   prompt_text TEXT NULL,
   requested_by INT UNSIGNED NULL,

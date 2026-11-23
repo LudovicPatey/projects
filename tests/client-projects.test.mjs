@@ -51,8 +51,10 @@ beforeEach(async () => {
 
 test('projects are active by default, and the list shows their state', () => {
   const e = fresh();
-  assert.match(oq(e, 'projects').stdout, /Main project: active[\s\S]*Side project: active/);
-  assert.match(oq(e, 'projects', 'pause', String(main)).stdout, /Main project: paused[\s\S]*Side project: active/);
+  const listed = oq(e, 'projects').stdout; // projects updated in the same second can come in either order
+  assert.match(listed, /Main project: active/); assert.match(listed, /Side project: active/);
+  const paused = oq(e, 'projects', 'pause', String(main)).stdout;
+  assert.match(paused, /Main project: paused/); assert.match(paused, /Side project: active/);
   assert.match(oq(e, 'projects', 'resume', String(main)).stdout, /Main project: active/);
 });
 

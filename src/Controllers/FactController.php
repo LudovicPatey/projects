@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 namespace App\Controllers;
 
-use App\{Access, Activity, Auth, Db, HttpError, Notify, Provenance, Request, Response, Sanitizer};
+use App\{FactKind, Access, Activity, Auth, Db, HttpError, Notify, Provenance, Request, Response, Sanitizer};
 
 /**
  * Fact database: a DAG of statements with proof and intuition.
@@ -31,6 +31,7 @@ final class FactController
     /** Entries that record a judgment or a research step rather than a claim to prove. */
     private const NO_PROOF_LABELS = ['plan', 'dead_end', 'direction', 'obstacle', 'master_guidance'];
     private const COVERS = ['statement', 'proof', 'both'];
+    private const COMMENT_ROLES = ['supports', 'disputes', 'clarifies'];
 
     public static function list(Request $r): never
     {
@@ -85,6 +86,7 @@ final class FactController
             $f['denied_by'] = array_values(array_map(fn($v) => ['id' => (int)$v['reviewer_id'], 'name' => $v['reviewer_name']],
                 array_filter($reviews[$id] ?? [], fn($v) => $v['reviewer_kind'] === 'human' && $v['verdict'] === 'incorrect')));
             $f['statement_text'] = Sanitizer::toText($f['statement_html']);
+            $f['display_kind'] = FactKind::of((string)$f['kind'], $f['tool'], $f['statement_text']);
             unset($f['statement_html']);
             $f['deps'] = [];
             $f['dependents'] = [];
@@ -328,7 +330,7 @@ final class FactController
         if (array_key_exists('sources', $it)) {
             $sources = self::sources($pid, $it, $f['method']);
         } else {
-            $sources = Db::all('SELECT source_type, source_id, version_id, conversation_id, page, quote, is_human, covers, author_user_id, author_name, author_basis
+            $sources = Db::all('SELECT source_type, source_id, version_id, conversation_id, page, quote, is_human, covers, comment_role, author_user_id, author_name, author_basis
                                 FROM fact_sources WHERE fact_id = ? AND revision_no = ?', [$id, $f['current_revision']]);
         }
         $extra = [
@@ -448,6 +450,28 @@ final class FactController
             Notify::send((int)$rev['author_id'], (int)$f['project_id'], 'fact_review', ['link' => $link, 'excerpt' => $f['label'] . ': ' . $verdict]);
         }
         Response::json(self::present(Access::fact((int)$f['id'])), $old ? 200 : 201);
+    }
+
+    /** Links a reader's comment to a fact from the same text. The fact and its reviews do not change. */
+    public static function linkComment(Request $r): never
+    {
+        self::requireAi();
+        $f = Access::fact($r->int('id'));
+        $role = $r->str('role');
+        if (!in_array($role, self::COMMENT_ROLES, true)) throw new HttpError(422, 'The role must be supports, disputes or clarifies.');
+        $cid = (int)$r->input('comment_id');
+        $k = Db::one("SELECT c.id, c.target_type, c.target_id FROM comments c WHERE c.id = ? AND c.project_id = ? AND c.target_type IN ('document', 'bib')", [$cid, $f['project_id']]);
+        if (!$k) throw new HttpError(404, 'Comment not found');
+        if (!Db::value("SELECT 1 FROM fact_sources WHERE fact_id = ? AND revision_no = ? AND source_type = ? AND source_id = ? AND covers <> 'context'", [$f['id'], $f['current_revision'], $k['target_type'], $k['target_id']])) {
+            throw new HttpError(422, 'This comment is not about the text this fact comes from.');
+        }
+        $row = self::source((int)$f['project_id'], ['type' => 'comment', 'id' => $cid, 'quote' => $r->input('quote')], false);
+        if (!Db::value("SELECT 1 FROM fact_sources WHERE fact_id = ? AND revision_no = ? AND source_type = 'comment' AND source_id = ?", [$f['id'], $f['current_revision'], $cid])) {
+            $row['is_human'] = $row['is_human'] ? 1 : 0;
+            Db::insert('fact_sources', ['covers' => 'context', 'comment_role' => $role] + $row + ['fact_id' => $f['id'], 'revision_no' => $f['current_revision']]);
+            Activity::touch((int)$f['project_id'], 'fact', (int)$f['id'], 'source');
+        }
+        Response::json(self::present(Access::fact((int)$f['id'])));
     }
 
     public static function deleteReview(Request $r): never
@@ -688,14 +712,22 @@ final class FactController
             $row = self::source($pid, $s, !empty($it['publish_private']));
             $covers = self::s($s, 'covers');
             if ($method === 'extracted') {
-                if (!in_array($covers, self::COVERS, true)) throw new HttpError(422, 'Each source of an extracted fact needs covers: statement, proof or both.');
-                $row['covers'] = $covers;
+                if ($row['source_type'] === 'comment' && $covers === 'context') {
+                    $row['covers'] = 'context'; // a reader's remark about the result, never the result itself
+                    $role = self::s($s, 'role');
+                    if (!in_array($role, self::COMMENT_ROLES, true)) throw new HttpError(422, 'A comment cited as context needs a role: supports, disputes or clarifies.');
+                    $row['comment_role'] = $role;
+                } else {
+                    if (!in_array($covers, self::COVERS, true)) throw new HttpError(422, 'Each source of an extracted fact needs covers: statement, proof or both.');
+                    $row['covers'] = $covers;
+                }
             } else {
                 $row['covers'] = 'context'; // a deduced fact can cite sources, but its proof is new
             }
             $row['is_human'] = $row['is_human'] ? 1 : 0;
             $rows[] = $row;
         }
+        if ($method === 'extracted' && !array_filter($rows, fn($x) => $x['covers'] !== 'context')) throw new HttpError(422, 'An extracted fact must cite the text it comes from, not only a comment.');
         return $rows;
     }
 
@@ -707,7 +739,7 @@ final class FactController
         if ($quote === '') throw new HttpError(422, 'Each source needs a quote of the passage used.');
         $page = (int)($s['page'] ?? 0);
         $row = ['source_type' => $type, 'source_id' => $id, 'version_id' => null, 'conversation_id' => null, 'page' => $page ?: null, 'quote' => $quote, 'is_human' => true,
-            'covers' => 'context', 'author_user_id' => null, 'author_name' => null, 'author_basis' => null];
+            'covers' => 'context', 'comment_role' => null, 'author_user_id' => null, 'author_name' => null, 'author_basis' => null];
         $stated = self::statedAuthors($s);
         switch ($type) {
             case 'document':
@@ -940,7 +972,7 @@ final class FactController
         foreach (Db::all('SELECT s.*, u.orcid AS author_orcid, u.kind AS author_kind FROM fact_sources s LEFT JOIN users u ON u.id = s.author_user_id
                           WHERE s.fact_id = ? AND s.revision_no = ? ORDER BY s.id', [$id, $revision]) as $s) {
             $item = ['type' => $s['source_type'], 'page' => $s['page'] ? (int)$s['page'] : null, 'quote' => $s['quote'], 'is_human' => (bool)$s['is_human'], 'hidden' => false,
-                'covers' => $s['covers'],
+                'covers' => $s['covers'], 'comment_role' => $s['comment_role'] ?? null,
                 'author' => $s['author_name'] === null ? null : [
                     'name' => $s['author_name'], 'basis' => $s['author_basis'], 'user_id' => $s['author_user_id'] ? (int)$s['author_user_id'] : null,
                     'orcid' => $s['author_kind'] === 'human' ? $s['author_orcid'] : null,
@@ -982,7 +1014,7 @@ final class FactController
         $pid = (int)$f['project_id'];
         $byId ??= array_column(self::graph($pid)['facts'], null, 'id');
         $out = $byId[$id];
-        $brief = fn($x) => ['id' => $x, 'label' => $byId[$x]['label'], 'title' => $byId[$x]['title'], 'kind' => $byId[$x]['kind'],
+        $brief = fn($x) => ['id' => $x, 'label' => $byId[$x]['label'], 'title' => $byId[$x]['title'], 'kind' => $byId[$x]['kind'], 'display_kind' => $byId[$x]['display_kind'],
             'status' => $byId[$x]['status'], 'origin' => $byId[$x]['origin'], 'ai_model' => $byId[$x]['ai_model']];
         $out['project_id'] = $pid;
         $out['last_activity_id'] = Activity::latest($pid, 'fact', $id);

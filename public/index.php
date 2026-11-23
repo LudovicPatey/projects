@@ -115,6 +115,7 @@ $routes = [
     ['POST',   '/api/facts/{id}/retract',                 [FactController::class, 'retract']],
     ['POST',   '/api/facts/{id}/reinstate',               [FactController::class, 'reinstate']],
     ['POST',   '/api/facts/{id}/reviews',                 [FactController::class, 'review']],
+    ['POST',   '/api/facts/{id}/comment-links',           [FactController::class, 'linkComment']],
     ['DELETE', '/api/facts/{id}/reviews/{rid}',           [FactController::class, 'deleteReview']],
     ['POST',   '/api/facts/{id}/lean',                    [FactController::class, 'addLean']],
     ['POST',   '/api/fact-lean/{lid}/check',              [FactController::class, 'checkLean']],

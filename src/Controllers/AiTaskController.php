@@ -131,7 +131,7 @@ final class AiTaskController
         $queued = 0;
         foreach (Db::all('SELECT id, pdf_blob_id FROM bib_entries WHERE project_id = ? AND pdf_blob_id IS NOT NULL ORDER BY id', [$pid]) as $b) {
             $e = $state['entries'][(int)$b['id']];
-            if (!in_array($e['state'], ['none', 'failed'], true)) continue;
+            if (!in_array($e['state'], ['none', 'failed', 'comments'], true)) continue;
             // The key differs after each failed attempt, and stops two simultaneous clicks from queuing twice.
             self::insertTask($pid, 'extract', 'bib', (int)$b['id'], null, null, null, "bibx:{$b['id']}:{$b['pdf_blob_id']}:{$e['last_task']}", (int)$b['pdf_blob_id']);
             $queued++;
@@ -146,9 +146,11 @@ final class AiTaskController
     public static function bibExtraction(int $pid): array
     {
         $entries = [];
-        $progress = ['total' => 0, 'with_pdf' => 0, 'extracted' => 0, 'queued' => 0, 'failed' => 0, 'remaining' => 0];
+        $progress = ['total' => 0, 'with_pdf' => 0, 'extracted' => 0, 'new_comments' => 0, 'queued' => 0, 'failed' => 0, 'remaining' => 0];
         $tasks = [];
-        foreach (Db::all("SELECT id, source_id, source_blob_id, status, ai_model FROM ai_tasks WHERE project_id = ? AND kind = 'extract' AND source_type = 'bib' ORDER BY id", [$pid]) as $t) {
+        $notes = [];
+        foreach (self::commentRows($pid, 'bib') as $c) $notes[(int)$c['target_id']][] = $c;
+        foreach (Db::all("SELECT id, source_id, source_blob_id, status, ai_model, comments_hash FROM ai_tasks WHERE project_id = ? AND kind = 'extract' AND source_type = 'bib' ORDER BY id", [$pid]) as $t) {
             $tasks[(int)$t['source_id']][] = $t;
         }
         foreach (Db::all('SELECT id, pdf_blob_id FROM bib_entries WHERE project_id = ?', [$pid]) as $b) {
@@ -160,9 +162,17 @@ final class AiTaskController
             $statuses = array_column($own, 'status');
             $models = array_values(array_unique(array_filter(array_map(fn($t) => $t['status'] === 'done' ? $t['ai_model'] : null, $own))));
             $last = $own ? end($own) : null;
-            $state = in_array('done', $statuses, true) ? 'done' : (array_intersect(['pending', 'running'], $statuses) ? 'queued' : ($last && $last['status'] === 'failed' ? 'failed' : 'none'));
+            $hash = self::commentsHash(self::commentScope($notes[$id] ?? [], 'blob_id', (int)$b['pdf_blob_id']));
+            $done = array_filter($own, fn($t) => $t['status'] === 'done');
+            $current = (bool)array_filter($done, fn($t) => (string)$t['comments_hash'] === $hash);
+            $open = (bool)array_intersect(['pending', 'running'], $statuses);
+            $state = $open ? 'queued' : ($current ? 'done' : ($done ? 'comments' : ($last && $last['status'] === 'failed' ? 'failed' : 'none')));
             $entries[$id] = ['state' => $state, 'models' => $models, 'last_task' => $last ? (int)$last['id'] : 0];
-            $progress[['done' => 'extracted', 'queued' => 'queued', 'failed' => 'failed', 'none' => 'remaining'][$state]]++;
+            if ($done) $progress['extracted']++;
+            if ($state === 'comments') $progress['new_comments']++;
+            elseif ($state === 'queued') $progress['queued']++;
+            elseif ($state === 'failed') $progress['failed']++;
+            elseif ($state === 'none') $progress['remaining']++;
         }
         return ['entries' => $entries, 'progress' => $progress];
     }
@@ -188,8 +198,41 @@ final class AiTaskController
         if ($t['kind'] !== 'extract' || !$t['source_type']) return [];
         [$col, $value] = $t['source_type'] === 'bib' ? ['source_blob_id', $t['source_blob_id']] : ['version_id', $t['version_id']];
         if (!$value) return [];
-        return array_column(Db::all("SELECT DISTINCT ai_model FROM ai_tasks WHERE project_id = ? AND kind = 'extract' AND status = 'done' AND source_type = ? AND source_id = ? AND $col = ?",
-            [$t['project_id'], $t['source_type'], $t['source_id'], $value]), 'ai_model');
+        // New comments are new information: an earlier extraction no longer covers this one.
+        return array_column(Db::all("SELECT DISTINCT ai_model FROM ai_tasks WHERE project_id = ? AND kind = 'extract' AND status = 'done' AND source_type = ? AND source_id = ? AND $col = ? AND COALESCE(comments_hash, '') = ?",
+            [$t['project_id'], $t['source_type'], $t['source_id'], $value, self::commentsHash(self::extractComments($t))]), 'ai_model');
+    }
+
+    private static function commentRows(int $pid, string $type, ?int $id = null): array
+    {
+        return Db::all('SELECT c.id, c.parent_id, c.target_id, c.body_html, c.anchor_json, c.resolved, c.ai_model, u.name AS author, u.kind AS author_kind
+                        FROM comments c JOIN users u ON u.id = c.author_id WHERE c.project_id = ? AND c.target_type = ?' . ($id ? ' AND c.target_id = ?' : '') . ' ORDER BY c.id',
+            $id ? [$pid, $type, $id] : [$pid, $type]);
+    }
+
+    /** The comments about this version of the text: a remark on a replaced PDF no longer applies. Replies follow their thread. */
+    private static function commentScope(array $rows, string $key, int $value): array
+    {
+        $anchors = [];
+        foreach ($rows as $c) $anchors[(int)$c['id']] = json_decode((string)$c['anchor_json'], true);
+        return array_values(array_filter($rows, function ($c) use ($anchors, $key, $value) {
+            $a = $anchors[(int)($c['parent_id'] ?: $c['id'])] ?? null;
+            return !is_array($a) || !isset($a[$key]) || (int)$a[$key] === $value;
+        }));
+    }
+
+    /** Changes when a person adds, edits, resolves or removes a comment. AI replies do not count. */
+    private static function commentsHash(array $rows): string
+    {
+        $human = array_values(array_filter($rows, fn($c) => $c['ai_model'] === null && ($c['author_kind'] ?? 'human') === 'human'));
+        return $human ? sha1(json_encode(array_map(fn($c) => [(int)$c['id'], (string)$c['body_html'], (int)$c['resolved']], $human))) : '';
+    }
+
+    private static function extractComments(array $t): array
+    {
+        if ($t['kind'] !== 'extract' || !in_array($t['source_type'], ['document', 'bib'], true)) return [];
+        $rows = self::commentRows((int)$t['project_id'], $t['source_type'], (int)$t['source_id']);
+        return $t['source_type'] === 'bib' ? self::commentScope($rows, 'blob_id', (int)$t['source_blob_id']) : self::commentScope($rows, 'version_id', (int)$t['version_id']);
     }
 
     public static function cancel(Request $r): never
@@ -290,6 +333,9 @@ final class AiTaskController
                      WHERE id = ? AND (status = 'pending' OR (status = 'running' AND lease_until < ?))",
                     [hash('sha256', $lease), gmdate('Y-m-d H:i:s', time() + self::LEASE_SECONDS), $me, $name, $used, $now, $c['id'], $now])->rowCount();
                 if ($won === 1) {
+                    // An older client ignores comments: its extraction must not count as having read them.
+                    $reads = in_array('extract_comments', (array)$r->input('features', []), true);
+                    if ($c['kind'] === 'extract') Db::update('ai_tasks', ['comments_hash' => $reads ? self::commentsHash(self::extractComments($c)) : null], 'id = :id', ['id' => $c['id']]);
                     $t = self::row((int)$c['id']);
                     Response::json(['task' => self::present($t) + ['lease' => $lease, 'lease_seconds' => self::LEASE_SECONDS, 'context' => self::context($t)]]);
                 }
@@ -526,6 +572,14 @@ final class AiTaskController
             'bibliography' => Db::all('SELECT id, cite_key, title, authors, year, doi FROM bib_entries WHERE project_id = ? ORDER BY id LIMIT 500', [$pid]),
         ];
         $type = $t['source_type']; $id = (int)$t['source_id'];
+        if ($t['kind'] === 'extract') {
+            $ctx['comments'] = array_slice(array_map(function ($c) {
+                $a = json_decode((string)$c['anchor_json'], true);
+                return ['id' => (int)$c['id'], 'reply_to' => $c['parent_id'] ? (int)$c['parent_id'] : null, 'author' => $c['author'], 'is_ai' => $c['ai_model'] !== null || $c['author_kind'] !== 'human',
+                    'resolved' => (bool)$c['resolved'], 'page' => is_array($a) && isset($a['page']) ? (int)$a['page'] : null, 'on_passage' => is_array($a) && isset($a['quote']) ? mb_substr((string)$a['quote'], 0, 1000) : null,
+                    'text' => mb_substr(Sanitizer::toText((string)$c['body_html']), 0, 4000)];
+            }, self::extractComments($t)), 0, 200);
+        }
         if ($type === 'document') $ctx['document'] = self::documentContext($id, $t['version_id'] ? (int)$t['version_id'] : null);
         if ($type === 'bib') $ctx['reference'] = Db::one('SELECT id, cite_key, title, authors, year, venue, doi, CASE WHEN pdf_blob_id IS NULL THEN 0 ELSE 1 END AS has_pdf FROM bib_entries WHERE id = ? AND project_id = ?', [$id, $pid]) ?: null;
         if ($type === 'message') {

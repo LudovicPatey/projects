@@ -51,7 +51,7 @@ export const BibView = {
       <div class="progress" role="progressbar" :aria-valuenow="progress.pdfPercent" aria-valuemin="0" aria-valuemax="100" aria-label="References with a PDF"><div :style="{width: progress.pdfPercent + '%'}"></div></div>
       <div class="bib-progress-row"><span>Facts extracted</span><b>{{ progress.extracted }} / {{ progress.with_pdf }}</b></div>
       <div class="progress" role="progressbar" :aria-valuenow="progress.extractedPercent" aria-valuemin="0" aria-valuemax="100" aria-label="PDFs with extracted facts"><div :style="{width: progress.extractedPercent + '%'}"></div></div>
-      <div class="bib-progress-foot"><small><template v-if="progress.queued">{{ progress.queued }} queued</template><template v-if="progress.queued && progress.failed"> · </template><template v-if="progress.failed">{{ progress.failed }} failed</template></small>
+      <div class="bib-progress-foot"><small><template v-if="progress.queued">{{ progress.queued }} queued</template><template v-if="progress.queued && progress.failed"> · </template><template v-if="progress.failed">{{ progress.failed }} failed</template><template v-if="progress.new_comments"><template v-if="progress.queued || progress.failed"> · </template>{{ progress.new_comments }} with new comments</template></small>
         <button v-if="progress.toQueue" class="btn sm" :disabled="extractingAll" @click="extractAll"><icon name="sparkles" :size="13"/> Extract {{ progress.toQueue }} remaining</button></div>
     </section>
     <div class="col-tools">
@@ -100,7 +100,7 @@ export const BibView = {
         <div class="doc-actions">
           <label class="btn sm"><icon name="upload" :size="14"/> {{ entry.has_pdf ? 'Replace PDF' : 'Upload PDF' }}
             <input type="file" accept="application/pdf,.pdf" hidden @change="uploadPdf"></label>
-          <button class="btn sm" :disabled="extracting || !entry.has_pdf || extractState === 'queued'" :title="!entry.has_pdf ? 'Upload a PDF first' : extractState === 'queued' ? 'Already in the AI queue' : 'Ask an AI client to extract the results stated in this PDF'" @click="extractFacts"><icon name="sparkles" :size="14"/> {{ extractState === 'done' ? 'Extract again' : 'Extract facts' }}</button>
+          <button class="btn sm" :disabled="extracting || !entry.has_pdf || extractState === 'queued'" :title="!entry.has_pdf ? 'Upload a PDF first' : extractState === 'queued' ? 'Already in the AI queue' : 'Ask an AI client to extract the results stated in this PDF'" @click="extractFacts"><icon name="sparkles" :size="14"/> {{ extractState === 'done' ? 'Extract again' : extractState === 'comments' ? 'Update with comments' : 'Extract facts' }}</button>
           <button v-if="entry.has_pdf" class="icon-btn" title="Remove PDF" @click="removePdf"><icon name="x"/></button>
           <button class="icon-btn" title="Mark as unread" @click="markItemUnread('bib', entry.id)"><icon name="mail-unread"/></button>
           <button v-if="canDelete" class="icon-btn" title="Delete entry" @click="remove"><icon name="trash"/></button>

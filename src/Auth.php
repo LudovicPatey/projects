@@ -13,7 +13,7 @@ final class Auth
     /** The only writes a personal key can make: everything else would look human-written. */
     private const CLIENT_WRITES = [
         'POST /api/projects/{pid}/facts', 'POST /api/projects/{pid}/facts/batch', 'PATCH /api/facts/{id}',
-        'POST /api/facts/{id}/reviews', 'POST /api/facts/{id}/lean', 'POST /api/fact-lean/{lid}/check',
+        'POST /api/facts/{id}/reviews', 'POST /api/facts/{id}/comment-links', 'POST /api/facts/{id}/lean', 'POST /api/fact-lean/{lid}/check',
         'POST /api/projects/{pid}/questions', 'PATCH /api/questions/{id}', 'POST /api/questions/{id}/strategies',
         'POST /api/questions/{id}/links', 'PATCH /api/strategies/{id}',
         'POST /api/questions/{id}/answers', 'POST /api/answers/{id}/withdraw',

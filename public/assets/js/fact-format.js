@@ -2,11 +2,11 @@
 // and compared with the stored text; if they differ, the original is shown. Dependency-free for tests.
 
 const HEAD = /^(PROOF OF [^.]{1,30}\.|Proof of (?:the )?[^.:]{1,50}[.:]|Proof[.:]|(?:Main )?(?:Theorem|Lemma|Proposition|Corollary|Definition|Conventions?|Notation|Setup)(?: \d+(?:\.\d+)*)?[.:])(?:\s+|$)/;
-const LEAD = /^((?:[A-Z][\w-]* ){0,2}(?:Claim|Lemma|Fact|Observation|Remark|Case \d+|Step \d+)(?: \d+)?[.:]|[A-Z][a-z]{3,}\.)\s+/;
+const LEAD = /^(?!(?:By|Using|From|Then|Since|Apply|Applying|See|In|Thus|Hence|Now|And|Let|With|Note|Recall|Given|Following|As|If|For|To|This|The)\b)((?:[A-Z][\w-]* ){0,2}(?:Claim|Lemma|Fact|Observation|Remark|Case \d+|Step \d+)(?: \d+)?[.:]|[A-Z][a-z]{3,}\.)\s+/;
 const ITEM = /^\(([ivx]{1,5}|[a-z])\)\s+/;
 const NUMBERED = /^\((\d{1,3})\)\s+/;
 const BULLET = /^-\s+/;
-const OTHER_BLOCKS = /<(?:ul|ol|li|pre|blockquote|h[1-6]|table|div)\b/i;
+const OTHER_BLOCKS = /<(?:ul|ol|li|pre|blockquote|h[1-6]|table|div|section)\b/i;
 
 const plain = (html) => String(html).replace(/<[^>]*>/g, '').replace(/[\s_^{}]/g, '');
 const bodyText = (html) => String(html).replace(/<[^>]*>/g, '');
@@ -149,7 +149,7 @@ function block(line, previous) {
   let m = line.match(HEAD);
   if (m) {
     const rest = line.slice(m[0].length);
-    return `<h5 class="ff-head">${inline(m[1])}</h5>${rest ? `<p>${lead(rest)}</p>` : ''}`;
+    return `<p><b class="ff-lead">${inline(m[1])}</b>${rest ? ` ${lead(rest)}` : ''}</p>`;
   }
   m = line.match(NUMBERED);
   if (m) return `<div class="ff-eq"><span class="ff-label">(${m[1]})</span><div>${inline(line.slice(m[0].length))}</div></div>`;
@@ -166,17 +166,77 @@ function lead(line) {
   return m ? `<b class="ff-lead">${inline(m[1])}</b> ${inline(line.slice(m[0].length))}` : inline(line);
 }
 
+const NAMED = /^(?!(?:By|Using|From|Then|Since|Apply|Applying|See|In|Thus|Hence|Now|And|Let|With|Note|Recall|Given|Following|As|If|For|To|This|The)\b)((?:[A-Z][\w-]* ){0,2}(Claim|Lemma|Proposition|Theorem|Corollary)(?: \d+(?:\.\d+)*)?)[.:]\s+/;
+const envType = (head) => {
+  const h = head.toLowerCase();
+  if (h.startsWith('proof')) return 'proof';
+  if (/^(?:conventions?|notation|setup|definition)/.test(h)) return 'definition';
+  return ['theorem', 'proposition', 'corollary', 'lemma', 'claim'].find((k) => h.includes(k)) || 'theorem';
+};
+const attr = (x) => bodyText(x).replace(/["<>]/g, '').replace(/[.:]$/, '').trim();
+
+/** Splits a text into definitions, statements and proofs, as in a paper. Claims and lemmas stay inside their proof. */
+function environments(paragraphs) {
+  let out = ''; let partProof = false; const open = []; const named = new Set();
+  const close = (depth = 0) => { while (open.length > depth) { out += '</section>'; open.pop(); } };
+  const start = (type, head) => { out += `<section class="ff-env ff-${type}" data-env="${type}" data-title="${attr(head)}"><header class="ff-env-head">${inline(head)}</header>`; };
+  const body = (lines, first) => {
+    let previous = first;
+    return lines.map((line) => { const x = block(line, previous); previous = line; return x; }).join('');
+  };
+  for (let i = 0; i < paragraphs.length; i++) {
+    const lines = paragraphs[i].split(/<br\s*\/?>/i).map((x) => x.trim()).filter(Boolean);
+    if (!lines.length) continue;
+    const head = lines[0].match(HEAD); const name = head ? null : lines[0].match(NAMED);
+    if (!head && !name) { out += body(lines, null); continue; }
+    const label = head ? head[1] : lines[0].slice(0, name[1].length + 1);
+    const rest = lines[0].slice(head ? head[0].length : name[0].length);
+    const type = envType(head ? label : name[2]);
+    const after = [...(rest ? [rest] : []), ...lines.slice(1)];
+    if (type === 'proof') {
+      const about = label.match(/^Proof of (?:the )?(.+?)[.:]$/);
+      const inner = about && open.length && named.has(about[1]);
+      close(inner ? 1 : 0);
+      if (!inner) partProof = /^PROOF OF/.test(label);
+      start('proof', label); open.push('proof');
+      out += body(after, null);
+      continue;
+    }
+    const nests = open.length && (type === 'claim' || (type === 'lemma' && partProof));
+    if (!nests) { close(); named.clear(); partProof = false; }
+    if (name) named.add(name[1]);
+    start(type, label);
+    out += body(after, null);
+    if (!after.length && i + 1 < paragraphs.length && !paragraphs[i + 1].match(HEAD) && !paragraphs[i + 1].match(NAMED)) {
+      i++;
+      out += body(paragraphs[i].split(/<br\s*\/?>/i).map((x) => x.trim()).filter(Boolean), null);
+    }
+    out += '</section>';
+  }
+  close();
+  return out;
+}
+
 /** The reading view of sanitized HTML. Anything it cannot safely lay out is returned unchanged. */
 export function formatFactHtml(html) {
   const source = String(html || '');
   if (!source || OTHER_BLOCKS.test(source)) return source;
   const paragraphs = [...source.matchAll(/<p\b[^>]*>([\s\S]*?)<\/p>/gi)].map((m) => m[1]);
   if (!paragraphs.length) return source;
-  const out = paragraphs.map((p) => {
-    let previous = null;
-    return p.split(/<br\s*\/?>/i).map((x) => x.trim()).filter(Boolean).map((line) => { const b = block(line, previous); previous = line; return b; }).join('');
-  }).join('');
+  const out = environments(paragraphs);
   return canon(plain(readBack(out))) === canon(plain(source)) ? `<div class="fact-readable">${out}</div>` : source;
+}
+
+/** Labels of the mathematical kinds, in the order they are browsed. */
+export const FACT_KINDS = [['theorem', 'Theorems', 'Theorem'], ['proposition', 'Propositions', 'Proposition'], ['lemma', 'Lemmas', 'Lemma'], ['corollary', 'Corollaries', 'Corollary'], ['definition', 'Definitions', 'Definition'], ['conjecture', 'Conjectures', 'Conjecture'], ['remark', 'Remarks', 'Remark']];
+export const kindOf = (f) => f?.display_kind || f?.kind || 'lemma';
+export const kindLabel = (k) => FACT_KINDS.find((x) => x[0] === k)?.[2] || String(k || '');
+
+/** The kinds present in a list of facts, with their counts. */
+export function kindCounts(facts) {
+  const n = {};
+  for (const f of facts || []) { const k = kindOf(f); n[k] = (n[k] || 0) + 1; }
+  return FACT_KINDS.filter(([k]) => n[k]).map(([key, plural]) => ({ key, label: plural, n: n[key] }));
 }
 
 const decode = (s) => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#0?39;|&apos;/g, "'").replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&');

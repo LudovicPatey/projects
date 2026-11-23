@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { factTitle, formatFactHtml, parseExternalRefs, texLine } from '../public/assets/js/fact-format.js';
+import { factTitle, formatFactHtml, kindCounts, kindOf, parseExternalRefs, texLine } from '../public/assets/js/fact-format.js';
 
 const STATEMENT = '<p>Conventions. FIN is the set of nonempty finite subsets of ω. An infinite block sequence is Y=(y_i)_{i∈ω} with y_i&lt;y_{i+1}.<br>- F left-matches Y if for every q there is p with f(p∪q)=f(p);<br>- F full-matches Y.<br>Every full-match is a left-match.</p><p>Theorem.<br>(a) For every f:FIN→{0,1} there are F and Y.<br>(b) For every integer K≥1 there is an A-computable f.<br>Consequently no F works.</p>';
 const PROOF = '<p>PROOF OF (a). Suppose (a) fails. Put<br>N_n = 2^{K+1}(n+2K+3), δ = 2^{-K}/(4K)<br>Let q_{n+1} be the first such q, and<br>(1) f(p∪q_{n+1})=1-f(p) for all n.</p><p>Claim: for all k≥1, f(y_i^n)=0.</p><p>Proof of the Layer Lemma. If there are no pairs, any g works.</p><p>(i) Injectivity. The map is injective.</p><p>Activation. Say R_n is active.</p>';
@@ -14,13 +14,13 @@ const formulas = (h) => [...h.matchAll(/class="ff-math">\$([\s\S]*?)\$<\/span>/g
 
 test('the reading view adds structure and typesets formulas in LaTeX', () => {
   const s = formatFactHtml(STATEMENT);
-  assert.match(s, /<h5 class="ff-head">Conventions\.<\/h5>/); assert.match(s, /<h5 class="ff-head">Theorem\.<\/h5>/);
+  assert.match(s, /data-env="definition" data-title="Conventions"/); assert.match(s, /data-env="theorem" data-title="Theorem"/);
   assert.match(s, /ff-label">\(a\)/); assert.match(s, /ff-label">-/);
   const texS = formulas(s);
   assert.ok(texS.includes('Y=(y_{i})_{i\\in \\omega }'), texS.join(' | ')); assert.ok(texS.some((t) => t.includes('f:\\mathrm{FIN}\\to \\{ 0,1\\} ')));
   const p = formatFactHtml(PROOF); const tex = formulas(p);
-  assert.match(p, /<h5 class="ff-head">PROOF OF \(a\)\.<\/h5>/); assert.match(p, /<h5 class="ff-head">Proof of the Layer Lemma\.<\/h5>/);
-  assert.match(p, /ff-eq"><span class="ff-label">\(1\)/); assert.match(p, /<b class="ff-lead">Claim:<\/b>/); assert.match(p, /<b class="ff-lead">Injectivity\.<\/b>/);
+  assert.match(p, /data-env="proof" data-title="PROOF OF \(a\)"/); assert.match(p, /data-env="proof" data-title="Proof of the Layer Lemma"/);
+  assert.match(p, /ff-eq"><span class="ff-label">\(1\)/); assert.match(p, /data-env="claim" data-title="Claim"/); assert.match(p, /<b class="ff-lead">Injectivity\.<\/b>/);
   assert.ok(tex.some((t) => t.startsWith('N_{n} = 2^{K+1}(n+2K+3)')), tex.join(' | '));
   assert.ok(tex.includes('q_{n+1}'), tex.join(' | ')); assert.ok(tex.includes('f(y_{i}^{n})=0'), tex.join(' | '));
 });
@@ -89,4 +89,36 @@ r = oq.parse_danus(pathlib.Path(sys.argv[2])); print(json.dumps([r["external_ref
 `, path.resolve('client/oq.py'), f], { env: { ...process.env, OQ_CONFIG_DIR: path.join(dir, 'c') }, encoding: 'utf8' });
     assert.deepEqual(JSON.parse(out), [refs, ['1111111111111111', '2222222222222222']]);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+const open = (h) => (h.match(/<section\b/g) || []).length; const shut = (h) => (h.match(/<\/section>/g) || []).length;
+const envs = (h) => [...h.matchAll(/data-env="(\w+)" data-title="([^"]*)"/g)].map((m) => `${m[1]}:${m[2]}`);
+
+test('a text reads as definitions, statements and proofs, with lemmas inside their proof', () => {
+  const html = '<p>Definition. A set is good if it is nice.</p><p>Lemma 1. Every set is good.</p><p>Proof. Trivial.</p><p>Theorem 2. All is well.</p><p>PROOF OF (a). Start.</p><p>Layer Lemma: some g works.</p><p>Proof of the Layer Lemma. Take g.</p><p>Hence done.</p><p>PROOF OF (b). End.</p>';
+  const out = formatFactHtml(html);
+  assert.deepEqual(envs(out), ['definition:Definition', 'lemma:Lemma 1', 'proof:Proof', 'theorem:Theorem 2', 'proof:PROOF OF (a)', 'lemma:Layer Lemma', 'proof:Proof of the Layer Lemma', 'proof:PROOF OF (b)']);
+  assert.equal(open(out), shut(out));
+  const part = out.slice(out.indexOf('PROOF OF (a)'), out.indexOf('data-title="PROOF OF (b)"'));
+  assert.ok(part.includes('Layer Lemma') && part.includes('Hence done'), 'the lemma and its proof stay in this part');
+  const second = formatFactHtml('<p>Lemma 1. A holds.</p><p>Proof. Yes.</p><p>Lemma 2. B holds.</p><p>Proof. Yes.</p>');
+  assert.deepEqual(envs(second), ['lemma:Lemma 1', 'proof:Proof', 'lemma:Lemma 2', 'proof:Proof']);
+  assert.ok(second.indexOf('</section>', second.indexOf('data-title="Proof"')) < second.indexOf('Lemma 2'), 'a new lemma ends the previous proof');
+});
+
+test('a mention of a result inside a sentence does not start a block', () => {
+  assert.deepEqual(envs(formatFactHtml('<p>By Theorem 3. we conclude, using the Lemma.</p>')), []);
+});
+
+test('facts are counted by the kind they display', () => {
+  const facts = [{ kind: 'lemma', display_kind: 'theorem' }, { kind: 'lemma' }, { kind: 'definition' }, { kind: 'theorem' }];
+  assert.equal(kindOf(facts[0]), 'theorem');
+  assert.deepEqual(kindCounts(facts).map((k) => [k.key, k.n]), [['theorem', 2], ['lemma', 1], ['definition', 1]]);
+});
+
+test('a Danus fact shows the kind its text announces, and other kinds are never changed', () => {
+  const php = `require 'src/FactKind.php'; use App\\FactKind as K;
+  $c = [['lemma','danus',"Conventions. FIN is a set.\\nTheorem.\\n(a) Yes.",'theorem'],['lemma','danus','Definition. X is good.','definition'],['lemma','danus','Definition. X. Lemma 2. Y.','lemma'],['lemma','danus','Every set is good by Theorem 3.','lemma'],['theorem','danus','Lemma 1. Y.','theorem'],['lemma','oq-client','Theorem. Y.','lemma'],['lemma',null,'Theorem. Y.','lemma']];
+  foreach ($c as [$k,$t,$s,$w]) if (K::of($k,$t,$s) !== $w) { echo "wrong: $s"; exit(1); }`;
+  execFileSync('php', ['-r', php], { encoding: 'utf8' });
 });

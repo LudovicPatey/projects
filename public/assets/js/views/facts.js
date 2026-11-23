@@ -2,7 +2,7 @@ import { api } from '../api.js';
 import { store, go, link, attempt, toast, refreshMentionables, refreshProject, unreadCount, markRead, markItemUnread } from '../store.js';
 import { timeAgo, fullDate } from '../util.js';
 import { FactGraph, STATUS, PROOF_LABEL } from '../factgraph.js';
-import { factTitle, formatFactHtml, parseExternalRefs, texLine } from '../fact-format.js';
+import { factTitle, formatFactHtml, kindCounts, kindLabel, kindOf, parseExternalRefs, texLine } from '../fact-format.js';
 
 const VERDICTS = {
   correct: { label: 'Correct', cls: 'green' },
@@ -56,7 +56,7 @@ export const FactsView = {
     return {
       facts: [], edges: [], loaded: false, search: '', fStatus: 'all', fOrigin: 'all', fLabel: 'all', fLean: 'all', sort: 'recent', lineage: false, showFilters: false,
       fact: null, factError: null, tab: 'content', activeThread: null, backlinks: [],
-      readable: readView(), reviewVerdict: 'correct', checkForm: null, trace: null, retracting: null, revView: null, denying: null,
+      readable: readView(), fKind: 'all', outline: [], reviewVerdict: 'correct', checkForm: null, trace: null, retracting: null, revView: null, denying: null,
     };
   },
   computed: {
@@ -65,11 +65,12 @@ export const FactsView = {
     isOwner() { return store.project.my_role === 'owner'; },
     filtered() {
       const q = this.search.toLowerCase();
-      let list = this.facts.filter((f) => (this.fStatus === 'all' || f.status === this.fStatus)
+      let list = this.facts.filter((f) => (this.fKind === 'all' || kindOf(f) === this.fKind)
+        && (this.fStatus === 'all' || f.status === this.fStatus)
         && (this.fOrigin === 'all' || f.proof_origin === this.fOrigin)
         && (this.fLabel === 'all' || f.labels.includes(this.fLabel))
         && (this.fLean === 'all' || (this.fLean === 'with' ? f.lean !== 'none' : f.lean === this.fLean))
-        && (!q || [f.label, f.title, f.statement_text, f.ai_model, f.author, f.kind, f.method, f.tool, f.labels.join(' ')].some((x) => String(x || '').toLowerCase().includes(q))));
+        && (!q || [f.label, f.title, f.statement_text, f.ai_model, f.author, f.kind, kindOf(f), f.method, f.tool, f.labels.join(' ')].some((x) => String(x || '').toLowerCase().includes(q))));
       if (this.lineage && this.id) {
         const keep = this.lineageOf(this.id);
         list = list.filter((f) => keep.has(f.id));
@@ -83,6 +84,7 @@ export const FactsView = {
       return this.edges.filter(([a, b]) => ids.has(a) && ids.has(b));
     },
     activeFilters() { return [this.fStatus, this.fOrigin, this.fLabel, this.fLean].filter((v) => v !== 'all').length; },
+    kinds() { return kindCounts(this.facts); },
     unreadFacts() { return store.counters.unread?.fact || {}; },
     labelCounts() {
       const c = {};
@@ -122,7 +124,10 @@ export const FactsView = {
       return this.fact || this.factError ? 'facts-graph has-detail' : 'facts-graph';
     },
   },
-  watch: { id: { immediate: true, handler() { this.onRoute(); } }, 'query.tab'(t) { if (t) { this.tab = t; if (t === 'trace') this.loadTrace(); } } },
+  watch: {
+    fact() { this.refreshOutline(); },
+    revView() { this.refreshOutline(); },
+    tab() { this.refreshOutline(); }, id: { immediate: true, handler() { this.onRoute(); } }, 'query.tab'(t) { if (t) { this.tab = t; if (t === 'trace') this.loadTrace(); } } },
   mounted() {
     this.loadList();
     this.timer = setInterval(() => { if (!this.checkForm && !this.retracting) this.loadList(); }, 30000);
@@ -134,6 +139,7 @@ export const FactsView = {
       <div class="row-gap"><div class="seg small mode-seg"><button @click="setMode('list')"><icon name="list" :size="13"/> List</button><button class="on"><icon name="graph" :size="13"/> Graph</button></div><mark-all-read type="fact"/></div></header>
     <div class="fg-filters">
       <div class="search"><icon name="search" :size="15"/><input v-model="search" placeholder="Search facts…"></div>
+      <select v-model="fKind" aria-label="Filter by mathematical type"><option value="all">All types</option><option v-for="k in kinds" :key="k.key" :value="k.key">{{ k.label }} ({{ k.n }})</option></select>
       <select v-model="fStatus" aria-label="Filter by status"><option value="all">All statuses</option><option v-for="(s, k) in statuses" :key="k" :value="k">{{ s.label }} ({{ counts[k] || 0 }})</option></select>
       <select v-model="fOrigin" aria-label="Filter by proof origin"><option value="all">Any proof origin</option><option value="human">Human proof</option><option value="ai">AI proof</option><option value="mixed">Human + AI proof</option><option value="none">No proof</option></select>
       <select v-model="fLabel" aria-label="Filter by label"><option value="all">All labels</option><option v-for="l in labelOptions" :key="l" :value="l">{{ pretty(l) }} ({{ labelCounts[l] }})</option></select>
@@ -154,6 +160,7 @@ export const FactsView = {
       <div class="row-gap"><div class="seg small mode-seg"><button class="on"><icon name="list" :size="13"/> List</button><button @click="setMode('graph')"><icon name="graph" :size="13"/> Graph</button></div><mark-all-read type="fact"/></div></header>
     <div class="col-tools">
       <div class="search"><icon name="search" :size="15"/><input v-model="search" placeholder="Search label, statement, model…"></div>
+      <div v-if="kinds.length > 1" class="kind-filter" role="group" aria-label="Filter by mathematical type"><button :class="{on: fKind === 'all'}" :aria-pressed="fKind === 'all'" @click="fKind = 'all'">All <b>{{ facts.length }}</b></button><button v-for="k in kinds" :key="k.key" :class="['k-' + k.key, {on: fKind === k.key}]" :aria-pressed="fKind === k.key" @click="fKind = k.key">{{ k.label }} <b>{{ k.n }}</b></button></div>
       <div class="filter-bar">
         <button class="btn xs" :class="{on: showFilters}" :aria-expanded="showFilters" @click="showFilters = !showFilters"><icon name="filter" :size="13"/> Filters<b v-if="activeFilters" class="seg-n">{{ activeFilters }}</b></button>
         <button v-if="activeFilters" class="link-btn" @click="clearFilters">Clear</button>
@@ -169,7 +176,7 @@ export const FactsView = {
     </div>
     <div class="list">
       <a v-for="f in filtered" :key="f.id" class="li fact-li" :class="['o-' + f.origin, {active: f.id === id, 'is-new': !!unreadOf(f.id)}]" :href="factLink(f.id)">
-        <div class="li-top"><code class="key">{{ f.label }}</code><span class="li-time">{{ f.kind }}</span><unread-badge type="fact" :id="f.id"/></div>
+        <div class="li-top"><code class="key">{{ f.label }}</code><span class="kind-tag" :class="'k-' + kindOf(f)">{{ kindLabel(kindOf(f)) }}</span><unread-badge type="fact" :id="f.id"/></div>
         <div class="li-subject"><math-text :text="texLine(factTitle(f.title, f.statement_text))"/></div>
         <div class="li-snippet"><math-text :text="f.statement_text"/></div>
         <div class="li-meta wrap">
@@ -198,7 +205,7 @@ export const FactsView = {
       <div v-else-if="fact.chain !== 'ok'" class="fact-alert" :class="fact.chain === 'broken' ? 'red' : 'amber'">{{ chainLabels[fact.chain] }} in its dependency chain.</div>
       <header class="doc-head">
         <div class="doc-title">
-          <div class="fact-id"><code class="key big">{{ fact.label }}</code><span>{{ fact.kind }}</span><span>{{ fact.method }}</span><span v-if="fact.tool">{{ fact.tool }}</span><span>revision {{ fact.current_revision }}</span></div>
+          <div class="fact-id"><code class="key big">{{ fact.label }}</code><span class="kind-tag" :class="'k-' + kindOf(fact)">{{ kindLabel(kindOf(fact)) }}</span><span>{{ fact.method }}</span><span v-if="fact.tool">{{ fact.tool }}</span><span>revision {{ fact.current_revision }}</span></div>
           <h2 :title="fact.title"><math-text :text="headTitle"/></h2>
           <div class="fact-chips"><label-chips :labels="fact.labels"/><status-tag :status="fact.status"/><proof-tag :origin="fact.proof_origin"/><span class="lean-tag" :class="fact.lean" v-if="fact.lean !== 'none'">{{ leanLabels[fact.lean] }}</span></div>
           <div class="fact-byline"><ai-meta :model="fact.ai_model" :user="fact.ai_user_name" :ms="fact.ai_generation_ms"/><span class="muted small">added by {{ fact.author }} · updated {{ timeAgo(fact.updated_at) }}</span></div>
@@ -236,6 +243,7 @@ export const FactsView = {
 
       <div v-if="tab==='content'" class="pad scroll fact-body">
         <div v-if="shownRevision" class="fact-alert amber">Viewing revision {{ revView }}. <button class="link-btn" @click="revView = null">Back to current</button></div>
+        <nav v-if="readable && outline.length > 1" class="fact-outline" aria-label="In this fact"><button v-for="(x, i) in outline" :key="i" :class="'k-' + x.type" @click="jump(x)">{{ x.title }}</button></nav>
         <div class="fact-view-switch"><div class="seg small" role="group" aria-label="How the text is shown"><button :class="{on: readable}" :aria-pressed="readable" title="Same content, with headings, lists and formulas typeset in LaTeX" @click="setReadable(true)">Readable</button><button :class="{on: !readable}" :aria-pressed="!readable" title="The text exactly as stored" @click="setReadable(false)">Original</button></div></div>
         <section class="fact-sec statement"><h4>Statement</h4><rich-content :html="shown(content.statement_html)"/></section>
         <section class="fact-sec" v-if="content.proof_html"><h4>Proof</h4><rich-content :html="shown(content.proof_html)"/></section>
@@ -245,7 +253,8 @@ export const FactsView = {
             <div v-for="(x, i) in fact.sources" :key="i" class="fact-source">
               <a v-if="x.link" :href="link(x.link.view, x.link.id, x.link.query)"><icon :name="sourceIcon(x.type)" :size="13"/> {{ x.label }}<template v-if="x.page">, p. {{ x.page }}</template></a>
               <span v-else class="muted"><icon name="mail" :size="13"/> {{ x.label }}</span>
-              <span class="tag">{{ covers[x.covers] }}</span>
+              <span v-if="x.comment_role" class="tag comment-role" :class="'r-' + x.comment_role">{{ {supports: 'Supports this result', disputes: 'Disputes this result', clarifies: 'Clarifies this result'}[x.comment_role] }}</span>
+              <span v-else class="tag">{{ covers[x.covers] }}</span>
               <span class="tag" :class="x.is_human ? 'green' : ''">{{ x.is_human ? 'human' : 'AI' }}</span>
               <span v-if="x.author" class="small muted">{{ x.author.name }}</span>
               <blockquote v-if="x.quote">{{ x.quote }}</blockquote>
@@ -401,9 +410,9 @@ export const FactsView = {
 </div>`,
   created() { this.basis = BASIS; this.covers = COVERS; this.statuses = STATUS; this.verdicts = VERDICTS; this.leanLabels = LEAN; this.chainLabels = CHAIN; },
   methods: {
-    factTitle, texLine,
+    factTitle, texLine, kindOf, kindLabel,
     shown(html) { return this.readable ? formatFactHtml(html) : html; },
-    setReadable(on) { this.readable = on; try { localStorage.setItem('oq-fact-view', on ? 'readable' : 'original'); } catch { /* the choice lasts for this page only */ } },
+    setReadable(on) { this.readable = on; this.refreshOutline(); try { localStorage.setItem('oq-fact-view', on ? 'readable' : 'original'); } catch { /* the choice lasts for this page only */ } },
     timeAgo, fullDate, link, markItemUnread,
     unreadOf(id) { return unreadCount('fact', id); },
     onActivity() { this.loadList(); if (!this.checkForm && !this.retracting) this.loadFact(); },
@@ -455,6 +464,19 @@ export const FactsView = {
       if (this.tab === 'trace') this.loadTrace();
     },
     clearFilters() { this.fStatus = this.fOrigin = this.fLabel = this.fLean = 'all'; },
+    refreshOutline() {
+      this.$nextTick(() => {
+        const nodes = [...(this.$el.querySelectorAll?.('.fact-body [data-env]') || [])];
+        this.outline = nodes.map((node) => ({ node, type: node.dataset.env, title: node.dataset.title }));
+      });
+    },
+    jump(item) {
+      let box = item.node.parentElement;
+      while (box && !(box.scrollHeight > box.clientHeight + 1 && /auto|scroll/.test(getComputedStyle(box).overflowY))) box = box.parentElement;
+      if (!box) return;
+      const bar = this.$el.querySelector('.fact-outline')?.offsetHeight || 0;
+      box.scrollTo({ top: box.scrollTop + item.node.getBoundingClientRect().top - box.getBoundingClientRect().top - bar - 20 });
+    },
     pretty(l) { return l.replaceAll('_', ' '); },
     creditText(a) { return [...new Set(a.credits.map((c) => c.name))].join('; ') || (a.ai_model ? `entered by ${a.ai_model}` : ''); },
     async loadTrace() {
