@@ -1341,6 +1341,11 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: non
 .ai-form .btn.block { width: 100%; justify-content: center; }
 .key-guide { display: flex; align-items: center; gap: 10px; margin: 12px 0; padding: 10px 12px; border-radius: 8px; background: var(--accent-2); font-size: 13.5px; }
 .key-guide > div { flex: 1; }
+.key-copy { display: grid; grid-template-columns: 120px minmax(0, 1fr) auto; align-items: center; gap: 8px; margin: 8px 0; font-size: 13px; font-weight: 600; }
+.key-copy input { min-width: 0; width: 100%; font-family: ui-monospace, Menlo, monospace; font-size: 12.5px; }
+.key-advanced { margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--line); }
+.key-advanced summary { cursor: pointer; font-weight: 650; font-size: 13.5px; }
+@media (max-width: 560px) { .key-copy { grid-template-columns: minmax(0, 1fr) auto; } .key-copy span { grid-column: 1 / -1; } }
 .key-guide .btn { flex: none; }
 .help-shot { margin: 14px 0 18px; }
 .help-shot img { display: block; width: 100%; height: auto; border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow); }

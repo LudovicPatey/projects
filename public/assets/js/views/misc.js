@@ -352,19 +352,28 @@ Do not mark anything as verified on my behalf. Humans and other models review th
     </div>
     <modal v-if="newKey" :title="'API key: ' + newKey.name" wide @close="newKey = null">
       <p class="warn-box"><b>Copy this key now. It will not be shown again.</b> Anyone holding it can read your projects and submit facts in your name.</p>
-      <div class="key-guide"><icon name="terminal" :size="17"/><div><b>New to this?</b> Follow the step-by-step guide. It tells you when to paste this key.</div><a class="btn sm primary" href="#/help?a=ai-setup" @click="newKey = null">Open the guide</a></div>
-      <h4>Advanced: 1. Set it in the terminal of your AI client</h4>
-      <pre class="snippet">{{ setup }}</pre>
-      <button class="btn sm" @click="copy(setup)"><icon name="copy" :size="13"/> Copy</button>
-      <h4 class="mt">Advanced: 2. Give these instructions to your AI client</h4>
-      <pre class="snippet wrap">{{ instructions }}</pre>
-      <button class="btn sm" @click="copy(instructions)"><icon name="copy" :size="13"/> Copy instructions</button>
+      <h4>Connect the AI client app</h4>
+      <p class="muted small">Open the app, go to <b>Accounts</b>, and paste these two values.</p>
+      <label class="key-copy"><span>Personal key</span><input :value="newKey.token" readonly spellcheck="false" aria-label="Personal key" @focus="$event.target.select()"><button type="button" class="btn sm primary" @click="copy(newKey.token)"><icon name="copy" :size="13"/> Copy key</button></label>
+      <label class="key-copy"><span>Platform address</span><input :value="baseUrl" readonly spellcheck="false" aria-label="Platform address" @focus="$event.target.select()"><button type="button" class="btn sm" @click="copy(baseUrl)"><icon name="copy" :size="13"/> Copy</button></label>
+      <p class="small"><a href="#/client" @click="newKey = null">Don't have the app yet? Download it</a></p>
+      <details class="key-advanced"><summary>Command line or another AI client</summary>
+        <div class="key-guide"><icon name="terminal" :size="17"/><div>The step-by-step guide tells you when to paste this key.</div><a class="btn sm" href="#/help?a=ai-setup" @click="newKey = null">Open the guide</a></div>
+        <h4>1. Set it in the terminal of your AI client</h4>
+        <pre class="snippet">{{ setup }}</pre>
+        <button class="btn sm" @click="copy(setup)"><icon name="copy" :size="13"/> Copy commands</button>
+        <h4 class="mt">2. Give these instructions to your AI client</h4>
+        <pre class="snippet wrap">{{ instructions }}</pre>
+        <button class="btn sm" @click="copy(instructions)"><icon name="copy" :size="13"/> Copy instructions</button>
+      </details>
       <template #footer><button class="btn primary" @click="newKey = null">Done</button></template>
     </modal>
   </div>`,
   methods: {
     timeAgo,
-    copy(t) { navigator.clipboard?.writeText(t); toast('Copied'); },
+    async copy(t) {
+      try { await navigator.clipboard.writeText(t); toast('Copied'); } catch { toast('Could not copy. Select the text and copy it yourself.'); }
+    },
     initial(t) { return String(t).split(/[\s\u2013\u2014-]+/u).filter((w) => w.length > 2 && w.toLowerCase() !== 'the').slice(0, 2).map((w) => w[0].toUpperCase()).join('') || '?'; },
     async loadProjects() { const r = await attempt(() => api.get('api/projects')); if (r) this.projects = r.projects; },
     async loadKeys() { const r = await attempt(() => api.get('api/me/keys')); if (r) this.keys = r.keys; },

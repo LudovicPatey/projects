@@ -51,7 +51,7 @@ import webbrowser
 import zipfile
 import zlib
 
-VERSION = "1.3.0"
+VERSION = "1.3.1"
 API_LEVEL = 1  # raise with the server's AiTaskController::API_LEVEL when a client needs new server features
 GITHUB_REPO = "LudovicPatey/projects"
 KINDS = ["extract", "ask", "bib", "derive"]
@@ -1897,14 +1897,61 @@ def danus_block(run):
 
 # ----- installing and signing in to the AI tools -----
 
+CLAUDE_APP_TEAM = "Q6L2SF6YDW"  # Anthropic's Apple developer team
+CLAUDE_APP_CHECKED = {}
+
+
+def claude_app_root():
+    return pathlib.Path.home() / "Library" / "Application Support" / "Claude" / "claude-code"
+
+
+def claude_app_signed(path):
+    """The folder is writable by the user, so a program found there runs only if Apple's check confirms Anthropic signed it."""
+    try:
+        requirement = f'=anchor apple generic and certificate leaf[subject.OU] = "{CLAUDE_APP_TEAM}"'
+        return subprocess.run(["/usr/bin/codesign", "-v", "-R", requirement, str(path)], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=20, env=safe_env()).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def claude_app_tool():
+    """The Claude Code included in Claude for Mac: the newest version with a valid signature."""
+    if sys.platform != "darwin":
+        return None
+
+    def version(path):
+        try:
+            return tuple(int(x) for x in path.relative_to(claude_app_root()).parts[0].split("."))
+        except ValueError:
+            return ()
+
+    for path in sorted(claude_app_root().glob("*/*/claude.app/Contents/MacOS/claude"), key=version, reverse=True):
+        try:
+            if path.is_symlink() or not path.is_file() or not version(path) or not os.access(str(path), os.X_OK):
+                continue
+            mark = (str(path), path.stat().st_mtime, path.stat().st_size)
+        except OSError:
+            continue
+        if mark not in CLAUDE_APP_CHECKED:
+            CLAUDE_APP_CHECKED[mark] = claude_app_signed(path)
+        if CLAUDE_APP_CHECKED[mark]:
+            return path
+    return None
+
+
 def extend_path():
     home = pathlib.Path.home()  # an app opened from the Finder does not inherit the terminal's PATH
     extra = [str(home / x) for x in (".local/bin", ".codex/bin", ".npm-global/bin")] + ["/opt/homebrew/bin", "/usr/local/bin"]
     extra += sorted((str(p) for p in (home / ".nvm" / "versions" / "node").glob("*/bin")), reverse=True)
     if os.environ.get("APPDATA"):
         extra.append(str(pathlib.Path(os.environ["APPDATA"]) / "npm"))
-    parts = os.environ.get("PATH", "").split(os.pathsep)
+    root = str(claude_app_root()) + os.sep
+    parts = [x for x in os.environ.get("PATH", "").split(os.pathsep) if not x.startswith(root)]  # an update of the app changes its folder
     os.environ["PATH"] = os.pathsep.join(parts + [x for x in extra if x not in parts])
+    if not shutil.which("claude"):  # a separately installed Claude Code always comes first
+        found = claude_app_tool()
+        if found:
+            os.environ["PATH"] += os.pathsep + str(found.parent)
 
 
 TOOL_INSTALL = {
@@ -1985,7 +2032,9 @@ class Service:
         if cached_tools and time.time() - cached_tools[0] < 20 and not busy:
             tools = cached_tools[1]
         else:
+            extend_path()  # Claude for Mac may have been installed or updated meanwhile
             tools = {n: {"installed": bool(shutil.which(n)), "signed_in": tool_signed_in(n)} for n in ("claude", "codex")}
+            tools["claude"]["via_app"] = str(shutil.which("claude") or "").startswith(str(claude_app_root()) + os.sep)
             self.tools_cache = (time.time(), tools)
         provider = self.provider or load_prefs().get("provider") or next((n for n in ("claude", "codex") if tools[n]["installed"]), None)
         windows = UsageReader.read(provider) if provider else None
@@ -2003,11 +2052,16 @@ class Service:
             try:
                 a = Api(cfg["url"], cfg["key"])
                 for p in project_list(a.get("/api/projects")):
-                    d = a.get(f"/api/projects/{p['id']}/ai")
-                    projects.append({"id": p["id"], "title": p["title"], "waiting": d["counts"]["pending"], "running": d["counts"]["running"], "review": sum(1 for s in d["suggestions"] if s["status"] == "proposed")})
+                    try:  # one project that cannot be read must not disconnect the others
+                        d = a.get(f"/api/projects/{p['id']}/ai")
+                        projects.append({"id": p["id"], "title": p["title"], "waiting": d["counts"]["pending"], "running": d["counts"]["running"], "review": sum(1 for s in d["suggestions"] if s["status"] == "proposed")})
+                    except (ApiError, ValueError, KeyError, TypeError):
+                        projects.append({"id": p["id"], "title": p["title"], "waiting": 0, "running": 0, "review": 0, "unavailable": True})
                 self.projects_cache = (cfg.get("key"), time.time(), projects)
             except ApiError as e:
                 error = str(e)
+            except (ValueError, KeyError, TypeError):
+                error = "The platform gave an unexpected answer."
         paused = read_paused()
         projects = [{**p, "paused": project_key(cfg.get("url") or "", p["id"]) in paused} for p in projects]
         if allowed and projects and all(p["paused"] for p in projects):
@@ -2028,6 +2082,13 @@ def load_prefs():
 def save_prefs(**kw):
     data_dir().mkdir(parents=True, exist_ok=True)
     (data_dir() / "prefs.json").write_text(json.dumps({**load_prefs(), **kw}), encoding="utf-8")
+
+
+def extract_key(text):
+    """Accepts the key alone, or the setup commands copied from the platform."""
+    text = str(text or "").strip()
+    found = re.findall(r"(?<![A-Za-z0-9_-])(?:ouk|oq)_[A-Za-z0-9_-]+", text)
+    return found[0] if len(found) == 1 else text
 
 
 def make_handler(service, token, port):
@@ -2088,7 +2149,7 @@ def make_handler(service, token, port):
 
         def act(self, path, b):
             if path == "/api/connect":
-                url, key = str(b.get("url") or "").strip().rstrip("/"), str(b.get("key") or "").strip()
+                url, key = str(b.get("url") or "").strip().rstrip("/"), extract_key(b.get("key"))
                 if not re.match(r"^https?://", url):
                     url = "https://" + url
                 if not key.startswith(("ouk_", "oq_")):
@@ -2097,6 +2158,8 @@ def make_handler(service, token, port):
                     Api(url, key).get("/api/projects")
                 except ApiError as e:
                     raise Stop(f"The connection failed: {e}")
+                except ValueError:
+                    raise Stop("This address did not answer like an Open Questions platform. Check it.")
                 save_config({"url": url, "key": key})
             elif path == "/api/disconnect":
                 service.stop()
@@ -3038,7 +3101,7 @@ label.f{display:grid;gap:4px;margin-bottom:12px;font-weight:650;font-size:13px}l
 @media(max-width:680px){.app{display:block}nav{flex-direction:row;overflow-x:auto;padding:8px}.brand{display:none}nav button{flex:none}.ver{margin:0 0 0 auto;flex:none;display:flex;align-items:center;gap:8px;padding:0 6px}.ver small:first-child,.ver a{display:none}.update{flex-wrap:wrap}main{padding:16px}.grid{grid-template-columns:minmax(0,1fr)}.hero{flex-wrap:wrap}.hero .btn{width:100%}}
 </style></head><body><div class="app"><nav aria-label="Sections"><div class="brand">Open Questions AI</div><button data-v="home">Home</button><button data-v="limits">Usage limits</button><button data-v="danus">Prove new facts</button><button data-v="backup">Backups</button><button data-v="account">Accounts</button><div class=ver id=ver></div></nav><main id="m">Loading…</main></div>
 <script>
-const T='__TOKEN__';let S=null,view='home',draft=null,msg='',paint=0,R=null,O={},checking=false,updating=false,BD=null;
+const T='__TOKEN__';let S=null,view='home',draft=null,msg='',paint=0,R=null,O={},checking=false,updating=false,BD=null,CF={},connectErr='',connecting=false,pressing=false;
 const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const call=async(p,b={})=>{msg='';try{const r=await fetch(p,{method:'POST',headers:{'Content-Type':'application/json','X-OQ-Token':T},body:JSON.stringify(b)});const d=await r.json();if(!r.ok)msg=d.error||'Error';}catch{msg='The app is not responding.'}await load()};
 const load=async()=>{try{const r=await fetch('/api/state',{headers:{'X-OQ-Token':T}});S=await r.json();if(!draft)draft={...S.limits};render()}catch{document.getElementById('m').innerHTML='<div class=err>The app stopped. Close this window and open it again.</div>'}};
@@ -3055,11 +3118,11 @@ const usage=()=>{const l=S.limits,d=S.day;let h='<section class=panel><h2>Usage 
  h+=meter('Tasks',d.tasks,l.tasks_per_day,`${d.tasks} of ${l.tasks_per_day||'∞'}`)+meter('Computing time',d.seconds/60,l.minutes_per_day,`${Math.round(d.seconds/60)} of ${l.minutes_per_day||'∞'} min`)+meter('Tokens',d.tokens,l.tokens_per_day,`${d.tokens.toLocaleString()} of ${l.tokens_per_day?l.tokens_per_day.toLocaleString():'∞'}`);return h+'</section>'};
 const updateBanner=()=>{const u=S.update;if(!u?.available)return'';return`<section class="panel update"><div><b>Version ${e(u.latest)} is available</b><span>You have version ${e(u.current)}.${u.mode==='installer'?' Download the new app.':S.running||S.danus_run?.active?' Stop the current work to update.':''}</span></div>${u.mode==='installer'?(u.download_url?`<a class="btn primary" href="${e(u.download_url)}" target=_blank rel="noopener noreferrer">Download</a>`:''):`<button class="btn primary" data-a=updateapply ${S.running||S.danus_run?.active||updating?'disabled':''}>${updating?'Updating…':'Update now'}</button>`}</section>`};
 const versionBox=()=>{const u=S.update||{};const label=u.available?`Version ${u.latest} available`:u.error?'Check failed':u.checked_at?'Up to date':'Not checked yet';return`<small>Version ${e(S.version)}</small><small>${e(label)}</small><button data-a=updatecheck ${checking?'disabled':''}>${checking?'Checking…':'Check for updates'}</button><a href="https://github.com/LudovicPatey/projects" target=_blank rel="noopener noreferrer">Source code (AGPL-3.0)</a>`};
-const home=()=>`<h1>Home</h1><p class=sub>Your computer helps your research projects, within the limits you set.</p>${updateBanner()}${hero()}<div class=grid>${usage()}<section class=panel><h2>Your projects</h2>${S.projects.map(p=>`<div class="row ${p.paused?'off':''}"><div><b>${e(p.title)}</b><small>${p.waiting} waiting${p.review?' · '+p.review+' reference(s) to validate':''}</small></div><button class=toggle role=switch aria-checked=${!p.paused} aria-label="${e(p.title)}: ${p.paused?'paused':'active'}" data-pswitch=${p.id}>${p.paused?'Paused':'Active'}<i></i></button></div>`).join('')||'<div class=empty>No project yet.</div>'}</section></div><section class=panel style="margin-top:14px"><h2>Activity</h2><div class=log tabindex=0>${S.log.slice().reverse().map(x=>`<div><span>${e(x.at)}</span>${e(x.text)}</div>`).join('')||'<div class=empty>Nothing yet.</div>'}</div></section>`;
+const home=()=>`<h1>Home</h1><p class=sub>Your computer helps your research projects, within the limits you set.</p>${updateBanner()}${hero()}<div class=grid>${usage()}<section class=panel><h2>Your projects</h2>${S.projects.map(p=>`<div class="row ${p.paused?'off':''}"><div><b>${e(p.title)}</b><small>${p.unavailable?'Could not read its work queue':p.waiting+' waiting'}${p.review?' · '+p.review+' reference(s) to validate':''}</small></div><button class=toggle role=switch aria-checked=${!p.paused} aria-label="${e(p.title)}: ${p.paused?'paused':'active'}" data-pswitch=${p.id}>${p.paused?'Paused':'Active'}<i></i></button></div>`).join('')||'<div class=empty>No project yet.</div>'}</section></div><section class=panel style="margin-top:14px"><h2>Activity</h2><div class=log tabindex=0>${S.log.slice().reverse().map(x=>`<div><span>${e(x.at)}</span>${e(x.text)}</div>`).join('')||'<div class=empty>Nothing yet.</div>'}</div></section>`;
 const num=(k,l,h,min,max,unit)=>`<label class=f>${e(l)}<small>${e(h)}</small><input type=number data-l=${k} min=${min} max=${max} value="${e(draft[k])}"></label>`;
 const limits=()=>`<h1>Usage limits</h1><p class=sub>Keep your AI subscription for your own work. These limits apply to all your active projects together.</p><div class=grid><section class=panel><h2>Share of your subscription</h2><label class=f>Stop at this share of the session limit: ${draft.max_session_percent}%<small>ChatGPT reports this directly.</small><input type=range min=5 max=100 step=5 data-l=max_session_percent value="${draft.max_session_percent}"></label><label class=f>Stop at this share of the weekly limit: ${draft.max_weekly_percent}%<input type=range min=5 max=100 step=5 data-l=max_weekly_percent value="${draft.max_weekly_percent}"></label><label class=f>Working hours<small>For example 22-7 for nights. Empty means all day.</small><input type=text data-l=hours value="${e(draft.hours)}" placeholder="All day"></label></section><section class=panel><h2>Daily caps</h2>${num('tasks_per_day','Tasks per day','0 means no cap.',0,1000)}${num('minutes_per_day','Computing minutes per day','0 means no cap.',0,1440)}${num('tokens_per_day','Tokens per day','0 means no cap.',0,10000000000)}${num('task_minutes','Maximum minutes per task','A longer task is stopped.',1,720)}</section></div><section class=panel style="margin-top:14px"><h2>What this computer may do</h2>${[['extract','Extract facts from new files'],['ask','Answer @AI questions'],['bib','Suggest references'],['derive','Prove new facts automatically, without pressing Start (uses more of your subscription)']].map(([k,l])=>`<label class=check><input type=checkbox data-k=${k} ${draft.kinds.includes(k)?'checked':''}> ${l}</label>`).join('')}<p><button class="btn primary" data-a=save>Save limits</button></p></section>`;
-const account=()=>{const t=n=>{const x=S.tools[n],j=S.jobs['install-'+n]?.running,g=S.jobs['login-'+n]?.running;return`<div class=row><div><b>${toolName(n)}</b><small>${x.installed?(x.signed_in?'Installed and signed in':'Installed, sign-in needed'):'Not installed'}</small></div>${!x.installed?`<button class=btn data-tool=install data-n=${n} ${j?'disabled':''}>${j?'Installing…':'Install'}</button>`:!x.signed_in?`<button class="btn primary" data-tool=login data-n=${n} ${g?'disabled':''}>${g?'Check your browser…':'Sign in'}</button>`:`<button class=btn data-use=${n} ${S.provider===n?'disabled':''}>${S.provider===n?'In use':'Use this'}</button>`}</div>`};
- return`<h1>Accounts</h1><p class=sub>The app uses your own AI account, on this computer.</p><section class=panel><h2>1. Choose your AI</h2>${t('claude')}${t('codex')}</section><section class=panel><h2>2. Connect to the platform</h2>${S.connected?`<div class=row><div><b>Connected</b><small>${e(S.url)}</small></div><button class="btn danger" data-a=disconnect>Disconnect</button></div>`:`<label class=f>Platform address<input type=text id=url value="${e(S.url||'https://projects.ludovicpatey.com')}"></label><label class=f>Personal key<small>Create it on your profile page on the platform.</small><input type=password id=key autocomplete=off placeholder="ouk_…"></label><button class="btn primary" data-a=connect>Connect</button>`}</section><section class=panel><h2>3. How AI use is paid</h2><label class=check><input type=radio name=billing data-billing=subscription ${S.limits.ai_billing==='subscription'?'checked':''}> <span><b>My subscription only</b> (recommended). API keys on this computer are ignored.</span></label><label class=check><input type=radio name=billing data-billing=api ${S.limits.ai_billing==='api'?'checked':''}> <span><b>Allow a paid API key.</b> The provider charges each use.</span></label><div class=note>If you turned on <b>usage credits</b> in your Claude settings, background work can spend them after your plan limit. Keep them off, or set a monthly cap.</div></section>`};
+const account=()=>{const t=n=>{const x=S.tools[n],j=S.jobs['install-'+n]?.running,g=S.jobs['login-'+n]?.running;return`<div class=row><div><b>${toolName(n)}</b><small>${x.installed?(x.signed_in?'Installed and signed in':'Installed, sign-in needed'):'Not installed'}${x.via_app?' · from Claude for Mac':''}</small></div>${!x.installed?`<button class=btn data-tool=install data-n=${n} ${j?'disabled':''}>${j?'Installing…':'Install'}</button>`:!x.signed_in?`<button class="btn primary" data-tool=login data-n=${n} ${g?'disabled':''}>${g?'Check your browser…':'Sign in'}</button>`:`<button class=btn data-use=${n} ${S.provider===n?'disabled':''}>${S.provider===n?'In use':'Use this'}</button>`}</div>`};
+ return`<h1>Accounts</h1><p class=sub>The app uses your own AI account, on this computer.</p><section class=panel><h2>1. Choose your AI</h2>${t('claude')}${t('codex')}</section><section class=panel><h2>2. Connect to the platform</h2>${S.connected?`<div class=row><div><b>Connected</b><small>${e(S.url)}</small></div><button class="btn danger" data-a=disconnect>Disconnect</button></div>`:`<label class=f>Platform address<input type=text id=url data-c=url value="${e(CF.url??(S.url||'https://projects.ludovicpatey.com'))}"></label><label class=f>Personal key<small>Create it on your profile page on the platform, then paste it here.</small><input type=password id=key data-c=key autocomplete=off placeholder="ouk_…" value="${e(CF.key||'')}"></label>${connectErr||S.error?`<div class=err id=cerr role=alert>${e(connectErr||S.error)}</div>`:''}<button class="btn primary" data-a=connect ${connecting?'disabled':''}>${connecting?'Connecting…':'Connect'}</button>`}</section><section class=panel><h2>3. How AI use is paid</h2><label class=check><input type=radio name=billing data-billing=subscription ${S.limits.ai_billing==='subscription'?'checked':''}> <span><b>My subscription only</b> (recommended). API keys on this computer are ignored.</span></label><label class=check><input type=radio name=billing data-billing=api ${S.limits.ai_billing==='api'?'checked':''}> <span><b>Allow a paid API key.</b> The provider charges each use.</span></label><div class=note>If you turned on <b>usage credits</b> in your Claude settings, background work can spend them after your plan limit. Keep them off, or set a monthly cap.</div></section>`};
 const fmtMin=m=>{m=Math.round(m);return m>=60?`${Math.floor(m/60)} h ${String(m%60).padStart(2,'0')}`:`${m} min`};
 const runLabels={starting:['Starting','warn'],running:['Running','good'],waiting:['Waiting for the reset','warn'],stopping:['Stopping','warn'],stopped:['Finished',''],failed:['Failed','bad'],cancelled:['Cancelled',''],interrupted:['Interrupted','warn']};
 const runStatus=r=>{if(!r.status||r.status==='idle')return'';const l=runLabels[r.status]||[r.status,''];const active=r.active;let h=`<section class="panel hero ${r.status==='running'?'on':active?'hold':''}"><span class=dot></span><div><b>Proof search: ${e(l[0])}</b><span>${r.status==='waiting'?e(r.wait_reason||'')+(r.retry_at?' · continues around '+e(when(r.retry_at)):''):active?'Your limits are checked continuously.':r.stop_reason?'Stopped at '+e(r.stop_reason)+'.':''}</span></div>${active?`<button class="btn danger" data-a=danusstop ${r.status==='stopping'?'disabled':''}>${r.status==='stopping'?'Stopping…':'Stop now'}</button>`:''}</section>`;
@@ -3076,9 +3139,9 @@ const longDate=t=>t?new Date(t*1000).toLocaleDateString([],{day:'numeric',month:
 const backup=()=>{const b=S.backup,s=b.settings,j=S.jobs.backup;BD=BD||{...s};const busy=j?.running||b.current;const fails=b.projects.filter(p=>p.error).length;const next=b.projects.map(p=>p.next_at).filter(Boolean).sort((x,y)=>x-y)[0];
  const st=!S.connected?['hold','Connect your account','Backups start once this computer is connected.']:busy?['on','Backing up'+(b.current?' '+b.current:''),'You can keep working.']:fails?['hold',fails+' backup(s) failed','Your earlier backups were kept. The client tries again in an hour.']:s.enabled?['on','Automatic backups are on',next?'Next check: '+longDate(next)+'.':'The first backup starts within 15 minutes.']:['','Automatic backups are off','Optional. Nothing is copied to this computer unless you turn them on or press Back up now.'];
  return`<h1>Backups</h1><p class=sub>Dated copies of your projects, on this computer.</p><section class="panel hero ${st[0]}"><span class=dot></span><div><b>${e(st[1])}</b><span>${e(st[2])}</span></div><button class="btn primary" data-a=backupnow ${busy||!S.connected?'disabled':''}>${busy?'Working…':'Back up now'}</button></section>${j?.error?`<div class=err>${e(j.error)}</div>`:''}<div class=grid><section class=panel><h2>Schedule</h2><label class=check><input type=checkbox data-b=enabled ${BD.enabled?'checked':''}> <span><b>Back up automatically</b> (optional)</span></label><label class=f>Frequency<select data-b=every_days>${[[1,'Every day'],[7,'Every week'],[14,'Every 2 weeks'],[30,'Every month']].concat([1,7,14,30].includes(+BD.every_days)?[]:[[+BD.every_days,'Every '+BD.every_days+' days']]).map(([v,l])=>`<option value=${v} ${+BD.every_days===v?'selected':''}>${l}</option>`).join('')}</select></label><label class=f>Backups kept per project<small>Older ones are removed only after a new backup is verified.</small><input type=number min=1 max=100 data-b=keep value="${e(BD.keep)}"></label><label class=f>Folder<small>Leave empty for the default folder.</small><input type=text data-b=folder value="${e(BD.folder)}" placeholder="Open Questions backups"></label><button class="btn primary" data-a=backupsave>Save</button></section><section class=panel><h2>Your backups</h2>${b.projects.map(p=>`<div class=row><div><b>${e(p.title)}</b><small>${p.last_ok?'Last: '+e(longDate(p.last_ok)):'No backup yet'} · ${p.count} kept · ${e(size(p.size))}${p.left?' · no longer a member':''}${p.error?'<br>'+e(p.error):''}${p.missing?'<br>'+p.missing+' file(s) were already missing on the platform':''}</small></div><span class="pill ${p.error?'bad':p.last_ok?'good':'warn'}">${p.error?'Failed':p.last_ok?'Saved':'Waiting'}</span></div>`).join('')||'<div class=empty>No project yet.</div>'}<p style="overflow-wrap:anywhere"><small>${e(b.folder)}</small></p><button class=btn data-a=backupopen>Open the folder</button></section></div><div class=note style="margin-top:14px">When turned on, backups run while this app is open, and catch up when you reopen it. Each one contains what you can see in the project, so keep the folder private. It is a readable copy for you, not a full restore of the platform.</div>`};
-const render=()=>{const a=document.activeElement;if(a&&['INPUT','SELECT','TEXTAREA'].includes(a.tagName)&&view!=='home')return;for(const b of document.querySelectorAll('nav button')){b.classList.toggle('on',b.dataset.v===view);b.setAttribute('aria-current',b.dataset.v===view?'page':'false')}document.getElementById('ver').innerHTML=versionBox();const m=document.getElementById('m');const sc=m.querySelector('.log')?.scrollTop;m.innerHTML=(msg?`<div class=err role=alert>${e(msg)}</div>`:'')+{home,limits,danus,backup,account}[view]();if(sc)m.querySelector('.log').scrollTop=sc};
-document.addEventListener('click',ev=>{const b=ev.target.closest('button');if(!b)return;if(b.dataset.v){view=b.dataset.v;msg='';draft={...S.limits};BD=null;return render()}if(b.dataset.go){view=b.dataset.go;return render()}if(b.dataset.pswitch){const q=S.projects.find(p=>p.id===+b.dataset.pswitch);return call('/api/project/pause',{project_id:q.id,paused:!q.paused})}if(b.dataset.tool)return call('/api/tool/'+b.dataset.tool,{tool:b.dataset.n});if(b.dataset.use)return call('/api/limits',{}).then(()=>call('/api/start',{provider:b.dataset.use}));const x=b.dataset.a;if(x==='start')call('/api/start',{provider:S.provider});if(x==='stop')call('/api/stop');if(x==='disconnect'&&confirm('Disconnect this computer?'))call('/api/disconnect');if(x==='connect')call('/api/connect',{url:document.getElementById('url').value,key:document.getElementById('key').value});if(x==='save'){const{paused,...rest}=draft;document.activeElement?.blur();call('/api/limits',rest).then(()=>{if(!msg)draft={...S.limits}})}if(x==='updatecheck'){checking=true;render();call('/api/update/check').finally(()=>{checking=false;render()})}if(x==='updateapply'&&confirm('Install version '+S.update.latest+' now? The client restarts.')){updating=true;render();call('/api/update/apply').finally(()=>{setTimeout(()=>{updating=false;load()},2500)})}if(x==='backupnow')call('/api/backup/run');if(x==='backupopen')call('/api/backup/open');if(x==='backupsave'){document.activeElement?.blur();call('/api/backup/settings',BD).then(()=>{if(!msg){BD=null;render()}})}if(x==='danus')call('/api/danus/setup');if(x==='danusstop'&&confirm('Stop the proof search now? Its facts so far are kept.'))call('/api/danus/stop');if(x==='danusrun'){document.activeElement?.blur();const g=R.goal||'',b={project_id:R.project_id,prompt:R.prompt,minutes:R.minutes,stop_session:R.stop_session,stop_weekly:R.stop_weekly,on_limit:R.on_limit,workers:R.workers,task_id:g[0]==='t'?+g.slice(1):null,question_id:g[0]==='q'?+g.slice(1):null};if(R.on_limit==='resume'&&!R.minutes&&!confirm('This run continues after every reset until you stop it. Start it?'))return;call('/api/danus/run',b).then(()=>{if(!msg)O={}})}if(x==='danusremove'&&confirm('Remove the prover and its isolated machine?'))call('/api/danus/remove')});
-document.addEventListener('input',ev=>{const t=ev.target;if(t.dataset.b&&BD){const k=t.dataset.b;BD[k]=k==='enabled'?t.checked:k==='folder'?t.value:+t.value;if(t.type==='checkbox'||t.tagName==='SELECT')t.blur()}if(t.dataset.l){draft[t.dataset.l]=t.type==='text'?t.value:+t.value;if(t.type==='range'){t.closest('label').firstChild.textContent=t.closest('label').firstChild.textContent.replace(/\d+%/,t.value+'%')}}if(t.dataset.k){draft.kinds=['extract','ask','bib','derive'].filter(k=>k===t.dataset.k?t.checked:draft.kinds.includes(k))}if('danus'in t.dataset)draft.danus_enabled=t.checked;if(t.dataset.r&&R){const k=t.dataset.r;R[k]=['goal','prompt','on_limit'].includes(k)?t.value:+t.value;if(k==='project_id'){R.goal='';t.blur();options();render()}const set=(i,v)=>{const x=document.getElementById(i);if(x)x.textContent=v};if(k==='workers')set('rw',t.value);if(k==='stop_session')set('rs',t.value);if(k==='stop_weekly')set('rk',t.value);const n=document.getElementById('runsum');if(n)n.innerHTML=runSummary(R.minutes?fmtMin(R.minutes):'no time limit')}});
+const render=()=>{if(pressing)return;const a=document.activeElement;if(a&&['INPUT','SELECT','TEXTAREA'].includes(a.tagName)&&view!=='home')return;for(const b of document.querySelectorAll('nav button')){b.classList.toggle('on',b.dataset.v===view);b.setAttribute('aria-current',b.dataset.v===view?'page':'false')}document.getElementById('ver').innerHTML=versionBox();const m=document.getElementById('m');const sc=m.querySelector('.log')?.scrollTop;m.innerHTML=(msg?`<div class=err role=alert>${e(msg)}</div>`:'')+{home,limits,danus,backup,account}[view]();if(sc)m.querySelector('.log').scrollTop=sc};
+document.addEventListener('click',ev=>{const b=ev.target.closest('button');if(!b)return;if(b.dataset.v){view=b.dataset.v;msg='';draft={...S.limits};BD=null;return render()}if(b.dataset.go){view=b.dataset.go;return render()}if(b.dataset.pswitch){const q=S.projects.find(p=>p.id===+b.dataset.pswitch);return call('/api/project/pause',{project_id:q.id,paused:!q.paused})}if(b.dataset.tool)return call('/api/tool/'+b.dataset.tool,{tool:b.dataset.n});if(b.dataset.use)return call('/api/limits',{}).then(()=>call('/api/start',{provider:b.dataset.use}));const x=b.dataset.a;if(x==='start')call('/api/start',{provider:S.provider});if(x==='stop')call('/api/stop');if(x==='disconnect'&&confirm('Disconnect this computer?'))call('/api/disconnect');if(x==='connect'&&!connecting){CF={url:document.getElementById('url').value,key:document.getElementById('key').value};connecting=true;connectErr='';render();call('/api/connect',CF).then(()=>{connecting=false;if(msg){connectErr=msg;msg=''}else{CF={};connectErr=''}render();document.getElementById('cerr')?.scrollIntoView({block:'center'})})}if(x==='save'){const{paused,...rest}=draft;document.activeElement?.blur();call('/api/limits',rest).then(()=>{if(!msg)draft={...S.limits}})}if(x==='updatecheck'){checking=true;render();call('/api/update/check').finally(()=>{checking=false;render()})}if(x==='updateapply'&&confirm('Install version '+S.update.latest+' now? The client restarts.')){updating=true;render();call('/api/update/apply').finally(()=>{setTimeout(()=>{updating=false;load()},2500)})}if(x==='backupnow')call('/api/backup/run');if(x==='backupopen')call('/api/backup/open');if(x==='backupsave'){document.activeElement?.blur();call('/api/backup/settings',BD).then(()=>{if(!msg){BD=null;render()}})}if(x==='danus')call('/api/danus/setup');if(x==='danusstop'&&confirm('Stop the proof search now? Its facts so far are kept.'))call('/api/danus/stop');if(x==='danusrun'){document.activeElement?.blur();const g=R.goal||'',b={project_id:R.project_id,prompt:R.prompt,minutes:R.minutes,stop_session:R.stop_session,stop_weekly:R.stop_weekly,on_limit:R.on_limit,workers:R.workers,task_id:g[0]==='t'?+g.slice(1):null,question_id:g[0]==='q'?+g.slice(1):null};if(R.on_limit==='resume'&&!R.minutes&&!confirm('This run continues after every reset until you stop it. Start it?'))return;call('/api/danus/run',b).then(()=>{if(!msg)O={}})}if(x==='danusremove'&&confirm('Remove the prover and its isolated machine?'))call('/api/danus/remove')});
+document.addEventListener('pointerdown',()=>{pressing=true});for(const n of ['pointerup','pointercancel'])document.addEventListener(n,()=>setTimeout(()=>{pressing=false},0));document.addEventListener('input',ev=>{const t=ev.target;if(t.dataset.c){CF[t.dataset.c]=t.value;connectErr=''}if(t.dataset.b&&BD){const k=t.dataset.b;BD[k]=k==='enabled'?t.checked:k==='folder'?t.value:+t.value;if(t.type==='checkbox'||t.tagName==='SELECT')t.blur()}if(t.dataset.l){draft[t.dataset.l]=t.type==='text'?t.value:+t.value;if(t.type==='range'){t.closest('label').firstChild.textContent=t.closest('label').firstChild.textContent.replace(/\d+%/,t.value+'%')}}if(t.dataset.k){draft.kinds=['extract','ask','bib','derive'].filter(k=>k===t.dataset.k?t.checked:draft.kinds.includes(k))}if('danus'in t.dataset)draft.danus_enabled=t.checked;if(t.dataset.r&&R){const k=t.dataset.r;R[k]=['goal','prompt','on_limit'].includes(k)?t.value:+t.value;if(k==='project_id'){R.goal='';t.blur();options();render()}const set=(i,v)=>{const x=document.getElementById(i);if(x)x.textContent=v};if(k==='workers')set('rw',t.value);if(k==='stop_session')set('rs',t.value);if(k==='stop_weekly')set('rk',t.value);const n=document.getElementById('runsum');if(n)n.innerHTML=runSummary(R.minutes?fmtMin(R.minutes):'no time limit')}});
 document.addEventListener('change',ev=>{const b=ev.target.dataset?.billing;if(!b)return;ev.target.blur();if(b==='api'&&!confirm('Allow a paid API key? The AI provider will charge each use to that key.'))return load();call('/api/limits',{ai_billing:b}).then(()=>{if(!msg)draft={...S.limits}})});
 load();setInterval(()=>{if(!document.hidden)load()},3000);
 </script></body></html>
