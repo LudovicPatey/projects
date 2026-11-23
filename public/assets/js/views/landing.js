@@ -25,8 +25,8 @@ const FEATURES = [
   },
   {
     kicker: 'Conversations', title: 'Discuss like in your mailbox',
-    text: 'Linear conversations with the people you choose, rich text, LaTeX, and @mentions of researchers, files, references and facts. Comment on any passage without derailing the thread.',
-    points: ['AI messages show their model, user and generation time', 'Personal read state for each researcher', 'iPhone-style badges for everything new'],
+    text: 'Linear conversations with the people you choose, rich text, LaTeX, and @mentions of researchers, files, references and facts. Comment on any passage without derailing the thread, and turn the results of a discussion into cited facts.',
+    points: ['AI messages show their model, user and generation time', 'Ask the AI for its opinion inside the thread', 'Extract facts from a discussion, with the exact message quoted', 'Personal read state for each researcher', 'iPhone-style badges for everything new'],
     img: 'conversations.webp', w: 1600, h: 978, alt: 'Three-column conversation view with a list, messages from researchers and an AI agent, and comments',
   },
   {

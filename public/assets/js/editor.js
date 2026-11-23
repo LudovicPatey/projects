@@ -5,7 +5,7 @@ import { REF_TYPES, parseRefQuery, sortRefs } from './references.js';
 import { hydrateChips, openChip, searchRefs } from './refs-client.js';
 import { escapeHtml, markTerms } from './util.js';
 import { mentionMatches, mentionQuery } from './questions-model.js';
-import { offersAskAi } from './ai-model.js';
+import { askAiPrefix, offersAskAi } from './ai-model.js';
 
 const Embed = Quill.import('blots/embed');
 
@@ -190,6 +190,11 @@ export const RichEditor = {
       this.q.setContents(this.q.clipboard.convert({ html: html || '' }), 'silent');
     },
     clear() { this.q.setContents([], 'silent'); this.close(); },
+    /** Makes the draft a visible question to the AI. */
+    askAi() {
+      const add = askAiPrefix(this.isEmpty() ? '' : this.q.getText());
+      if (add) this.q.insertText(0, add, 'user');
+    },
     focus() { this.q.focus(); this.q.setSelection(this.q.getLength(), 0); },
   },
 };

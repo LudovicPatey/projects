@@ -63,6 +63,8 @@ In the OVH Control Panel, open **Web Cloud → Hosting → your hosting → Sche
 Check after the first run that `php bin/backup.php --list` shows the new archive. OVH limits how long a scheduled task may run,
 so if your files grow very large, check that backups still finish.
 
+Fact migrations also keep their undo journals in `projects-data/migrations/`, readable by the owner only. They contain the previous values of the fields they changed, and are not part of backup archives.
+
 ## Keep a copy elsewhere
 
 **A backup stored only on the server does not protect you if you lose the hosting.** Copy archives regularly to another machine:

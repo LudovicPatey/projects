@@ -517,6 +517,7 @@ CREATE TABLE IF NOT EXISTS ai_tasks (
   version_id INT UNSIGNED NULL,
   source_blob_id INT UNSIGNED NULL,       -- the PDF of a reference that an extraction reads
   comments_hash CHAR(40) NULL,            -- the people's comments that an extraction took into account
+  snapshot_json TEXT NULL,                -- the part of a conversation that an extraction may read
   conversation_id INT UNSIGNED NULL,      -- set when the task exposes a private conversation
   prompt_text TEXT NULL,
   requested_by INT UNSIGNED NULL,

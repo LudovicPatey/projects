@@ -401,6 +401,7 @@ const KIND_LABEL = {
   mention: 'mentioned you', reply: 'replied to a thread you follow', added: 'added you to the project',
   added_to_conversation: 'added you to a conversation',
   ai_done: 'completed your AI request',
+  conversation_extract: 'asked to share facts from a private conversation',
   answer_proposed: 'proposed an answer to your question', answer_ratified: 'ratified your proposed answer', answer_rejected: 'rejected your proposed answer',
   answer_revoked: 'revoked the ratification of your answer', answer_fact: 'changed a fact behind an answer you ratified',
   fact_review: 'reviewed your fact', fact_retracted: 'retracted a fact in your dependency chain',

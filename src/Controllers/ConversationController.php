@@ -39,7 +39,7 @@ final class ConversationController
             $c['archived'] = (bool)$c['archived'];
         }
         $unread = Activity::unread($pid, $me)['items']['conversation'];
-        foreach ($convs as &$c) $c['unread'] = $unread[(int)$c['id']] ?? 0;
+        foreach ($convs as &$c) { $c['unread'] = $unread[(int)$c['id']] ?? 0; $c['private'] = AiTaskController::outsideMembers($pid, (int)$c['id']) > 0; }
         unset($c);
         Response::json(['conversations' => $convs]);
     }
@@ -58,7 +58,7 @@ final class ConversationController
 
         $model = Provenance::agentModel($r);
         $stamp = Provenance::stamp($model, $r->input('generation_seconds'));
-        $cid = Db::tx(function () use ($pid, $subject, $ids, $body, $model, $stamp) {
+        [$cid, $firstMessage] = Db::tx(function () use ($pid, $subject, $ids, $body, $model, $stamp) {
             $now = Db::now();
             $cid = Db::insert('conversations', [
                 'project_id' => $pid, 'subject' => mb_substr($subject, 0, 255), 'created_by' => Auth::id(),
@@ -70,8 +70,9 @@ final class ConversationController
             $mid = Db::insert('messages', $stamp + ['conversation_id' => $cid, 'author_id' => Auth::id(), 'ai_model' => $model, 'body_html' => $body['html'], 'created_at' => $now]);
             Activity::touch($pid, 'conversation', $cid, 'message', $mid);
             Notify::mentions($pid, 'message', $mid, $body['mentions'], ['view' => 'conversations', 'id' => $cid], $body['text'], $ids);
-            return $cid;
+            return [$cid, $mid];
         });
+        AiTaskController::queueMention($pid, 'message', $firstMessage, $body['html'], $cid);
         Response::json(['id' => $cid], 201);
     }
 
@@ -92,6 +93,8 @@ final class ConversationController
         $c['starred'] = (bool)$flags['starred'];
         $c['archived'] = (bool)$flags['archived'];
         $c['last_activity_id'] = Activity::latest((int)$c['project_id'], 'conversation', (int)$c['id']);
+        $c['extraction'] = AiTaskController::conversationExtraction((int)$c['project_id'], (int)$c['id']);
+        $c['ai_opinion'] = AiTaskController::conversationOpinion((int)$c['id']);
         // An AI client reading on the user's behalf must not mark messages as read.
         if (!Auth::isClient()) {
             Db::update('conversation_participants', ['last_read_at' => Db::now()], 'conversation_id = :c AND user_id = :u', ['c' => $c['id'], 'u' => $me]);

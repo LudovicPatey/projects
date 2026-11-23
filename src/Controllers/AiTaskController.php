@@ -17,7 +17,9 @@ final class AiTaskController
     private const MAX_REQUESTS_PER_DAY = 40;
     private const ONLINE_SECONDS = 180;
     private const ASSISTANT = 'ai-assistant';
-    private const SOURCES = ['document', 'bib', 'question', 'strategy', 'fact'];
+    private const SOURCES = ['document', 'bib', 'conversation', 'question', 'strategy', 'fact'];
+    private const MAX_CONVERSATION_MESSAGES = 1000;
+    private const MAX_CONVERSATION_CHARS = 600000;
     /** Raise it when a client release needs new server features: older platforms are then not offered that release. */
     public const API_LEVEL = 1;
 
@@ -45,7 +47,7 @@ final class AiTaskController
         return preg_match('/(?<![\w@.])@AI\b/iu', $text) === 1;
     }
 
-    private static function insertTask(int $pid, string $kind, ?string $sourceType, ?int $sourceId, ?int $versionId, ?int $conversationId, ?string $prompt, ?string $dedupe, ?int $blobId = null): int
+    private static function insertTask(int $pid, string $kind, ?string $sourceType, ?int $sourceId, ?int $versionId, ?int $conversationId, ?string $prompt, ?string $dedupe, ?int $blobId = null, ?array $snapshot = null): int
     {
         if ($dedupe !== null) {
             $old = Db::value('SELECT id FROM ai_tasks WHERE project_id = ? AND dedupe_key = ?', [$pid, $dedupe]);
@@ -54,7 +56,7 @@ final class AiTaskController
         $now = Db::now();
         return Db::insert('ai_tasks', [
             'project_id' => $pid, 'kind' => $kind, 'status' => 'pending', 'source_type' => $sourceType, 'source_id' => $sourceId,
-            'version_id' => $versionId, 'source_blob_id' => $blobId, 'conversation_id' => $conversationId, 'prompt_text' => $prompt,
+            'version_id' => $versionId, 'source_blob_id' => $blobId, 'conversation_id' => $conversationId, 'prompt_text' => $prompt, 'snapshot_json' => $snapshot ? json_encode($snapshot) : null,
             'requested_by' => Auth::id(), 'dedupe_key' => $dedupe, 'created_at' => $now, 'updated_at' => $now,
         ]);
     }
@@ -103,8 +105,8 @@ final class AiTaskController
             throw new HttpError(422, 'Invalid subject.');
         }
         if ($sourceType !== null && self::sourceProject($sourceType, $sourceId) !== $pid) throw new HttpError(404, 'This subject is not in the project.');
-        if ($kind === 'extract' && !in_array($sourceType, ['document', 'bib'], true)) throw new HttpError(422, 'Choose the file or reference to extract facts from.');
-        if ($sourceType === 'bib' && $kind !== 'extract') throw new HttpError(422, 'Invalid subject.');
+        if ($kind === 'extract' && !in_array($sourceType, ['document', 'bib', 'conversation'], true)) throw new HttpError(422, 'Choose the file, reference or conversation to extract facts from.');
+        if (in_array($sourceType, ['bib', 'conversation'], true) && $kind !== 'extract') throw new HttpError(422, 'Invalid subject.');
         if (in_array($kind, ['review', 'lean'], true)) {
             if ($sourceType !== 'fact') throw new HttpError(422, 'Choose the fact to check.');
             if (Db::value('SELECT retracted_at FROM facts WHERE id = ?', [$sourceId])) throw new HttpError(422, 'This fact is retracted.');
@@ -117,7 +119,21 @@ final class AiTaskController
             array_merge([$pid, $kind], $sourceType === null ? [] : [$sourceType, $sourceId], [$prompt]));
         if ($open) throw new HttpError(409, 'The same request is already waiting.');
         $blobId = $kind === 'extract' && $sourceType === 'bib' ? (int)Db::value('SELECT pdf_blob_id FROM bib_entries WHERE id = ?', [$sourceId]) : null;
-        $id = self::insertTask($pid, $kind, $sourceType, $sourceId, $versionId, null, $prompt !== '' ? $prompt : null, null, $blobId);
+        $snapshot = null;
+        if ($sourceType === 'conversation') {
+            $private = self::outsideMembers($pid, $sourceId) > 0;
+            if ($private && $r->input('publish_private') !== true) {
+                throw new HttpError(422, 'This conversation is private and every project member can see facts. Confirm that its results may be shared with the project.');
+            }
+            $snapshot = self::conversationSnapshot($pid, $sourceId, $private);
+        }
+        $id = self::insertTask($pid, $kind, $sourceType, $sourceId, $versionId, $sourceType === 'conversation' ? $sourceId : null, $prompt !== '' ? $prompt : null, null, $blobId, $snapshot);
+        if ($snapshot['shared'] ?? false) {
+            $subject = (string)Db::value('SELECT subject FROM conversations WHERE id = ?', [$sourceId]);
+            foreach (Db::all("SELECT u.id FROM conversation_participants cp JOIN users u ON u.id = cp.user_id WHERE cp.conversation_id = ? AND u.kind = 'human' AND u.id <> ?", [$sourceId, Auth::id()]) as $u) {
+                Notify::send((int)$u['id'], $pid, 'conversation_extract', ['link' => ['view' => 'conversations', 'id' => $sourceId], 'excerpt' => $subject]);
+            }
+        }
         Response::json(self::present(self::row($id)), 201);
     }
 
@@ -177,6 +193,85 @@ final class AiTaskController
         return ['entries' => $entries, 'progress' => $progress];
     }
 
+    /** Where a conversation stands. Only for its participants: the caller checked access. */
+    public static function conversationExtraction(int $pid, int $cid): array
+    {
+        $tasks = Db::all("SELECT status, ai_model, comments_hash FROM ai_tasks WHERE project_id = ? AND kind = 'extract' AND source_type = 'conversation' AND source_id = ? ORDER BY id", [$pid, $cid]);
+        $latest = self::conversationSnapshot($pid, $cid, false)['hash'];
+        $done = array_filter($tasks, fn($t) => $t['status'] === 'done');
+        $last = $tasks ? end($tasks) : null;
+        $state = array_intersect(['pending', 'running'], array_column($tasks, 'status')) ? 'queued'
+            : (array_filter($done, fn($t) => (string)$t['comments_hash'] === $latest) ? 'done'
+            : ($done ? 'new_messages' : ($last && $last['status'] === 'failed' ? 'failed' : 'none')));
+        $outside = self::outsideMembers($pid, $cid);
+        return ['state' => $state, 'models' => array_values(array_unique(array_filter(array_column($done, 'ai_model')))), 'private' => $outside > 0, 'outside' => $outside];
+    }
+
+    /** Where the questions asked to the AI in this conversation stand. Only for its participants: the caller checked access. */
+    public static function conversationOpinion(int $cid): array
+    {
+        $asks = Db::all("SELECT id, status FROM ai_tasks WHERE kind = 'ask' AND source_type = 'message' AND conversation_id = ? ORDER BY id", [$cid]);
+        $statuses = array_column($asks, 'status');
+        $last = $asks ? end($asks) : null;
+        $clients = (int)Db::value('SELECT COUNT(DISTINCT c.user_id) FROM ai_clients c JOIN conversation_participants p ON p.user_id = c.user_id AND p.conversation_id = ? WHERE c.last_seen_at >= ?',
+            [$cid, gmdate('Y-m-d H:i:s', time() - self::ONLINE_SECONDS)]);
+        return ['waiting' => count(array_keys($statuses, 'pending', true)), 'running' => count(array_keys($statuses, 'running', true)),
+            'failed_task' => $last && $last['status'] === 'failed' ? (int)$last['id'] : null, 'clients' => $clients];
+    }
+
+    /** Project members who cannot read this conversation. */
+    public static function outsideMembers(int $pid, int $cid): int
+    {
+        return (int)Db::value('SELECT COUNT(*) FROM project_members pm WHERE pm.project_id = ? AND pm.user_id NOT IN (SELECT user_id FROM conversation_participants WHERE conversation_id = ?)', [$pid, $cid]);
+    }
+
+    /** The exact part of a conversation that an extraction may read: what exists when a person asks for it. */
+    private static function conversationSnapshot(int $pid, int $cid, bool $shared): array
+    {
+        $message = (int)Db::value('SELECT COALESCE(MAX(id), 0) FROM messages WHERE conversation_id = ?', [$cid]);
+        $comment = (int)Db::value("SELECT COALESCE(MAX(id), 0) FROM comments WHERE project_id = ? AND target_type = 'conversation' AND target_id = ?", [$pid, $cid]);
+        return ['message' => $message, 'comment' => $comment, 'shared' => $shared, 'hash' => self::conversationHash($pid, $cid, $message, $comment)];
+    }
+
+    private static function conversationMessages(int $cid, int $upTo): array
+    {
+        return Db::all('SELECT m.id, m.body_html, m.created_at, m.edited_at, m.ai_model, u.name AS author, u.kind FROM messages m JOIN users u ON u.id = m.author_id WHERE m.conversation_id = ? AND m.id <= ? ORDER BY m.id', [$cid, $upTo]);
+    }
+
+    private static function conversationComments(int $pid, int $cid, int $upTo): array
+    {
+        return array_values(array_filter(self::commentRows($pid, 'conversation', $cid), fn($c) => (int)$c['id'] <= $upTo));
+    }
+
+    private static function conversationHash(int $pid, int $cid, int $message, int $comment): string
+    {
+        $messages = array_map(fn($m) => [(int)$m['id'], (string)$m['body_html']], self::conversationMessages($cid, $message));
+        return sha1(json_encode([$messages, self::commentsHash(self::conversationComments($pid, $cid, $comment))]));
+    }
+
+    private static function snapshot(array $t): array
+    {
+        $s = json_decode((string)($t['snapshot_json'] ?? ''), true);
+        return is_array($s) ? $s + ['message' => 0, 'comment' => 0, 'shared' => false, 'hash' => ''] : ['message' => 0, 'comment' => 0, 'shared' => false, 'hash' => ''];
+    }
+
+    private static function snapshotHash(array $t): string
+    {
+        $s = self::snapshot($t);
+        return self::conversationHash((int)$t['project_id'], (int)$t['source_id'], (int)$s['message'], (int)$s['comment']);
+    }
+
+    /** Why this extraction may no longer run. Sharing a private conversation holds only for what the person saw. */
+    private static function conversationBlocked(array $t): ?string
+    {
+        $pid = (int)$t['project_id']; $cid = (int)$t['source_id']; $s = self::snapshot($t);
+        if (!Db::value('SELECT 1 FROM conversations WHERE id = ? AND project_id = ?', [$cid, $pid])) return 'The conversation no longer exists.';
+        if (!Db::value('SELECT 1 FROM conversation_participants WHERE conversation_id = ? AND user_id = ?', [$cid, $t['requested_by']])) return 'The person who asked no longer takes part in this conversation. Ask again.';
+        if (self::outsideMembers($pid, $cid) > 0 && !$s['shared']) return 'This conversation became private after the request. Ask again to confirm that its results may be shared.';
+        if ($s['shared'] && self::snapshotHash($t) !== (string)$s['hash']) return 'The conversation was edited after its results were approved for sharing. Ask again.';
+        return null;
+    }
+
     /** A reviewer must be independent: not the author's model, not one known to be weaker, and new on this revision. */
     private static function mayReview(array $t, ?string $model): bool
     {
@@ -196,6 +291,10 @@ final class AiTaskController
     private static function extractedBy(array $t): array
     {
         if ($t['kind'] !== 'extract' || !$t['source_type']) return [];
+        if ($t['source_type'] === 'conversation') {
+            return array_column(Db::all("SELECT DISTINCT ai_model FROM ai_tasks WHERE project_id = ? AND kind = 'extract' AND status = 'done' AND source_type = 'conversation' AND source_id = ? AND comments_hash = ?",
+                [$t['project_id'], $t['source_id'], self::snapshotHash($t)]), 'ai_model');
+        }
         [$col, $value] = $t['source_type'] === 'bib' ? ['source_blob_id', $t['source_blob_id']] : ['version_id', $t['version_id']];
         if (!$value) return [];
         // New comments are new information: an earlier extraction no longer covers this one.
@@ -230,6 +329,7 @@ final class AiTaskController
 
     private static function extractComments(array $t): array
     {
+        if ($t['kind'] === 'extract' && $t['source_type'] === 'conversation') return self::conversationComments((int)$t['project_id'], (int)$t['source_id'], (int)self::snapshot($t)['comment']);
         if ($t['kind'] !== 'extract' || !in_array($t['source_type'], ['document', 'bib'], true)) return [];
         $rows = self::commentRows((int)$t['project_id'], $t['source_type'], (int)$t['source_id']);
         return $t['source_type'] === 'bib' ? self::commentScope($rows, 'blob_id', (int)$t['source_blob_id']) : self::commentScope($rows, 'version_id', (int)$t['version_id']);
@@ -308,6 +408,7 @@ final class AiTaskController
         $where = ($project ? ' AND t.project_id = ?' : '') . ($only ? ' AND t.id = ?' : '');
         // A client from before this feature would fail these tasks and use up their attempts.
         if (!in_array('extract_bib', (array)$r->input('features', []), true)) $where .= " AND (t.kind <> 'extract' OR t.source_type IS NULL OR t.source_type <> 'bib')";
+        if (!in_array('extract_conversation', (array)$r->input('features', []), true)) $where .= " AND (t.kind <> 'extract' OR t.source_type IS NULL OR t.source_type <> 'conversation')";
         foreach (['review', 'lean'] as $newKind) if (!in_array($newKind, (array)$r->input('features', []), true)) $where .= " AND t.kind <> '$newKind'";
         $perKind = is_array($r->input('models')) ? $r->input('models') : [];
         // Tasks this model must leave to a stronger one are skipped, so they cannot hide the work behind them.
@@ -319,6 +420,10 @@ final class AiTaskController
                  ORDER BY CASE t.kind WHEN 'ask' THEN 0 ELSE 1 END, t.id LIMIT 100 OFFSET $offset",
                 array_merge([$me], $params, [$now, $now, $me], $project ? [$project] : [], $only ? [$only] : []));
             foreach ($candidates as $c) {
+                if ($c['kind'] === 'extract' && $c['source_type'] === 'conversation' && ($why = self::conversationBlocked($c))) {
+                    Db::run("UPDATE ai_tasks SET status = 'failed', lease_hash = NULL, lease_until = NULL, error_text = ?, finished_at = ?, updated_at = ? WHERE id = ? AND status IN ('pending', 'running')", [$why, $now, $now, $c['id']]);
+                    continue;
+                }
                 $choices = array_values(array_filter(array_map(fn($x) => is_string($x) ? mb_substr($x, 0, 120) : '', (array)($perKind[$c['kind']] ?? [])))) ?: [$model];
                 $used = $choices[0];
                 if ($c['kind'] === 'review') {
@@ -335,9 +440,9 @@ final class AiTaskController
                 if ($won === 1) {
                     // An older client ignores comments: its extraction must not count as having read them.
                     $reads = in_array('extract_comments', (array)$r->input('features', []), true);
-                    if ($c['kind'] === 'extract') Db::update('ai_tasks', ['comments_hash' => $reads ? self::commentsHash(self::extractComments($c)) : null], 'id = :id', ['id' => $c['id']]);
+                    if ($c['kind'] === 'extract') Db::update('ai_tasks', ['comments_hash' => $c['source_type'] === 'conversation' ? self::snapshotHash($c) : ($reads ? self::commentsHash(self::extractComments($c)) : null)], 'id = :id', ['id' => $c['id']]);
                     $t = self::row((int)$c['id']);
-                    Response::json(['task' => self::present($t) + ['lease' => $lease, 'lease_seconds' => self::LEASE_SECONDS, 'context' => self::context($t)]]);
+                    Response::json(['task' => self::present($t) + ['lease' => $lease, 'lease_seconds' => self::LEASE_SECONDS, 'publish_private' => (bool)self::snapshot($t)['shared'], 'context' => self::context($t)]]);
                 }
             }
             if (count($candidates) < 100) break;
@@ -582,9 +687,21 @@ final class AiTaskController
         }
         if ($type === 'document') $ctx['document'] = self::documentContext($id, $t['version_id'] ? (int)$t['version_id'] : null);
         if ($type === 'bib') $ctx['reference'] = Db::one('SELECT id, cite_key, title, authors, year, venue, doi, CASE WHEN pdf_blob_id IS NULL THEN 0 ELSE 1 END AS has_pdf FROM bib_entries WHERE id = ? AND project_id = ?', [$id, $pid]) ?: null;
+        if ($type === 'conversation' && $t['kind'] === 'extract') {
+            $rows = self::conversationMessages($id, (int)self::snapshot($t)['message']);
+            $read = []; $chars = 0;
+            foreach (array_reverse(array_slice($rows, -self::MAX_CONVERSATION_MESSAGES)) as $m) {
+                $text = Sanitizer::toText((string)$m['body_html']);
+                if ($read && $chars + mb_strlen($text) > self::MAX_CONVERSATION_CHARS) break;
+                $chars += mb_strlen($text);
+                $read[] = ['id' => (int)$m['id'], 'author' => $m['author'], 'is_ai' => $m['ai_model'] !== null || $m['kind'] !== 'human', 'at' => $m['created_at'], 'edited' => $m['edited_at'] !== null, 'text' => $text];
+            }
+            $ctx['conversation'] = ['id' => $id, 'subject' => Db::value('SELECT subject FROM conversations WHERE id = ?', [$id]), 'messages' => array_reverse($read), 'omitted_older_messages' => count($rows) - count($read)];
+        }
         if ($type === 'message') {
             $cid = (int)$t['conversation_id'];
-            $ctx['thread'] = self::thread(Db::all('SELECT * FROM (SELECT m.id, m.body_html, m.created_at, u.name AS author, u.kind FROM messages m JOIN users u ON u.id = m.author_id WHERE m.conversation_id = ? ORDER BY m.id DESC LIMIT 30) x ORDER BY id', [$cid]));
+            // The question is the last message here, even if people replied before a client took it.
+            $ctx['thread'] = self::thread(Db::all('SELECT * FROM (SELECT m.id, m.body_html, m.created_at, u.name AS author, u.kind FROM messages m JOIN users u ON u.id = m.author_id WHERE m.conversation_id = ? AND m.id <= ? ORDER BY m.id DESC LIMIT 100) x ORDER BY id', [$cid, $id]));
             $ctx['subject'] = Db::value('SELECT subject FROM conversations WHERE id = ?', [$cid]);
         }
         if ($type === 'comment') {
@@ -639,6 +756,11 @@ final class AiTaskController
             $pid = Db::value('SELECT project_id FROM bib_entries WHERE id = ?', [$id]);
             return $pid ? (int)$pid : null;
         }
+        if ($type === 'conversation') {
+            // Someone outside it cannot learn that it exists.
+            $pid = Db::value('SELECT c.project_id FROM conversations c JOIN conversation_participants p ON p.conversation_id = c.id AND p.user_id = ? WHERE c.id = ?', [Auth::id(), $id]);
+            return $pid ? (int)$pid : null;
+        }
         $table = ['document' => 'documents', 'question' => 'open_questions', 'strategy' => 'proof_strategies', 'fact' => 'facts'][$type];
         $pid = Db::value("SELECT project_id FROM $table WHERE id = ? AND deleted_at IS NULL", [$id]);
         return $pid ? (int)$pid : null;
@@ -684,13 +806,14 @@ final class AiTaskController
     private static function listSql(): string
     {
         return 'SELECT t.*, r.name AS requested_by_name, c.name AS claimed_by_name,
-                       d.title AS document_title, b.title AS bib_title, q.title AS question_title, s.title AS strategy_title, f.title AS fact_title
+                       d.title AS document_title, b.title AS bib_title, q.title AS question_title, s.title AS strategy_title, f.title AS fact_title, cv.subject AS conversation_title
                 FROM ai_tasks t LEFT JOIN users r ON r.id = t.requested_by LEFT JOIN users c ON c.id = t.claimed_by
                 LEFT JOIN documents d ON t.source_type = \'document\' AND d.id = t.source_id
                 LEFT JOIN bib_entries b ON t.source_type = \'bib\' AND b.id = t.source_id
                 LEFT JOIN open_questions q ON t.source_type = \'question\' AND q.id = t.source_id
                 LEFT JOIN proof_strategies s ON t.source_type = \'strategy\' AND s.id = t.source_id
-                LEFT JOIN facts f ON t.source_type = \'fact\' AND f.id = t.source_id';
+                LEFT JOIN facts f ON t.source_type = \'fact\' AND f.id = t.source_id
+                LEFT JOIN conversations cv ON t.source_type = \'conversation\' AND cv.id = t.source_id';
     }
 
     private static function row(int $id): ?array
@@ -701,7 +824,7 @@ final class AiTaskController
     private static function present(array $t): array
     {
         $result = json_decode((string)($t['result_json'] ?? ''), true) ?: ['fact_ids' => [], 'suggestion_ids' => [], 'reply' => null];
-        $subject = $t['document_title'] ?? $t['bib_title'] ?? $t['question_title'] ?? $t['strategy_title'] ?? $t['fact_title'] ?? null;
+        $subject = $t['document_title'] ?? $t['bib_title'] ?? $t['conversation_title'] ?? $t['question_title'] ?? $t['strategy_title'] ?? $t['fact_title'] ?? null;
         foreach (['id', 'project_id', 'source_id', 'version_id', 'conversation_id', 'requested_by', 'claimed_by', 'attempts'] as $k) $t[$k] = $t[$k] === null ? null : (int)$t[$k];
         $out = array_intersect_key($t, array_flip(['id', 'project_id', 'kind', 'status', 'source_type', 'source_id', 'version_id', 'conversation_id', 'prompt_text', 'requested_by', 'requested_by_name',
             'claimed_by', 'claimed_by_name', 'client_name', 'ai_model', 'ai_generation_ms', 'attempts', 'summary_text', 'error_text', 'created_at', 'updated_at', 'finished_at']));

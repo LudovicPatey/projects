@@ -29,6 +29,35 @@ leaves the manifest unchanged, so the next deployment sends those files again.
 The database schema updates itself on the first request after a deployment that changes it, so no SSH command is needed.
 Before a deployment that changes `sql/schema.mysql.sql`, make a backup (see [BACKUP.md](BACKUP.md)).
 
+## Update existing facts
+
+Facts imported from Danus by older clients may have a kind stored as `lemma`, a title cut from the statement, and external references cut at their commas. The migration repairs those three fields. It **never changes a statement, a proof, a review, a revision number or a modification date**.
+
+**With SSH (recommended).** Deploy, then run one command from your computer:
+
+```bash
+npm run deploy
+npm run migrate:facts
+```
+
+It uses the host and login of `cache/deploy.json`, and ssh asks for the FTP password once. It updates the database schema if needed, shows the preview, and applies only after you type `APPLY`. A verified backup is made first, and nothing changes if it fails.
+
+```bash
+npm run migrate:facts -- --details   # also show each change
+npm run migrate:facts -- --preview   # preview only
+npm run migrate:facts -- --undo      # undo the latest migration, after you type UNDO
+```
+
+Undo restores the previous values, except those someone has edited since. Some OVH plans allow SFTP but not SSH commands. In that case, the command stops without changing anything, and you can use a scheduled task.
+
+**Without SSH.** In **Web Cloud → Hosting → your hosting → Scheduled tasks (Cron) → Add**, use **PHP 8.2** and turn on the **email report**. Schedule `projects/bin/migrate-facts-preview.php`, then replace it with `projects/bin/migrate-facts-apply.php`, then **delete the task**. To go back, schedule `projects/bin/migrate-facts-undo.php` once and delete the task. The full preview is saved in `projects-data/migrations/preview-*.json`.
+
+| Exit code | Meaning |
+|---|---|
+| 0 | Success |
+| 1 | Failed: nothing was changed |
+| 2 | Applied, but some facts changed meanwhile and were left alone. Run it again |
+
 Settings are read from `cache/deploy.json` (git-ignored):
 
 ```json

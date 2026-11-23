@@ -2,13 +2,13 @@ import { api } from '../api.js';
 import { store, link, attempt, refreshCounters, toast } from '../store.js';
 import { timeAgo, fullDate } from '../util.js';
 import { Pill, Kpi, StackBar } from '../dashboard.js';
-import { bibProgress, AI_KINDS, TASK_SEGMENTS, TASK_STATUS, filterTasks, requestBody, requestError, resultLinks, suggestionLink, taskActions, taskTitle } from '../ai-model.js';
+import { bibProgress, privateExtractionNotice, AI_KINDS, TASK_SEGMENTS, TASK_STATUS, filterTasks, requestBody, requestError, resultLinks, suggestionLink, taskActions, taskTitle } from '../ai-model.js';
 
 export const AiView = {
   components: { Pill, Kpi, StackBar },
   props: { pid: Number, id: Number, query: Object },
   data() {
-    return { d: null, filter: 'all', draft: { kind: 'bib', prompt: '', document: '', question: '', fact: '' }, documents: [], references: [], questions: [], facts: [], busy: false, timer: null, bibData: null };
+    return { d: null, filter: 'all', draft: { kind: 'bib', prompt: '', document: '', question: '', fact: '' }, documents: [], references: [], conversations: [], questions: [], facts: [], busy: false, timer: null, bibData: null };
   },
   computed: {
     tasks() { return filterTasks(this.d?.tasks || [], this.filter); },
@@ -24,7 +24,8 @@ export const AiView = {
   created() { this.kinds = AI_KINDS; this.statuses = TASK_STATUS; this.segments = TASK_SEGMENTS; },
   async mounted() {
     await this.load();
-    const [docs, qs, bib, facts] = await Promise.all([attempt(() => api.get(`api/projects/${this.pid}/documents`)), attempt(() => api.get(`api/projects/${this.pid}/questions`)), attempt(() => api.get(`api/projects/${this.pid}/bib`)), attempt(() => api.get(`api/projects/${this.pid}/facts`))]);
+    const [docs, qs, bib, facts, convs] = await Promise.all([attempt(() => api.get(`api/projects/${this.pid}/documents`)), attempt(() => api.get(`api/projects/${this.pid}/questions`)), attempt(() => api.get(`api/projects/${this.pid}/bib`)), attempt(() => api.get(`api/projects/${this.pid}/facts`)), attempt(() => api.get(`api/projects/${this.pid}/conversations`))]);
+    this.conversations = convs?.conversations || [];
     this.facts = (facts?.facts || []).filter((f) => !f.retracted_at);
     this.references = (bib?.entries || []).filter((e) => e.has_pdf);
     this.bibData = bib?.progress || null;
@@ -49,8 +50,10 @@ export const AiView = {
     resultHref(x) { return link(x.view, x.id, x.query || null); },
     async send() {
       if (this.error || this.busy) return;
+      const conv = this.draft.kind === 'extract' && String(this.draft.document).startsWith('conv:') ? this.conversations.find((c) => c.id === +String(this.draft.document).slice(5)) : null;
+      if (conv?.private && !confirm(privateExtractionNotice())) return;
       this.busy = true;
-      const r = await attempt(() => api.post(`api/projects/${this.pid}/ai/tasks`, requestBody(this.draft)), 'Request added to the queue');
+      const r = await attempt(() => api.post(`api/projects/${this.pid}/ai/tasks`, requestBody({ ...this.draft, publishPrivate: !!conv?.private })), 'Request added to the queue');
       this.busy = false;
       if (r) { this.draft.prompt = ''; await this.load(); }
     },
@@ -141,7 +144,7 @@ export const AiView = {
               <label v-for="(k, key) in kinds" :key="key" :class="{on: draft.kind === key}"><input type="radio" name="ai-kind" :value="key" v-model="draft.kind"><icon :name="k.icon" :size="15"/><span>{{ k.label }}</span></label>
             </div>
             <p class="ai-hint">{{ kinds[draft.kind].hint }}</p>
-            <label v-if="draft.kind === 'extract'" class="field"><span>File or reference</span><select v-model="draft.document"><option value="">Choose…</option><optgroup v-if="documents.length" label="Files"><option v-for="f in documents" :key="f.id" :value="f.id">{{ f.title }}</option></optgroup><optgroup v-if="references.length" label="References with a PDF"><option v-for="b in references" :key="b.id" :value="'bib:' + b.id">{{ b.title }}</option></optgroup></select></label>
+            <label v-if="draft.kind === 'extract'" class="field"><span>File, reference or conversation</span><select v-model="draft.document"><option value="">Choose…</option><optgroup v-if="documents.length" label="Files"><option v-for="f in documents" :key="f.id" :value="f.id">{{ f.title }}</option></optgroup><optgroup v-if="references.length" label="References with a PDF"><option v-for="b in references" :key="b.id" :value="'bib:' + b.id">{{ b.title }}</option></optgroup><optgroup v-if="conversations.length" label="Your conversations"><option v-for="c in conversations" :key="c.id" :value="'conv:' + c.id">{{ c.subject }}{{ c.private ? ' (private)' : '' }}</option></optgroup></select></label>
             <button v-if="draft.kind === 'extract' && bib.toQueue" class="btn block" @click="extractAll"><icon name="sparkles" :size="14"/> Extract all {{ bib.toQueue }} remaining reference PDFs</button>
             <label v-if="kinds[draft.kind].needs === 'fact'" class="field"><span>Fact</span><select v-model="draft.fact"><option value="">Choose…</option><option v-for="f in facts" :key="f.id" :value="f.id">{{ f.label }}: {{ f.title }}</option></select></label>
             <label v-if="draft.kind === 'derive'" class="field"><span>Toward a question (optional)</span><select v-model="draft.question"><option value="">The whole project</option><option v-for="q in questions" :key="q.id" :value="q.id">{{ q.title }}</option></select></label>

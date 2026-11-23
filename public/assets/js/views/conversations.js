@@ -1,6 +1,7 @@
 import { api } from '../api.js';
 import { store, go, link, attempt, toast, refreshCounters, unreadCount, markRead } from '../store.js';
 import { timeAgo, fullDate, parseDate } from '../util.js';
+import { conversationExtraction, opinionStatus, privateExtractionNotice } from '../ai-model.js';
 
 const first = (r) => (Array.isArray(r) ? r[0] : r);
 
@@ -12,7 +13,7 @@ export const ConversationsView = {
       conv: null, convError: null, composing: false,
       draft: { subject: '', participants: [] }, sending: false,
       pending: null, threads: [], activeThread: null,
-      adding: false, addSel: [], editingMsg: null, selBtn: null, flashId: null,
+      adding: false, addSel: [], editingMsg: null, selBtn: null, flashId: null, extracting: false,
     };
   },
   computed: {
@@ -42,6 +43,8 @@ export const ConversationsView = {
       for (const t of this.threads) if (t.anchor?.message_id) m[t.anchor.message_id] = (m[t.anchor.message_id] || 0) + 1 + t.replies.length;
       return m;
     },
+    extraction() { return conversationExtraction(this.conv?.extraction); },
+    opinion() { return opinionStatus(this.conv?.ai_opinion); },
     notInConv() {
       if (!this.conv) return [];
       const ids = new Set(this.conv.participants.map((p) => p.id));
@@ -122,6 +125,7 @@ export const ConversationsView = {
         <div class="conv-title">
           <h2>{{ conv.subject }}</h2>
           <div class="conv-actions">
+            <button class="btn sm" :disabled="extraction.disabled || extracting" :title="conv.extraction?.models?.length ? 'Extracted by ' + conv.extraction.models.join(', ') : 'Add the results stated in this conversation to Facts, with exact quotations'" @click="extractFacts"><icon name="sparkles" :size="14"/> {{ extraction.label }}</button>
             <button class="icon-btn" :class="{starred: conv.starred}" @click="flag({starred: !conv.starred})" :title="conv.starred ? 'Unstar' : 'Star'"><icon name="star"/></button>
             <button class="icon-btn" @click="flag({archived: !conv.archived})" :title="conv.archived ? 'Move to inbox' : 'Archive'"><icon name="archive"/></button>
             <button class="icon-btn" @click="markUnread" title="Mark as unread"><icon name="mail-unread"/></button>
@@ -165,8 +169,9 @@ export const ConversationsView = {
         </article>
       </div>
       <div class="composer">
+        <p v-if="opinion" class="conv-ai-status" :class="'t-' + opinion.tone" role="status"><icon name="sparkles" :size="14"/><span>{{ opinion.text }}</span><a v-if="opinion.task" :href="link('ai', opinion.task)">See why</a></p>
         <rich-editor ref="replyEd" compact placeholder="Reply to everyone… (@ mentions, $…$ LaTeX, Ctrl+Enter to send)" @submit="send"/>
-        <div class="composer-actions"><button class="btn primary" :disabled="sending" @click="send"><icon name="reply" :size="15"/> Send</button></div>
+        <div class="composer-actions"><button class="btn" :disabled="sending" title="Send your draft as a question to the AI, or ask its opinion on the discussion if the draft is empty. Everyone here sees the question and the answer." @click="askAi"><icon name="sparkles" :size="15"/> Ask AI</button><button class="btn primary" :disabled="sending" @click="send"><icon name="reply" :size="15"/> Send</button></div>
       </div>
       <button v-if="selBtn" class="sel-btn" :style="{top: selBtn.top + 'px', left: selBtn.left + 'px'}" @mousedown.prevent="commentOnSelection">
         <icon name="comment" :size="14"/> Comment</button>
@@ -279,6 +284,10 @@ export const ConversationsView = {
       this.$nextTick(() => this.scrollToEnd(false));
       this.loadList();
     },
+    askAi() {
+      first(this.$refs.replyEd)?.askAi();
+      return this.send();
+    },
     async saveEdit(m) {
       const html = first(this.$refs.editEd)?.getHTML();
       if (!html) return;
@@ -286,6 +295,15 @@ export const ConversationsView = {
         this.editingMsg = null;
         this.loadConv(true);
       }
+    },
+    async extractFacts() {
+      const x = this.conv.extraction;
+      if (x?.private && !confirm(privateExtractionNotice(x.outside))) return;
+      this.extracting = true;
+      const body = { kind: 'extract', source_type: 'conversation', source_id: this.conv.id, ...(x?.private ? { publish_private: true } : {}) };
+      const r = await attempt(() => api.post(`api/projects/${this.pid}/ai/tasks`, body), 'Added to the AI queue. A participant\'s AI client will process it.');
+      this.extracting = false;
+      if (r) this.loadConv(true);
     },
     async flag(f) {
       if (await attempt(() => api.patch(`api/conversations/${this.conv.id}/flags`, f))) {

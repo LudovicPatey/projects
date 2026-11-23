@@ -46,11 +46,12 @@ The left vertical menu (Overview · Questions · Mail · Facts · Files · Bibli
 The platform centralizes and displays the research. All AI computation runs on the members' own computers, with their own Claude or ChatGPT account.
 
 - **Extraction:** a file uploaded by a person queues a task to extract its facts, with exact quotations.
+- **Conversations:** a participant can extract the results of a conversation, each cited to its message. A private conversation needs their confirmation, and only the messages present at that moment are read.
 - **Comments in extraction:** extraction reads the comments on a file or reference, links them to the facts they concern, and can run again when people change them. Results still come only from the text.
 - **Mathematical types:** facts can be browsed by kind, and each one reads like a paper, with definitions, statements, claims and proofs in separate blocks and an outline.
 - **Checking:** on request, a model independent of the author reviews a fact, and a client with Lean can add a proof that it compiled in a sandbox with standard axioms only, once another model judges that the Lean statement matches the fact. A proved negation becomes an incorrect review.
 - **Models:** each member chooses the model for each kind of work in their client. Automatic follows new Claude releases. An extraction is not repeated by a model known to be no stronger than one that finished it (`src/ModelOrder.php`).
-- **Questions:** `@AI` in a message or comment queues a task, and the answer appears in the same thread.
+- **Questions:** `@AI` in a message or comment, or **Ask AI** in a conversation, queues a task, and the answer appears in the same thread.
 - **References:** the AI suggests checkable references, and a person accepts or rejects each one.
 - **Derivation:** the AI derives new facts, or `oq.py danus` synchronizes a Danus fact graph.
 

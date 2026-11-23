@@ -6,6 +6,7 @@
   "license": "AGPL-3.0-only",
   "scripts": {
     "deploy": "node scripts/deploy.mjs",
+    "migrate:facts": "node scripts/migrate-facts.mjs",
     "test": "node --test tests/*.test.mjs"
   },
   "engines": {

@@ -174,9 +174,9 @@ h1 { font-size: 24px; } h2 { font-size: 16px; } h3 { font-size: 15px; } h4 { fon
 
 /* ----- conversation ----- */
 .conv-head { padding: 14px 20px 10px; border-bottom: 1px solid var(--line); }
-.conv-title { display: flex; align-items: flex-start; gap: 10px; }
-.conv-title h2 { font-size: 18px; flex: 1; }
-.conv-actions { display: flex; gap: 2px; }
+.conv-title { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 6px 10px; }
+.conv-title h2 { font-size: 18px; flex: 1 1 180px; min-width: 0; }
+.conv-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; max-width: 100%; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .chip { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px 2px 3px; border-radius: 14px; background: var(--line-2); font-size: 12.5px; }
 .chip.add { border: 1px dashed #c3c8d2; background: #fff; cursor: pointer; padding: 2px 9px; color: var(--accent); }
@@ -194,7 +194,9 @@ h1 { font-size: 24px; } h2 { font-size: 16px; } h3 { font-size: 15px; } h4 { fon
 .msg-head .orcid { font-size: 11px; }
 .comment-count { border: 0; background: #fef3c7; color: #92400e; border-radius: 10px; font-size: 11.5px; padding: 1px 7px; display: inline-flex; gap: 3px; align-items: center; cursor: pointer; font-weight: 600; }
 .composer { border-top: 1px solid var(--line); padding: 10px 16px 12px; background: #fff; }
-.composer-actions { display: flex; justify-content: flex-end; margin-top: 8px; }
+.composer-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+.conv-ai-status { display: flex; align-items: center; gap: 6px; margin: 0 0 8px; padding: 6px 10px; border-radius: 8px; font-size: 13px; }
+.conv-ai-status a { margin-left: auto; font-weight: 600; }
 .compose { padding: 16px 20px; display: flex; flex-direction: column; gap: 4px; overflow: auto; flex: 1; }
 .compose > * { flex: none; }
 .sel-btn { position: absolute; z-index: 20; background: var(--text); color: #fff; border: 0; border-radius: 6px; padding: 6px 11px; font-size: 12.5px; font-weight: 600; display: inline-flex; gap: 5px; align-items: center; cursor: pointer; box-shadow: var(--shadow-lg); }

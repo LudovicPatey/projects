@@ -460,12 +460,16 @@ final class FactController
         $role = $r->str('role');
         if (!in_array($role, self::COMMENT_ROLES, true)) throw new HttpError(422, 'The role must be supports, disputes or clarifies.');
         $cid = (int)$r->input('comment_id');
-        $k = Db::one("SELECT c.id, c.target_type, c.target_id FROM comments c WHERE c.id = ? AND c.project_id = ? AND c.target_type IN ('document', 'bib')", [$cid, $f['project_id']]);
+        $k = Db::one("SELECT c.id, c.target_type, c.target_id FROM comments c WHERE c.id = ? AND c.project_id = ? AND c.target_type IN ('document', 'bib', 'conversation')", [$cid, $f['project_id']]);
         if (!$k) throw new HttpError(404, 'Comment not found');
-        if (!Db::value("SELECT 1 FROM fact_sources WHERE fact_id = ? AND revision_no = ? AND source_type = ? AND source_id = ? AND covers <> 'context'", [$f['id'], $f['current_revision'], $k['target_type'], $k['target_id']])) {
-            throw new HttpError(422, 'This comment is not about the text this fact comes from.');
-        }
-        $row = self::source((int)$f['project_id'], ['type' => 'comment', 'id' => $cid, 'quote' => $r->input('quote')], false);
+        $fromConversation = $k['target_type'] === 'conversation';
+        $sameText = $fromConversation
+            ? Db::value("SELECT 1 FROM fact_sources WHERE fact_id = ? AND revision_no = ? AND source_type = 'message' AND conversation_id = ? AND covers <> 'context'", [$f['id'], $f['current_revision'], $k['target_id']])
+            : Db::value("SELECT 1 FROM fact_sources WHERE fact_id = ? AND revision_no = ? AND source_type = ? AND source_id = ? AND covers <> 'context'", [$f['id'], $f['current_revision'], $k['target_type'], $k['target_id']]);
+        if (!$sameText) throw new HttpError(422, 'This comment is not about the text this fact comes from.');
+        if ($fromConversation) Access::conversation((int)$k['target_id']);
+        // The fact already cites this conversation, and its comment stays hidden from non-participants like its message.
+        $row = self::source((int)$f['project_id'], ['type' => 'comment', 'id' => $cid, 'quote' => $r->input('quote')], $fromConversation);
         if (!Db::value("SELECT 1 FROM fact_sources WHERE fact_id = ? AND revision_no = ? AND source_type = 'comment' AND source_id = ?", [$f['id'], $f['current_revision'], $cid])) {
             $row['is_human'] = $row['is_human'] ? 1 : 0;
             Db::insert('fact_sources', ['covers' => 'context', 'comment_role' => $role] + $row + ['fact_id' => $f['id'], 'revision_no' => $f['current_revision']]);

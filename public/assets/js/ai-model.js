@@ -1,7 +1,7 @@
 // The AI work queue: labels and rules of the interface, without dependency, so that they can be unit tested.
 
 export const AI_KINDS = {
-  extract: { label: 'Extract facts', short: 'Extraction', icon: 'files', hint: 'Read a file or the PDF of a reference, and add the results it states, with exact quotations.', needs: 'document' },
+  extract: { label: 'Extract facts', short: 'Extraction', icon: 'files', hint: 'Read a file, the PDF of a reference or a conversation, and add the results it states, with exact quotations.', needs: 'document' },
   ask: { label: 'Ask a question', short: 'Question', icon: 'comment', hint: 'Get the opinion of the AI. You can also write @AI in any message or comment.', needs: 'prompt' },
   bib: { label: 'Find references', short: 'References', icon: 'book', hint: 'Search the literature. A person validates each suggestion.', needs: null },
   derive: { label: 'Prove new facts', short: 'Proof search', icon: 'graph', hint: 'Waits until a member starts a proof search from their AI client, with their own time and usage limits. Results arrive unchecked.', needs: null },
@@ -22,7 +22,7 @@ export const TASK_SEGMENTS = [['done', 'Done', '#0d9488'], ['running', 'Running'
 export function requestError(d) {
   const k = AI_KINDS[d.kind];
   if (!k) return 'Choose what the AI should do.';
-  if (k.needs === 'document' && !d.document) return 'Choose a file or a reference.';
+  if (k.needs === 'document' && !d.document) return 'Choose a file, a reference or a conversation.';
   if (k.needs === 'fact' && !d.fact) return 'Choose a fact.';
   if (k.needs === 'prompt' && !String(d.prompt || '').trim()) return 'Write your question.';
   if (String(d.prompt || '').length > 4000) return 'The instructions are too long (4000 characters at most).';
@@ -34,8 +34,9 @@ export function requestBody(d) {
   const prompt = String(d.prompt || '').trim();
   if (prompt) b.prompt_text = prompt;
   if (d.kind === 'extract') {
-    const ref = String(d.document).match(/^bib:(\d+)$/);
-    Object.assign(b, ref ? { source_type: 'bib', source_id: +ref[1] } : { source_type: 'document', source_id: +d.document });
+    const ref = String(d.document).match(/^(bib|conv):(\d+)$/);
+    if (ref?.[1] === 'conv') Object.assign(b, { source_type: 'conversation', source_id: +ref[2] }, d.publishPrivate ? { publish_private: true } : {});
+    else Object.assign(b, ref ? { source_type: 'bib', source_id: +ref[2] } : { source_type: 'document', source_id: +d.document });
   }
   else if (AI_KINDS[d.kind]?.needs === 'fact') Object.assign(b, { source_type: 'fact', source_id: +d.fact });
   else if (d.kind === 'derive' && d.question) Object.assign(b, { source_type: 'question', source_id: +d.question });
@@ -91,6 +92,39 @@ export function bibProgress(p) {
 export const EXTRACTION_LABEL = {
   done: 'facts extracted', comments: 'new comments', queued: 'extraction queued', failed: 'extraction failed',
 };
+
+/** What the Ask AI button adds to a draft, so that everyone sees that the AI was asked. */
+export function askAiPrefix(text) {
+  const t = String(text || '').trim();
+  if (!t) return '@AI What is your opinion on this discussion?';
+  return /(?<![\w@.])@AI\b/i.test(t) ? '' : '@AI ';
+}
+
+/** The line above the reply box while the AI is asked. */
+export function opinionStatus(o) {
+  if (!o) return null;
+  if (o.running) return { tone: 'info', text: 'The AI is preparing its answer.' };
+  if (o.waiting) return o.clients
+    ? { tone: 'neutral', text: 'The AI was asked. A participant’s AI client will answer here.' }
+    : { tone: 'warn', text: 'The AI was asked. It will answer when a participant starts their AI client.' };
+  if (o.failed_task) return { tone: 'bad', text: 'The AI could not answer.', task: o.failed_task };
+  return null;
+}
+
+/** The button of a conversation, from where its extraction stands. */
+export function conversationExtraction(x) {
+  const state = x?.state || 'none';
+  return {
+    none: { label: 'Extract facts', disabled: false },
+    new_messages: { label: 'Extract new messages', disabled: false },
+    failed: { label: 'Extract again', disabled: false },
+    queued: { label: 'Extraction queued', disabled: true },
+    done: { label: 'Facts extracted', disabled: true },
+  }[state] || { label: 'Extract facts', disabled: false };
+}
+
+/** What a participant approves before results of a private conversation reach the whole project. */
+export const privateExtractionNotice = (outside) => `This conversation is private. ${outside ? `${outside} project member${outside > 1 ? 's' : ''} cannot read it, but ` : 'Project members outside it cannot read it, but '}every member will see the statements and proofs extracted from it. Quotes and links stay hidden from them. The other participants will be notified. Only the messages present now will be read.`;
 
 /** "@AI" is offered first in the @ menu when the text typed so far can still become it. */
 export const offersAskAi = (query) => ['', 'a', 'ai'].includes(String(query).toLowerCase());
