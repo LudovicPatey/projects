@@ -11,7 +11,7 @@ use App\{Access, Activity, Auth, BibTex, Db, HttpError, ModelOrder, Notify, Prov
  */
 final class AiTaskController
 {
-    public const KINDS = ['extract', 'ask', 'bib', 'derive'];
+    public const KINDS = ['extract', 'ask', 'bib', 'derive', 'review', 'lean'];
     private const LEASE_SECONDS = 900;
     private const MAX_ATTEMPTS = 3;
     private const MAX_REQUESTS_PER_DAY = 40;
@@ -105,6 +105,10 @@ final class AiTaskController
         if ($sourceType !== null && self::sourceProject($sourceType, $sourceId) !== $pid) throw new HttpError(404, 'This subject is not in the project.');
         if ($kind === 'extract' && !in_array($sourceType, ['document', 'bib'], true)) throw new HttpError(422, 'Choose the file or reference to extract facts from.');
         if ($sourceType === 'bib' && $kind !== 'extract') throw new HttpError(422, 'Invalid subject.');
+        if (in_array($kind, ['review', 'lean'], true)) {
+            if ($sourceType !== 'fact') throw new HttpError(422, 'Choose the fact to check.');
+            if (Db::value('SELECT retracted_at FROM facts WHERE id = ?', [$sourceId])) throw new HttpError(422, 'This fact is retracted.');
+        }
         if ($sourceType === 'bib' && !Db::value('SELECT pdf_blob_id FROM bib_entries WHERE id = ?', [$sourceId])) throw new HttpError(422, 'This reference has no PDF.');
         if ($kind === 'ask' && $prompt === '') throw new HttpError(422, 'Write your question for the AI.');
         $versionId = $sourceType === 'document' ? (int)Db::value('SELECT current_version_id FROM documents WHERE id = ?', [$sourceId]) : null;
@@ -161,6 +165,21 @@ final class AiTaskController
             $progress[['done' => 'extracted', 'queued' => 'queued', 'failed' => 'failed', 'none' => 'remaining'][$state]]++;
         }
         return ['entries' => $entries, 'progress' => $progress];
+    }
+
+    /** A reviewer must be independent: not the author's model, not one known to be weaker, and new on this revision. */
+    private static function mayReview(array $t, ?string $model): bool
+    {
+        $m = strtolower(trim((string)$model));
+        if ($m === '' || in_array($m, ['claude', 'codex'], true) || str_contains($m, 'default model')) return false;
+        $f = Db::one('SELECT ai_model, current_revision, retracted_at FROM facts WHERE id = ?', [$t['source_id']]);
+        if (!$f || $f['retracted_at']) return false;
+        $author = strtolower(trim((string)$f['ai_model']));
+        if ($author === $m || ModelOrder::atLeast($author, $m)) return false;
+        // An alias names a line whose exact version is not known yet: it cannot review its own line.
+        if (in_array($m, ['opus', 'sonnet', 'haiku'], true) && preg_match('/^claude-(?:\d+(?:-\d+)?-)?(?:opus|sonnet|haiku)/', $author)) return false;
+        if ($m === 'fable' && str_starts_with($author, 'claude-fable')) return false;
+        return !Db::value("SELECT 1 FROM fact_reviews WHERE fact_id = ? AND revision_no = ? AND reviewer_kind = 'agent' AND LOWER(ai_model) = ?", [$t['source_id'], $f['current_revision'], $m]);
     }
 
     /** The models that already finished this extraction, on this exact file or PDF. */
@@ -246,6 +265,7 @@ final class AiTaskController
         $where = ($project ? ' AND t.project_id = ?' : '') . ($only ? ' AND t.id = ?' : '');
         // A client from before this feature would fail these tasks and use up their attempts.
         if (!in_array('extract_bib', (array)$r->input('features', []), true)) $where .= " AND (t.kind <> 'extract' OR t.source_type IS NULL OR t.source_type <> 'bib')";
+        foreach (['review', 'lean'] as $newKind) if (!in_array($newKind, (array)$r->input('features', []), true)) $where .= " AND t.kind <> '$newKind'";
         $perKind = is_array($r->input('models')) ? $r->input('models') : [];
         // Tasks this model must leave to a stronger one are skipped, so they cannot hide the work behind them.
         for ($offset = 0; ; $offset += 100) {
@@ -256,7 +276,13 @@ final class AiTaskController
                  ORDER BY CASE t.kind WHEN 'ask' THEN 0 ELSE 1 END, t.id LIMIT 100 OFFSET $offset",
                 array_merge([$me], $params, [$now, $now, $me], $project ? [$project] : [], $only ? [$only] : []));
             foreach ($candidates as $c) {
-                $used = is_string($perKind[$c['kind']] ?? null) ? (mb_substr($perKind[$c['kind']], 0, 120) ?: $model) : $model;
+                $choices = array_values(array_filter(array_map(fn($x) => is_string($x) ? mb_substr($x, 0, 120) : '', (array)($perKind[$c['kind']] ?? [])))) ?: [$model];
+                $used = $choices[0];
+                if ($c['kind'] === 'review') {
+                    $used = null;
+                    foreach ($choices as $choice) if (self::mayReview($c, $choice)) { $used = $choice; break; }
+                    if ($used === null) continue; // left for a model independent of its author
+                }
                 if (ModelOrder::covered(self::extractedBy($c), $used)) continue;
                 $lease = bin2hex(random_bytes(24));
                 $won = Db::run(
@@ -528,6 +554,11 @@ final class AiTaskController
             $rev = Db::one('SELECT statement_html, proof_html FROM fact_revisions WHERE fact_id = ? AND revision_no = ?', [$id, $ctx['fact']['current_revision']]);
             $ctx['fact']['statement'] = Sanitizer::toText((string)($rev['statement_html'] ?? ''));
             $ctx['fact']['proof'] = Sanitizer::toText((string)($rev['proof_html'] ?? ''));
+            if (in_array($t['kind'], ['review', 'lean'], true)) {
+                $ctx['fact']['external_refs'] = json_decode((string)Db::value('SELECT external_refs_json FROM fact_revisions WHERE fact_id = ? AND revision_no = ?', [$id, $ctx['fact']['current_revision']]), true);
+                $ctx['dependencies'] = array_map(fn($d) => ['label' => $d['label'], 'title' => $d['title'], 'statement' => Sanitizer::toText((string)$d['statement_html'])], Db::all(
+                    'SELECT f.label, f.title, r.statement_html FROM fact_deps d JOIN facts f ON f.id = d.depends_on_id JOIN fact_revisions r ON r.fact_id = f.id AND r.revision_no = f.current_revision WHERE d.fact_id = ? LIMIT 50', [$id]));
+            }
         }
         if (isset($ctx['question']['body_html'])) { $ctx['question']['body'] = Sanitizer::toText((string)$ctx['question']['body_html']); unset($ctx['question']['body_html']); }
         return $ctx;

@@ -51,11 +51,11 @@ import webbrowser
 import zipfile
 import zlib
 
-VERSION = "1.6.0"
+VERSION = "1.7.0"
 API_LEVEL = 1  # raise with the server's AiTaskController::API_LEVEL when a client needs new server features
 GITHUB_REPO = "LudovicPatey/projects"
-KINDS = ["extract", "ask", "bib", "derive"]
-KIND_NAMES = {"extract": "Extract facts", "ask": "Answer a question", "bib": "Suggest references", "derive": "Prove new facts"}
+KINDS = ["extract", "ask", "bib", "derive", "review", "lean"]
+KIND_NAMES = {"extract": "Extract facts", "ask": "Answer a question", "bib": "Suggest references", "derive": "Prove new facts", "review": "Independent review", "lean": "Lean proof"}
 FACT_KINDS = ["definition", "lemma", "proposition", "theorem", "corollary", "conjecture", "remark"]
 DANUS_LABELS = {"conclusion", "example", "counterexample", "proof_attempt", "plan", "dead_end",
                 "direction", "obstacle", "master_guidance", "verification", "elaboration"}
@@ -182,8 +182,8 @@ def codex_default_model():
 # ----- which model does which work -----
 
 # Aliases follow each new Claude release. Codex uses the model configured in the user's Codex.
-MODEL_AUTO = {"claude": {"extract": "sonnet", "ask": "sonnet", "bib": "sonnet", "derive": "opus"}, "codex": {}}
-MODEL_ALIASES = ("opus", "sonnet", "haiku")
+MODEL_AUTO = {"claude": {"extract": "sonnet", "ask": "sonnet", "bib": "sonnet", "derive": "opus", "review": "opus", "lean": "opus"}, "codex": {}}
+MODEL_ALIASES = ("fable", "opus", "sonnet", "haiku")
 MODEL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,79}")
 ALIAS_MEMORY_SECONDS = 86400
 
@@ -241,12 +241,302 @@ def save_models(provider, choices, danus=None):
     save_prefs(**update)
 
 
+CODEX_MODELS = {"at": 0, "rows": [], "busy": False}
+
+
+def read_codex_models(timeout=10):
+    """The models this ChatGPT account can use, as Codex reports them. This runs no model."""
+    binary = shutil.which("codex")
+    if not binary:
+        return []
+    try:
+        p = subprocess.Popen([binary, "app-server"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8", env=safe_env("codex"))
+    except OSError:
+        return []
+    found = {}
+
+    def reader():
+        for line in p.stdout:
+            try:
+                msg = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(msg, dict) and msg.get("id") == 2:
+                found["result"] = msg.get("result") or {}
+                return
+
+    thread = threading.Thread(target=reader, daemon=True)
+    thread.start()
+    try:
+        for m in ({"id": 1, "method": "initialize", "params": {"clientInfo": {"name": "open_questions", "title": "Open Questions", "version": VERSION}}}, {"method": "initialized"}, {"id": 2, "method": "model/list", "params": {}}):
+            p.stdin.write(json.dumps(m) + "\n")
+            p.stdin.flush()
+        thread.join(timeout)
+    except OSError:
+        pass
+    finally:
+        p.kill()
+    rows = found.get("result", {}).get("data") or []
+    return [{"id": str(x.get("id") or x.get("model")), "label": str(x.get("displayName") or x.get("id")), "default": bool(x.get("isDefault"))}
+            for x in rows if isinstance(x, dict) and not x.get("hidden") and MODEL_NAME.fullmatch(str(x.get("id") or x.get("model") or ""))]
+
+
+def codex_models(wait=False):
+    def refresh():
+        try:
+            rows = read_codex_models()
+            CODEX_MODELS.update(rows=rows or CODEX_MODELS["rows"], at=time.time())
+        finally:
+            CODEX_MODELS["busy"] = False
+    if time.time() - CODEX_MODELS["at"] > 3600 and not CODEX_MODELS["busy"]:
+        CODEX_MODELS["busy"] = True
+        if wait:
+            refresh()
+        else:
+            threading.Thread(target=refresh, daemon=True).start()
+    return CODEX_MODELS["rows"]
+
+
+def codex_fallback(wait=False):
+    return codex_default_model() or next((x["id"] for x in codex_models(wait) if x["default"]), None) or "gpt-5.6-sol"
+
+
 def models_public():
     prefs = load_prefs().get("models") or {}
     claude = danus_engine() == "claude"
-    return {"choices": prefs, "auto": MODEL_AUTO, "suggest": {"claude": ["auto", *MODEL_ALIASES], "codex": ["auto"]},
+    return {"choices": prefs, "auto": MODEL_AUTO, "suggest": {"claude": [{"id": "auto", "label": "Automatic"}, {"id": "fable", "label": "Fable (latest)"}, {"id": "opus", "label": "Opus (latest)"}, {"id": "sonnet", "label": "Sonnet (latest)"}, {"id": "haiku", "label": "Haiku (latest)"}],
+                        "codex": [{"id": "auto", "label": "Automatic"}, *[{"id": x["id"], "label": x["label"]} for x in codex_models()]]},
             "danus": load_prefs().get("danus_claude_model" if claude else "danus_model") or "",
-            "danus_default": MODEL_AUTO["claude"]["derive"] if claude else codex_default_model() or "gpt-5.6-sol"}
+            "danus_default": MODEL_AUTO["claude"]["derive"] if claude else codex_fallback(), "danus_tool": "claude" if claude else "codex"}
+
+
+# ----- independent review and Lean -----
+
+LEAN_VERSION = "v4.36.0"
+LEAN_MIN_FREE_GB = 10
+LEAN_ALLOWED_AXIOMS = {"propext", "Classical.choice", "Quot.sound"}
+LEAN_BANNED = re.compile(r"(?<![\w.'])(sorry|admit|axiom|unsafe|partial|opaque|implemented_by|extern|native_decide|run_cmd|run_elab|run_meta|initialize|builtin_initialize|elab|elab_rules|macro|macro_rules|syntax|declare_syntax_cat)(?![\w'])|#eval|#exit|#reduce")
+LEAN_DECL = re.compile(r"[A-Za-z_][\w.']{0,120}")
+
+
+def tool_of(model):
+    return "claude" if model in MODEL_ALIASES or str(model).lower().startswith("claude") else "codex"
+
+
+def review_models(opts):
+    """Every model this computer could review with. The platform picks one independent of the fact's author."""
+    now = time.time()
+    cached = getattr(opts, "review_tools", None)
+    if not cached or now - cached[0] > 300:
+        cached = (now, [opts.provider] + [p for p in ("claude", "codex") if p != opts.provider and tool_signed_in(p)])
+        opts.review_tools = cached
+    held = getattr(opts, "tool_hold", {})
+    out = []
+    # Another company's model first: it is the most independent. The platform takes the first one allowed.
+    for tool in sorted(cached[1], key=lambda t: t == opts.provider):
+        if held.get(tool, 0) > now:
+            continue
+        model = opts.model if tool == opts.provider and opts.model else known_model(tool, chosen_model(tool, "review"))
+        if tool == "codex" and not model:
+            model = codex_fallback(True)
+        if model and model_fits(tool, model):
+            out.append(model)
+        if tool == "claude":
+            out += [known_model("claude", x) for x in ("opus", "fable")]
+    return list(dict.fromkeys(out))
+
+
+def lean_root():
+    return data_dir() / "lean"
+
+
+def lean_conf():
+    try:
+        return json.loads((lean_root() / "lean.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def lean_public():
+    conf = lean_conf()
+    return {"ready": bool(conf), "version": (conf or {}).get("version"), "available": sys.platform == "darwin", "min_free_gb": LEAN_MIN_FREE_GB}
+
+
+def lean_problem(code, decl):
+    """Why this code cannot count as a proof, before anything runs."""
+    if not LEAN_DECL.fullmatch(decl or ""):
+        return "The name of the theorem is invalid."
+    for line in code.splitlines():
+        m = re.match(r"\s*import\s+(\S+)", line)
+        if m and not re.fullmatch(r"Mathlib(\.\w+)*", m.group(1)):
+            return f"Only Mathlib may be imported, not {m.group(1)}."
+    found = LEAN_BANNED.search(code)
+    if found:
+        return f"The code uses {found.group(0)}, which is not allowed in a checked proof."
+    short = re.escape(decl.split(".")[-1])
+    if not re.search(rf"(?m)^\s*(?:@\[[^\]]*\]\s*)?(?:private\s+|protected\s+)?(?:theorem|lemma)\s+(?:[\w.']*\.)?{short}(?![\w'])", code):
+        return f"The code does not define the theorem {decl}."
+    return None
+
+
+def lean_profile(tmp):
+    """Compiling can run code: it gets no network, writes only to its folder, and cannot read the user's files."""
+    home, root, work = (os.path.realpath(str(x)) for x in (pathlib.Path.home(), lean_root(), tmp))
+    if any('"' in x or "\\" in x for x in (home, root, work)):
+        raise RuntimeError("A folder name prevents safe compilation.")
+    return f'(version 1)(allow default)(deny network*)(deny file-write*)(allow file-write* (subpath "{work}") (literal "/dev/null"))(deny file-read* (subpath "{home}"))(allow file-read-metadata)(allow file-read* (subpath "{root}") (subpath "{work}"))'
+
+
+def lean_run(conf, path, tmp, timeout):
+    if sys.platform != "darwin":
+        raise RuntimeError("Checking Lean proofs is only available on a Mac for now.")
+    env = {"PATH": "/usr/bin:/bin", "HOME": str(tmp), "TMPDIR": str(tmp), "LEAN_PATH": conf["lean_path"], "LANG": "C.UTF-8"}
+    return subprocess.run(["/usr/bin/sandbox-exec", "-p", lean_profile(tmp), conf["lean"], str(path)], stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=str(tmp), env=env, timeout=timeout)
+
+
+def lean_check(code, decl, conf, timeout=900):
+    """Returns (compiled, log). Success needs a clean compile and only Lean's three standard axioms."""
+    problem = lean_problem(code, decl)
+    if problem:
+        return False, problem
+    with tempfile.TemporaryDirectory(prefix="oq-lean-") as t:
+        tmp = pathlib.Path(os.path.realpath(t))
+        path = tmp / "Check.lean"
+        path.write_text(f"{code}\n\n#print axioms {decl}\n", encoding="utf-8")
+        try:
+            p = lean_run(conf, path, tmp, timeout)
+        except subprocess.TimeoutExpired:
+            return False, f"Lean did not finish within {timeout} seconds."
+    log = (p.stdout + p.stderr).strip()
+    if p.returncode != 0 or re.search(r"(?m)(^|: )error\b", log):
+        return False, log[-6000:] or f"Lean stopped with code {p.returncode}."
+    if re.search(rf"'?{re.escape(decl)}'? does not depend on any axioms", log):
+        return True, log[-2000:]
+    m = re.search(rf"'?{re.escape(decl)}'? depends on axioms: \[([^\]]*)\]", log)
+    if not m:
+        return False, "Lean did not report the axioms of this theorem."
+    extra = {x.strip() for x in m.group(1).replace("\n", " ").split(",") if x.strip()} - LEAN_ALLOWED_AXIOMS
+    if extra:
+        return False, f"The proof depends on other axioms: {', '.join(sorted(extra))}."
+    return True, log[-2000:]
+
+
+def lean_setup(say):
+    if sys.platform != "darwin":
+        raise Stop("Checking Lean proofs is only available on a Mac for now.")
+    root = lean_root()
+    root.mkdir(parents=True, exist_ok=True)
+    if shutil.disk_usage(str(root)).free < LEAN_MIN_FREE_GB * 10 ** 9:
+        raise Stop(f"Lean and Mathlib need about {LEAN_MIN_FREE_GB} GB of free disk space.")
+    env = {**safe_env(), "ELAN_HOME": str(root / "elan"), "HOME": str(root)}
+    env["PATH"] = os.pathsep.join([str(root / "elan" / "bin"), "/usr/bin", "/bin"])
+
+    def step(label, cmd, cwd=root, timeout=3600):
+        say(label)
+        p = subprocess.run(cmd, cwd=str(cwd), env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
+        if p.returncode != 0:
+            raise Stop(f"{label} failed: {(p.stderr or p.stdout).strip()[-300:]}")
+        return p.stdout.strip()
+
+    if not (root / "elan" / "bin" / "lake").exists():
+        script = root / "elan-init.sh"
+        step("Downloading the Lean installer", ["/usr/bin/curl", "-fsSL", "-o", str(script), "https://elan.lean-lang.org/elan-init.sh"], timeout=120)
+        step("Installing Lean", ["/bin/sh", str(script), "-y", "--no-modify-path", "--default-toolchain", "none"])
+    project = root / "project"
+    project.mkdir(exist_ok=True)
+    (project / "lean-toolchain").write_text(f"leanprover/lean4:{LEAN_VERSION}\n", encoding="utf-8")
+    (project / "lakefile.toml").write_text(f'name = "oq_check"\n\n[[require]]\nname = "mathlib"\nscope = "leanprover-community"\nrev = "{LEAN_VERSION}"\n', encoding="utf-8")
+    lake = str(root / "elan" / "bin" / "lake")
+    step("Downloading Mathlib", [lake, "update"], project)
+    step("Downloading compiled Mathlib (several GB)", [lake, "exe", "cache", "get"], project)
+    prefix = step("Finding Lean", [lake, "env", "lean", "--print-prefix"], project)
+    lean = str(pathlib.Path(prefix) / "bin" / "lean")  # the real compiler, not the elan launcher
+    lean_path = step("Reading the Mathlib path", [lake, "env", "printenv", "LEAN_PATH"], project)
+    conf = {"lean": os.path.realpath(lean), "lean_path": lean_path, "version": LEAN_VERSION, "mathlib_rev": LEAN_VERSION}
+    ok, log = lean_check("import Mathlib.Tactic\n\ntheorem oq_setup_check (n : Nat) : n + 0 = n := by simp", "oq_setup_check", conf)
+    if not ok:
+        raise Stop("Lean is installed, but its safety check failed: " + log[-300:])
+    (root / "lean.json").write_text(json.dumps(conf), encoding="utf-8")
+    say("Lean is ready.")
+
+
+def process_review(api, task, opts, workdir):
+    fact = task["context"].get("fact") or {}
+    wanted = task.get("ai_model")
+    tool = tool_of(wanted)
+    allowed, reason, retry, _ = guard(tool)
+    if not allowed:
+        raise ToolBusy(tool, reason, retry or time.time() + 1800)
+    answer, model, seconds = run_ai(tool, build_prompt(task), SCHEMAS["review"], workdir, wanted, True, opts.timeout)
+    remember_alias(wanted, model)
+    answer = scrub(answer, api.key)
+    verdict, text = answer.get("verdict"), str(answer.get("explanation") or "").strip()
+    if verdict not in ("correct", "gap", "incorrect"):
+        raise RuntimeError("The reviewer did not give a valid verdict.")
+    api.post(f"/api/facts/{int(fact['id'])}/reviews", {"verdict": verdict, "body_text": text or str(answer.get("summary") or "No issue found."), "ai_model": model, "generation_seconds": seconds})
+    label = {"correct": "found no error", "gap": "found a gap", "incorrect": "found an error"}[verdict]
+    return {"lease": task["lease"], "ai_model": model, "generation_seconds": seconds, "fact_ids": [int(fact["id"])], "summary": f"Independent review by {model}: {label}. {answer.get('summary') or ''}"[:1000]}
+
+
+def lean_match(task, code, decl, author, opts, workdir):
+    """A model other than the one that wrote the Lean file says what that file actually proves."""
+    fact = task["context"].get("fact") or {}
+    (workdir / "comparison.json").write_text(json.dumps({"fact_statement": fact.get("statement"), "lean_theorem": decl, "lean_file": code}, ensure_ascii=False, indent=1), encoding="utf-8")
+    prompt = f"{SAFETY}\n\n{INSTRUCTIONS['lean_match']}\n\nRead comparison.json in the current folder to begin."
+    for candidate in review_models(opts):
+        tool = tool_of(candidate)
+        if candidate == author or not guard(tool)[0]:
+            continue
+        answer, used, seconds = run_ai(tool, prompt, SCHEMAS["lean_match"], workdir, candidate, False, opts.timeout)
+        remember_alias(candidate, used)
+        if str(used).lower() == str(author).lower():
+            continue
+        relation = answer.get("relation")
+        if relation not in ("same", "stronger", "weaker", "different", "negation"):
+            raise RuntimeError("The statement check did not give a valid answer.")
+        return relation, str(answer.get("explanation") or "").strip(), used, seconds
+    raise RuntimeError("No independent model is available to compare the Lean statement with the fact, so nothing was recorded.")
+
+
+def process_lean(api, task, opts, workdir):
+    fact = task["context"].get("fact") or {}
+    conf = lean_conf()
+    if not conf:
+        raise RuntimeError("Lean is not set up on this computer.")
+    wanted = task.get("ai_model")
+    tool = tool_of(wanted) if wanted and wanted != opts.provider else opts.provider
+    wanted = wanted if wanted and wanted != opts.provider else None
+    prompt, spent, model, last = build_prompt(task), 0, None, ""
+    for attempt in range(3):
+        extra = f"\n\nYour previous attempt failed with:\n{last[-5000:]}\nFix it and return the whole file." if last else ""
+        answer, model, seconds = run_ai(tool, prompt + extra, SCHEMAS["lean"], workdir, wanted, False, opts.timeout)
+        remember_alias(wanted, model)
+        spent += seconds
+        answer = scrub(answer, api.key)
+        code, decl = str(answer.get("code") or ""), str(answer.get("decl_name") or "")
+        ok, last = lean_check(code, decl, conf)
+        if not ok:
+            continue
+        relation, why, checker, more = lean_match(task, code, decl, model, opts, workdir)
+        why = scrub(why, api.key)
+        spent += more
+        result = {"lease": task["lease"], "ai_model": model, "generation_seconds": round(spent, 3), "fact_ids": [int(fact["id"])]}
+        if relation == "negation":
+            body = f"Lean {conf['version']} compiled a proof of the negation of this statement, with standard axioms only. {checker} confirmed that it is the negation. {why}\n\nLean file:\n\n{code}"[:19000]
+            try:
+                api.post(f"/api/facts/{int(fact['id'])}/reviews", {"verdict": "incorrect", "body_text": body, "ai_model": model, "generation_seconds": round(spent, 3)})
+                note = "An incorrect review was recorded."
+            except ApiError:
+                note = "This model wrote the fact, so a person must record the error."
+            return {**result, "summary": f"Lean {conf['version']} refuted this fact: it compiled {decl}, the negation of the statement. {note} No Lean proof of the fact was recorded."[:1000]}
+        if relation != "same":
+            last = f"An independent check found that the Lean theorem is {relation} compared with the fact: {why}"
+            continue
+        data = api.post(f"/api/facts/{int(fact['id'])}/lean", {"code": code, "decl_name": decl, "lean_version": conf["version"], "mathlib_rev": conf["mathlib_rev"], "ai_model": model, "generation_seconds": round(spent, 3)})
+        lid = max(int(x["id"]) for x in data["lean_proofs"])
+        api.post(f"/api/fact-lean/{lid}/check", {"status": "compiles", "lean_version": conf["version"], "mathlib_rev": conf["mathlib_rev"], "log": f"{last}\n\nStatement check by {checker}: same. {why}"[:19000], "ai_model": "lean-compiler"})
+        return {**result, "summary": f"Lean {conf['version']} compiled {decl} with standard axioms only, and {checker} judged that its statement matches the fact. A person should still confirm this."[:1000]}
+    raise RuntimeError(f"No matching Lean proof after 3 attempts. Last problem: {last[-500:]}")
 
 
 PAID_ENV = {
@@ -382,6 +672,9 @@ SCHEMAS = {
     "extract": strict({"summary": {"type": "string"}, "facts": {"type": "array", "items": FACT_SCHEMA}}),
     "derive": strict({"summary": {"type": "string"}, "facts": {"type": "array", "items": FACT_SCHEMA}}),
     "ask": strict({"summary": {"type": "string"}, "reply": {"type": "string"}}),
+    "review": strict({"summary": {"type": "string"}, "verdict": {"type": "string", "enum": ["correct", "gap", "incorrect"]}, "explanation": {"type": "string"}}),
+    "lean": strict({"summary": {"type": "string"}, "decl_name": {"type": "string"}, "code": {"type": "string"}, "notes": {"type": "string"}}),
+    "lean_match": strict({"relation": {"type": "string", "enum": ["same", "stronger", "weaker", "different", "negation"]}, "explanation": {"type": "string"}}),
     "bib": strict({"summary": {"type": "string"}, "suggestions": {"type": "array", "items": strict({
         "title": {"type": "string"}, "authors": nullable(), "year": nullable(), "venue": nullable(), "doi": nullable(),
         "arxiv": nullable(), "url": nullable(), "reason": {"type": "string"}})}}),
@@ -404,6 +697,22 @@ Put the full answer in "reply" and one sentence in "summary".""",
     "bib": """TASK: search the literature for papers relevant to this project that are NOT already in "bibliography" in task.json.
 Use web search and only suggest works whose existence you confirmed. Give a DOI, an arXiv id or a stable address for each one,
 and in "reason" explain in one or two sentences why it matters here. Suggest at most 10 works. A person will validate them.""",
+    "review": """TASK: act as a strict, independent referee of the mathematical fact in "fact" in task.json.
+Another AI wrote it, so assume nothing. Check the statement, every step of the proof, each use of a result in "dependencies",
+and each external citation, using web search to confirm that a cited result exists and says what is claimed.
+Use "correct" only if you checked the entire proof and found no error or gap. Use "gap" if a step is unjustified or a citation
+cannot be confirmed. Use "incorrect" if a step or the statement is false, and give a counterexample if you can.
+In "explanation", name the exact location of each issue. For "correct", say what you checked. Do not repair the proof.""",
+    "lean": """TASK: formalize the fact in "fact" in task.json as one complete Lean 4 file using Mathlib, for Lean v4.36.0.
+State the theorem faithfully: do not weaken it, add hypotheses or change its meaning. If it has several parts, prove all of them.
+Do not use sorry, admit, axiom, unsafe, native_decide, macros, elaborators or #eval, and import only Mathlib modules.
+If you find that the fact is false, prove its exact negation instead, and say so in "notes".
+Put the file in "code", and the full name of the main theorem in "decl_name". In "notes", explain how the Lean statement matches the fact.""",
+    "lean_match": """TASK: compare a mathematical fact with a Lean 4 theorem, in comparison.json. Another AI wrote the Lean file, so assume nothing.
+Read "lean_theorem" in "lean_file", and unfold every definition, notation and hypothesis in that file: a custom definition can make a theorem trivial.
+Answer in "relation": "same" only if the theorem states exactly the fact; "stronger" if it clearly implies the fact and says more;
+"weaker" if it proves less, for example with an extra hypothesis or only some parts; "negation" if it is the logical negation of the fact;
+"different" otherwise. Do not judge whether the proof is valid: Lean checked it. In "explanation", justify your answer in a few sentences.""",
     "derive": """TASK: try to derive NEW mathematical facts useful for the subject of this task, or for the open questions in task.json.
 Prefer small, solid steps. Each fact needs a complete, rigorous "proof" unless its kind is definition, conjecture or remark.
 Leave "quote", "page" and "covers" null. "depends_on" may use refs of your new facts, or labels of existing facts.
@@ -546,6 +855,10 @@ def process(api, task, opts):
     kind = task["kind"]
     with tempfile.TemporaryDirectory(prefix="oq-task-") as tmp:
         workdir = pathlib.Path(os.path.realpath(tmp))
+        if kind in ("review", "lean"):
+            public = {k: task.get(k) for k in ("id", "kind", "source_type", "source_id", "prompt_text")}
+            (workdir / "task.json").write_text(json.dumps({"task": public, **task["context"]}, ensure_ascii=False, indent=1), encoding="utf-8")
+            return (process_review if kind == "review" else process_lean)(api, task, opts, workdir)
         source_text = None
         doc = task["context"].get("document")
         if kind == "extract" or (kind == "ask" and doc):  # a file, or the PDF of a reference
@@ -724,11 +1037,14 @@ def work_once(api, opts, name, stop=None):
     opts.hold = None if allowed else (reason, retry)
     if not allowed:
         return False
-    kinds = [k for k in opts.kinds if k in limits["kinds"]]
+    kinds = [k for k in opts.kinds if k in limits["kinds"] and (k != "lean" or lean_conf())]
     if not kinds:
         opts.hold = ("All kinds of work are turned off in your limits.", None)
         return False
-    body = {"kinds": kinds, "client_name": name, "ai_model": opts.model or opts.provider, "models": claim_models(opts, kinds), "features": ["extract_bib"]}
+    models = claim_models(opts, kinds)
+    if "review" in kinds:
+        models["review"] = review_models(opts)
+    body = {"kinds": kinds, "client_name": name, "ai_model": opts.model or opts.provider, "models": models, "features": ["extract_bib", "review", "lean"]}
     task, opts.hold = claim_task(api, opts, body)
     if not task:
         return False
@@ -742,6 +1058,10 @@ def work_once(api, opts, name, stop=None):
         result = process(api, task, per_task)
         api.post(url + "/complete", result)
         say(f"          done: {result['summary'][:160]}")
+    except ToolBusy as e:
+        opts.__dict__.setdefault("tool_hold", {})[e.tool] = e.until
+        say(f"          {e.tool} is at its limit, so another model is tried.")
+        safe_release(api, url, task)
     except LimitReached as e:
         Ledger().block(str(e), e.until)
         opts.hold = (str(e), e.until)
@@ -851,7 +1171,12 @@ def read_frontmatter(text):
         m = re.match(r"^([\w-]+):\s*(.*)$", line)
         if m:
             key, value = m.group(1), m.group(2).strip()
-            if value.startswith("[") and value.endswith("]"):
+            if key == "external_refs" and value.startswith("["):  # Danus writes this one as JSON, with commas inside its strings
+                try:
+                    out[key] = json.loads(value)
+                except ValueError:
+                    out[key] = []
+            elif value.startswith("[") and value.endswith("]"):
                 out[key] = [scalar(x) for x in value[1:-1].split(",") if x.strip()]
             else:
                 out[key] = scalar(value)
@@ -1066,7 +1391,7 @@ def danus_serve(api, graph, a):
 DEFAULT_LIMITS = {
     "max_session_percent": 50, "max_weekly_percent": 50,  # share of the subscription this client may reach
     "tasks_per_day": 20, "minutes_per_day": 120, "tokens_per_day": 2000000,  # 0 = no cap
-    "task_minutes": 30, "hours": "", "kinds": ["extract", "ask", "bib"], "paused": False,  # derivation is the costliest: opt-in
+    "task_minutes": 30, "hours": "", "kinds": ["extract", "ask", "bib", "review"], "review_offered": True, "paused": False,  # derivation is the costliest: opt-in
     "danus_enabled": False, "danus_workers": 1, "danus_minutes": 60,
     "ai_billing": "subscription",  # "api" must be chosen explicitly, because it is charged per use
 }
@@ -1076,6 +1401,13 @@ class LimitReached(Exception):
     def __init__(self, message, until=None):
         super().__init__(message)
         self.until = until
+
+
+class ToolBusy(LimitReached):
+    """One AI tool is at its limit: the task is given back, and the client's other work continues."""
+    def __init__(self, tool, message, until):
+        super().__init__(message, until)
+        self.tool = tool
 
 
 def data_dir():
@@ -1126,14 +1458,19 @@ def clean_limits(raw):
 
 def load_limits():
     try:
-        return clean_limits(json.loads((data_dir() / "limits.json").read_text(encoding="utf-8")))
+        raw = json.loads((data_dir() / "limits.json").read_text(encoding="utf-8"))
+        if not raw.get("review_offered"):  # offered once to existing users, who can then turn it off
+            raw["kinds"] = list(dict.fromkeys(list(raw.get("kinds", DEFAULT_LIMITS["kinds"])) + ["review"]))
+        out = clean_limits(raw)
+        out["review_offered"] = True
+        return out
     except (OSError, ValueError, Stop):
         return dict(DEFAULT_LIMITS)
 
 
 def save_limits(raw):
     merged = {**load_limits(), **raw}
-    clean = clean_limits(merged)
+    clean = {**clean_limits(merged), "review_offered": True}
     data_dir().mkdir(parents=True, exist_ok=True)
     (data_dir() / "limits.json").write_text(json.dumps(clean, indent=2), encoding="utf-8")
     return clean
@@ -1889,7 +2226,7 @@ def build(p, env, folder):
     if not binary:
         raise Refused("Claude Code is not installed")
     wanted = str(p["model"] or "")
-    model = wanted if wanted in ("opus", "sonnet", "haiku") or wanted.startswith("claude-") else conf.get("model") or "opus"
+    model = wanted if wanted in ("fable", "opus", "sonnet", "haiku") or wanted.startswith("claude-") else conf.get("model") or "opus"
     effort = conf.get("effort") or p["effort"]
     mcp = folder / "mcp.json"
     mcp.write_text(json.dumps({"mcpServers": {"danus": {"type": "stdio", "command": p["mcp"]["command"], "args": p["mcp"].get("args") or [], "env": p["mcp"]["env"]}}}), encoding="utf-8")
@@ -2434,7 +2771,7 @@ class DanusRun:
             if not tool_signed_in("claude"):
                 raise Stop("Sign in to Claude on the Accounts page first.")
         else:
-            model = raw.get("model") or load_prefs().get("danus_model") or codex_default_model() or "gpt-5.6-sol"
+            model = raw.get("model") or load_prefs().get("danus_model") or codex_fallback(True)
         run["engine"] = engine
         problem = billing_problem("claude" if engine == "claude" else "codex", load_limits())
         if problem:
@@ -2928,7 +3265,7 @@ class Service:
         if allowed and projects and all(p["paused"] for p in projects):
             allowed, reason, retry = False, "All your projects are paused.", None
         dm = DanusManager()
-        return {"models": models_public(), "backup": backup_public(projects), "update": read_update(), "danus_run": DanusRun().public(), "version": VERSION, "connected": bool(cfg.get("key")) and not error, "url": cfg.get("url", ""), "error": error, "projects": projects, "tools": tools, "provider": provider,
+        return {"lean": lean_public(), "models": models_public(), "backup": backup_public(projects), "update": read_update(), "danus_run": DanusRun().public(), "version": VERSION, "connected": bool(cfg.get("key")) and not error, "url": cfg.get("url", ""), "error": error, "projects": projects, "tools": tools, "provider": provider,
                 "running": self.running(), "allowed": allowed, "reason": reason, "retry_at": retry, "limits": limits, "day": day, "windows": windows,
                 "log": list(self.log)[-60:], "jobs": self.jobs, "danus": {**dm.state(), "engine": danus_engine(), "mode": danus_mode(), "can_native": sys.platform == "darwin", "isolated_installed": sys.platform == "darwin" and danus_mode() == "native" and LimaVm().exists(), "unavailable": dm.unavailable_reason()}}
 
@@ -3065,6 +3402,8 @@ def make_handler(service, token, port):
             elif path == "/api/backup/open":
                 d = read_backup()["settings"]
                 open_folder(backup_folder(d, load_config().get("url") or ""))
+            elif path == "/api/lean/setup":
+                service.job("lean", lambda: lean_setup(say))
             elif path == "/api/danus/setup":
                 service.job("danus", lambda: DanusManager().setup(say))
             elif path == "/api/danus/mode":
@@ -3191,6 +3530,15 @@ def cmd_models(a):
         save_models(provider, current)
     for k in KINDS:
         print(f"{KIND_NAMES[k]}: {chosen_model(provider, k) or 'default of ' + provider}")
+    return 0
+
+
+def cmd_lean(a):
+    if a.action == "setup":
+        lean_setup(print)
+    else:
+        s = lean_public()
+        print(f"Lean {s['version']} is ready." if s["ready"] else "Lean is not installed. Run: python3 oq.py lean setup")
     return 0
 
 
@@ -3898,6 +4246,9 @@ def parser():
     u = sub.add_parser("update", help="check for a new version, and install it")
     u.add_argument("--check", action="store_true", help="only check")
     u.set_defaults(fn=cmd_update)
+    le = sub.add_parser("lean", help="install Lean to check formal proofs")
+    le.add_argument("action", choices=["setup", "status"])
+    le.set_defaults(fn=cmd_lean)
     mo = sub.add_parser("models", help="choose the model for each kind of work")
     mo.add_argument("--provider", choices=["claude", "codex"])
     mo.add_argument("--set", action="append", metavar="KIND=MODEL", help="for example extract=opus, or extract=auto")
@@ -3906,7 +4257,7 @@ def parser():
     r.add_argument("--once", action="store_true", help="process what is waiting, then stop")
     r.add_argument("--limit", type=int, help="stop after this many tasks")
     r.add_argument("--project", type=int, help="only this project")
-    r.add_argument("--only", help="comma-separated: extract, ask, bib, derive")
+    r.add_argument("--only", help="comma-separated: extract, ask, bib, derive, review, lean")
     r.add_argument("--provider", choices=["claude", "codex"])
     r.add_argument("--model", help="use this model for all work (default: your choices in: oq.py models)")
     r.add_argument("--name", help="name of this computer on the platform")
@@ -3934,7 +4285,7 @@ def parser():
     l = sub.add_parser("limits", help="show or change usage limits")
     for flag, kind in (("max-session-percent", int), ("max-weekly-percent", int), ("tasks-per-day", int), ("minutes-per-day", int), ("tokens-per-day", int), ("task-minutes", int), ("hours", str), ("danus-workers", int), ("danus-minutes", int)):
         l.add_argument("--" + flag, type=kind)
-    l.add_argument("--only", help="comma-separated: extract, ask, bib, derive")
+    l.add_argument("--only", help="comma-separated: extract, ask, bib, derive, review, lean")
     l.add_argument("--billing", choices=["subscription", "api"], help="api allows paid API keys, charged per use")
     l.add_argument("--pause", action="store_true")
     l.add_argument("--resume", action="store_true")
@@ -4030,7 +4381,7 @@ const updateBanner=()=>{const u=S.update;if(!u?.available)return'';return`<secti
 const versionBox=()=>{const u=S.update||{};const label=u.available?`Version ${u.latest} available`:u.error?'Check failed':u.checked_at?'Up to date':'Not checked yet';return`<small>Version ${e(S.version)}</small><small>${e(label)}</small><button data-a=updatecheck ${checking?'disabled':''}>${checking?'Checking…':'Check for updates'}</button><a href="https://github.com/LudovicPatey/projects" target=_blank rel="noopener noreferrer">Source code (AGPL-3.0)</a>`};
 const home=()=>`<h1>Home</h1><p class=sub>Your computer helps your research projects, within the limits you set.</p>${updateBanner()}${hero()}<div class=grid>${usage()}<section class=panel><h2>Your projects</h2>${S.projects.map(p=>`<div class="row ${p.paused?'off':''}"><div><b>${e(p.title)}</b><small>${p.unavailable?'Could not read its work queue':p.waiting+' waiting'}${p.review?' · '+p.review+' reference(s) to validate':''}</small></div><button class=toggle role=switch aria-checked=${!p.paused} aria-label="${e(p.title)}: ${p.paused?'paused':'active'}" data-pswitch=${p.id}>${p.paused?'Paused':'Active'}<i></i></button></div>`).join('')||'<div class=empty>No project yet.</div>'}</section></div><section class=panel style="margin-top:14px"><h2>Activity</h2><div class=log tabindex=0>${S.log.slice().reverse().map(x=>`<div><span>${e(x.at)}</span>${e(x.text)}</div>`).join('')||'<div class=empty>Nothing yet.</div>'}</div></section>`;
 const num=(k,l,h,min,max,unit)=>`<label class=f>${e(l)}<small>${e(h)}</small><input type=number data-l=${k} min=${min} max=${max} value="${e(draft[k])}"></label>`;
-let MD=null;const modelsPanel=()=>{const m=S.models;if(!m)return'';const p=S.provider==='codex'?'codex':'claude',c=m.choices[p]||{},v=k=>MD?.[k]??(c[k]||'auto'),hint=k=>m.auto[p]?.[k]||'your '+toolName(p)+' default';return`<section class=panel style="margin-bottom:14px"><h2>AI models</h2><p class=sub>Automatic follows new releases. A weaker model never repeats an extraction that a stronger one finished.</p><datalist id=mnames>${m.suggest[p].map(x=>`<option value="${e(x)}">`).join('')}</datalist><div class=grid>${[['extract','Extract facts'],['ask','Answer @AI'],['bib','Find references'],['derive','Automatic proving']].map(([k,l])=>`<label class=f>${l}<small>Automatic: ${e(hint(k))}</small><input type=text list=mnames data-md=${k} value="${e(v(k))}"></label>`).join('')}<label class=f>Proof search (Prove new facts)<small>Empty: ${e(m.danus_default)}</small><input type=text data-md=danus value="${e(MD?.danus??m.danus)}"></label></div><p><button class=btn data-a=modelsave>Save models</button></p></section>`};const limits=()=>`<h1>Usage limits</h1><p class=sub>Keep your AI subscription for your own work. These limits apply to all your active projects together.</p>${modelsPanel()}<div class=grid><section class=panel><h2>Share of your subscription</h2><label class=f>Stop at this share of the session limit: ${draft.max_session_percent}%<small>ChatGPT reports this directly.</small><input type=range min=5 max=100 step=5 data-l=max_session_percent value="${draft.max_session_percent}"></label><label class=f>Stop at this share of the weekly limit: ${draft.max_weekly_percent}%<input type=range min=5 max=100 step=5 data-l=max_weekly_percent value="${draft.max_weekly_percent}"></label><label class=f>Working hours<small>For example 22-7 for nights. Empty means all day.</small><input type=text data-l=hours value="${e(draft.hours)}" placeholder="All day"></label></section><section class=panel><h2>Daily caps</h2>${num('tasks_per_day','Tasks per day','0 means no cap.',0,1000)}${num('minutes_per_day','Computing minutes per day','0 means no cap.',0,1440)}${num('tokens_per_day','Tokens per day','0 means no cap.',0,10000000000)}${num('task_minutes','Maximum minutes per task','A longer task is stopped.',1,720)}</section></div><section class=panel style="margin-top:14px"><h2>What this computer may do</h2>${[['extract','Extract facts from new files'],['ask','Answer @AI questions'],['bib','Suggest references'],['derive','Prove new facts automatically, without pressing Start (uses more of your subscription)']].map(([k,l])=>`<label class=check><input type=checkbox data-k=${k} ${draft.kinds.includes(k)?'checked':''}> ${l}</label>`).join('')}<p><button class="btn primary" data-a=save>Save limits</button></p></section>`;
+let MD=null,MO={},MP=null;const modelTool=()=>MP||(S.provider==='codex'?'codex':'claude');const pickModel=(k,val,list)=>MO[k]?`<input type=text data-md=${k} placeholder="Exact model name" value="${e(val==='auto'?'':val)}">`:`<select data-msel=${k}>${[...list,...(list.some(o=>o.id===val)?[]:[{id:val,label:val}]),{id:'__other',label:'Other model…'}].map(o=>`<option value="${e(o.id)}" ${o.id===val?'selected':''}>${e(o.label)}</option>`).join('')}</select>`;const modelsPanel=()=>{const m=S.models;if(!m)return'';const p=modelTool(),c=m.choices[p]||{},v=k=>MD?.[k]??(c[k]||'auto'),hint=k=>m.auto[p]?.[k]||'your '+toolName(p)+' default';return`<section class=panel style="margin-bottom:14px"><h2>AI models</h2><p class=sub>Automatic follows new releases. A weaker model never repeats an extraction that a stronger one finished.</p><p class=actions role=group aria-label="AI tool">${[['claude','Claude'],['codex','ChatGPT']].map(([x,l])=>`<button class="btn ${x===p?'primary':''}" data-mp=${x} aria-pressed=${x===p}>${l}</button>`).join('')}</p><div class=grid>${[['extract','Extract facts'],['ask','Answer @AI'],['bib','Find references'],['review','Independent review'],['lean','Lean proofs'],['derive','Automatic proving']].map(([k,l])=>`<label class=f>${l}<small>Automatic: ${e(hint(k))}</small>${pickModel(k,v(k),m.suggest[p])}</label>`).join('')}<label class=f>Proof search (Prove new facts)<small>Automatic: ${e(m.danus_default)}</small>${pickModel('danus',MD?.danus??(m.danus||'auto'),m.suggest[m.danus_tool])}</label></div><p><button class=btn data-a=modelsave>Save models</button></p></section>`};const limits=()=>`<h1>Usage limits</h1><p class=sub>Keep your AI subscription for your own work. These limits apply to all your active projects together.</p>${modelsPanel()}<div class=grid><section class=panel><h2>Share of your subscription</h2><label class=f>Stop at this share of the session limit: ${draft.max_session_percent}%<small>ChatGPT reports this directly.</small><input type=range min=5 max=100 step=5 data-l=max_session_percent value="${draft.max_session_percent}"></label><label class=f>Stop at this share of the weekly limit: ${draft.max_weekly_percent}%<input type=range min=5 max=100 step=5 data-l=max_weekly_percent value="${draft.max_weekly_percent}"></label><label class=f>Working hours<small>For example 22-7 for nights. Empty means all day.</small><input type=text data-l=hours value="${e(draft.hours)}" placeholder="All day"></label></section><section class=panel><h2>Daily caps</h2>${num('tasks_per_day','Tasks per day','0 means no cap.',0,1000)}${num('minutes_per_day','Computing minutes per day','0 means no cap.',0,1440)}${num('tokens_per_day','Tokens per day','0 means no cap.',0,10000000000)}${num('task_minutes','Maximum minutes per task','A longer task is stopped.',1,720)}</section></div><section class=panel style="margin-top:14px"><h2>What this computer may do</h2>${[['extract','Extract facts from new files'],['ask','Answer @AI questions'],['bib','Suggest references'],['review','Review facts independently, when a member asks'],['lean','Write and compile Lean proofs, when a member asks (needs Lean)'],['derive','Prove new facts automatically, without pressing Start (uses more of your subscription)']].map(([k,l])=>`<label class=check><input type=checkbox data-k=${k} ${draft.kinds.includes(k)?'checked':''}> ${l}</label>`).join('')}<p><button class="btn primary" data-a=save>Save limits</button></p></section>${leanPanel()}`;const leanPanel=()=>{const l=S.lean||{},j=S.jobs.lean?.running;if(!l.available)return'';return`<section class=panel style="margin-top:14px"><h2>Lean proofs</h2><div class=row><div><b>${l.ready?'Lean '+e(l.version)+' is ready':j?'Installing Lean':'Not installed'}</b><small>${l.ready?'Proofs compile with no network and no access to your files.':'Needs about '+l.min_free_gb+' GB of free disk space, mostly for Mathlib.'}</small></div>${l.ready?'':`<button class=btn data-a=leansetup ${j?'disabled':''}>${j?'Installing…':'Install Lean'}</button>`}</div></section>`};
 const account=()=>{const t=n=>{const x=S.tools[n],j=S.jobs['install-'+n]?.running,g=S.jobs['login-'+n]?.running;return`<div class=row><div><b>${toolName(n)}</b><small>${x.installed?(x.signed_in?'Installed and signed in':'Installed, sign-in needed'):'Not installed'}${x.via_app?' · from Claude for Mac':''}</small></div>${!x.installed?`<button class=btn data-tool=install data-n=${n} ${j?'disabled':''}>${j?'Installing…':'Install'}</button>`:!x.signed_in?`<button class="btn primary" data-tool=login data-n=${n} ${g?'disabled':''}>${g?'Check your browser…':'Sign in'}</button>`:`<button class=btn data-use=${n} ${S.provider===n?'disabled':''}>${S.provider===n?'In use':'Use this'}</button>`}</div>`};
  return`<h1>Accounts</h1><p class=sub>The app uses your own AI account, on this computer.</p><section class=panel><h2>1. Choose your AI</h2>${t('claude')}${t('codex')}</section><section class=panel><h2>2. Connect to the platform</h2>${S.connected?`<div class=row><div><b>Connected</b><small>${e(S.url)}</small></div><button class="btn danger" data-a=disconnect>Disconnect</button></div>`:`<label class=f>Platform address<input type=text id=url data-c=url value="${e(CF.url??(S.url||'https://projects.ludovicpatey.com'))}"></label><label class=f>Personal key<small>Create it on your profile page on the platform, then paste it here.</small><input type=password id=key data-c=key autocomplete=off placeholder="ouk_…" value="${e(CF.key||'')}"></label>${connectErr||S.error?`<div class=err id=cerr role=alert>${e(connectErr||S.error)}</div>`:''}<button class="btn primary" data-a=connect ${connecting?'disabled':''}>${connecting?'Connecting…':'Connect'}</button>`}</section><section class=panel><h2>3. How AI use is paid</h2><label class=check><input type=radio name=billing data-billing=subscription ${S.limits.ai_billing==='subscription'?'checked':''}> <span><b>My subscription only</b> (recommended). API keys on this computer are ignored.</span></label><label class=check><input type=radio name=billing data-billing=api ${S.limits.ai_billing==='api'?'checked':''}> <span><b>Allow a paid API key.</b> The provider charges each use.</span></label><div class=note>If you turned on <b>usage credits</b> in your Claude settings, background work can spend them after your plan limit. Keep them off, or set a monthly cap.</div></section>`};
 const fmtMin=m=>{m=Math.round(m);return m>=60?`${Math.floor(m/60)} h ${String(m%60).padStart(2,'0')}`:`${m} min`};
@@ -4054,7 +4405,7 @@ const backup=()=>{const b=S.backup,s=b.settings,j=S.jobs.backup;BD=BD||{...s};co
 const render=()=>{if(pressing)return;const a=document.activeElement;if(a&&['INPUT','SELECT','TEXTAREA'].includes(a.tagName)&&view!=='home')return;for(const b of document.querySelectorAll('nav button')){b.classList.toggle('on',b.dataset.v===view);b.setAttribute('aria-current',b.dataset.v===view?'page':'false')}document.getElementById('ver').innerHTML=versionBox();const m=document.getElementById('m');const sc=m.querySelector('.log')?.scrollTop;m.innerHTML=(msg?`<div class=err role=alert>${e(msg)}</div>`:'')+{home,limits,danus,backup,account}[view]();if(sc)m.querySelector('.log').scrollTop=sc};
 document.addEventListener('click',ev=>{const b=ev.target.closest('button');if(!b)return;if(b.dataset.v){view=b.dataset.v;msg='';draft={...S.limits};BD=null;return render()}if(b.dataset.go){view=b.dataset.go;return render()}if(b.dataset.pswitch){const q=S.projects.find(p=>p.id===+b.dataset.pswitch);return call('/api/project/pause',{project_id:q.id,paused:!q.paused})}if(b.dataset.tool)return call('/api/tool/'+b.dataset.tool,{tool:b.dataset.n});if(b.dataset.use)return call('/api/limits',{}).then(()=>call('/api/start',{provider:b.dataset.use}));const x=b.dataset.a;if(x==='start')call('/api/start',{provider:S.provider});if(x==='stop')call('/api/stop');if(x==='disconnect'&&confirm('Disconnect this computer?'))call('/api/disconnect');if(x==='connect'&&!connecting){CF={url:document.getElementById('url').value,key:document.getElementById('key').value};connecting=true;connectErr='';render();call('/api/connect',CF).then(()=>{connecting=false;if(msg){connectErr=msg;msg=''}else{CF={};connectErr=''}render();document.getElementById('cerr')?.scrollIntoView({block:'center'})})}if(x==='save'){const{paused,...rest}=draft;document.activeElement?.blur();call('/api/limits',rest).then(()=>{if(!msg)draft={...S.limits}})}if(x==='updatecheck'){checking=true;render();call('/api/update/check').finally(()=>{checking=false;render()})}if(x==='updateapply'&&confirm('Install version '+S.update.latest+' now? The client restarts.')){updating=true;render();call('/api/update/apply').finally(()=>{setTimeout(()=>{updating=false;load()},2500)})}if(x==='backupnow')call('/api/backup/run');if(x==='backupopen')call('/api/backup/open');if(x==='backupsave'){document.activeElement?.blur();call('/api/backup/settings',BD).then(()=>{if(!msg){BD=null;render()}})}if(x==='danus')call('/api/danus/setup');if(x==='danusmode'){const m=S.danus.mode==='native'?'isolated':'native';if(m==='isolated'||confirm(NATIVE_WARNING))call('/api/danus/mode',{mode:m,accept:m==='native'})}if(x==='danusremoveiso'&&confirm('Remove the isolated machine and free its disk space?'))call('/api/danus/remove',{mode:'isolated'});if(x==='danusstop'&&confirm('Stop the proof search now? Its facts so far are kept.'))call('/api/danus/stop');if(x==='danusrun'){document.activeElement?.blur();const g=R.goal||'',b={project_id:R.project_id,prompt:R.prompt,minutes:R.minutes,stop_session:R.stop_session,stop_weekly:R.stop_weekly,on_limit:R.on_limit,workers:R.workers,task_id:g[0]==='t'?+g.slice(1):null,question_id:g[0]==='q'?+g.slice(1):null};if(R.on_limit==='resume'&&!R.minutes&&!confirm('This run continues after every reset until you stop it. Start it?'))return;call('/api/danus/run',b).then(()=>{if(!msg)O={}})}if(x==='danusremove'&&confirm('Remove the prover and its isolated machine?'))call('/api/danus/remove')});
 document.addEventListener('pointerdown',()=>{pressing=true});for(const n of ['pointerup','pointercancel'])document.addEventListener(n,()=>setTimeout(()=>{pressing=false},0));document.addEventListener('input',ev=>{const t=ev.target;if(t.dataset.c){CF[t.dataset.c]=t.value;connectErr=''}if(t.dataset.b&&BD){const k=t.dataset.b;BD[k]=k==='enabled'?t.checked:k==='folder'?t.value:+t.value;if(t.type==='checkbox'||t.tagName==='SELECT')t.blur()}if(t.dataset.l){draft[t.dataset.l]=t.type==='text'?t.value:+t.value;if(t.type==='range'){t.closest('label').firstChild.textContent=t.closest('label').firstChild.textContent.replace(/\d+%/,t.value+'%')}}if(t.dataset.k){draft.kinds=['extract','ask','bib','derive'].filter(k=>k===t.dataset.k?t.checked:draft.kinds.includes(k))}if('danus'in t.dataset)draft.danus_enabled=t.checked;if(t.dataset.r&&R){const k=t.dataset.r;R[k]=['goal','prompt','on_limit'].includes(k)?t.value:+t.value;if(k==='project_id'){R.goal='';t.blur();options();render()}const set=(i,v)=>{const x=document.getElementById(i);if(x)x.textContent=v};if(k==='workers')set('rw',t.value);if(k==='stop_session')set('rs',t.value);if(k==='stop_weekly')set('rk',t.value);const n=document.getElementById('runsum');if(n)n.innerHTML=runSummary(R.minutes?fmtMin(R.minutes):'no time limit')}});
-document.addEventListener('input',ev=>{const k=ev.target.dataset?.md;if(k)MD={...(MD||{}),[k]:ev.target.value}});document.addEventListener('click',ev=>{if(ev.target.closest('button')?.dataset.a!=='modelsave')return;document.activeElement?.blur();const p=S.provider==='codex'?'codex':'claude',{danus,...edits}=MD||{};call('/api/models',{provider:p,choices:{...(S.models.choices[p]||{}),...edits},...(danus===undefined?{}:{danus})}).then(()=>{if(!msg){MD=null;render()}})});document.addEventListener('change',ev=>{const en=ev.target.dataset?.dengine;if(en){ev.target.blur();if(en==='claude'&&!confirm(CLAUDE_WARNING))return load();return call('/api/danus/engine',{engine:en,accept:en==='claude'})}const dm=ev.target.dataset?.dmode;if(dm){ev.target.blur();if(dm==='native'&&!confirm(NATIVE_WARNING))return load();return call('/api/danus/mode',{mode:dm,accept:dm==='native'})}const b=ev.target.dataset?.billing;if(!b)return;ev.target.blur();if(b==='api'&&!confirm('Allow a paid API key? The AI provider will charge each use to that key.'))return load();call('/api/limits',{ai_billing:b}).then(()=>{if(!msg)draft={...S.limits}})});
+document.addEventListener('click',ev=>{if(ev.target.closest('button')?.dataset.a==='leansetup'&&confirm('Download Lean and Mathlib? This uses about '+(S.lean?.min_free_gb||10)+' GB of disk space.'))call('/api/lean/setup')});document.addEventListener('click',ev=>{const x=ev.target.closest('button')?.dataset.mp;if(x){MP=x;MD=null;MO={};render()}});document.addEventListener('input',ev=>{const k=ev.target.dataset?.md;if(k)MD={...(MD||{}),[k]:ev.target.value}});document.addEventListener('click',ev=>{if(ev.target.closest('button')?.dataset.a!=='modelsave')return;document.activeElement?.blur();const p=modelTool(),{danus,...edits}=MD||{};call('/api/models',{provider:p,choices:{...(S.models.choices[p]||{}),...edits},...(danus===undefined?{}:{danus})}).then(()=>{if(!msg){MD=null;MO={};render()}})});document.addEventListener('change',ev=>{const ms=ev.target.dataset?.msel;if(ms){const val=ev.target.value;ev.target.blur();if(val==='__other'){MO={...MO,[ms]:1};MD={...(MD||{}),[ms]:''}}else MD={...(MD||{}),[ms]:val};return render()}const en=ev.target.dataset?.dengine;if(en){ev.target.blur();if(en==='claude'&&!confirm(CLAUDE_WARNING))return load();return call('/api/danus/engine',{engine:en,accept:en==='claude'})}const dm=ev.target.dataset?.dmode;if(dm){ev.target.blur();if(dm==='native'&&!confirm(NATIVE_WARNING))return load();return call('/api/danus/mode',{mode:dm,accept:dm==='native'})}const b=ev.target.dataset?.billing;if(!b)return;ev.target.blur();if(b==='api'&&!confirm('Allow a paid API key? The AI provider will charge each use to that key.'))return load();call('/api/limits',{ai_billing:b}).then(()=>{if(!msg)draft={...S.limits}})});
 load();setInterval(()=>{if(!document.hidden)load()},3000);
 </script></body></html>
 '''

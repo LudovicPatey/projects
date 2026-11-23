@@ -379,7 +379,7 @@ echo "$*" >> "${log}"
 case "$1" in inspect) if [ "$2" = "-f" ]; then [ -f "${dir}/mounted" ] && echo 1 || echo 0; exit 0; fi; [ -f "${dir}/exists" ]; exit $?;; run) touch "${dir}/exists"; echo id; exit 0;; start|stop|rm) exit 0;; esac
 s="\${@: -1}"
 [ -p /dev/stdin ] && cat >/dev/null
-case "$s" in *"[ -f "*) if [ -f "${dir}/lost" ]; then rm -f "${dir}/lost"; exit 1; fi;; *"findmnt"*) [ ! -f "${dir}/mounted" ]; exit $?;; *"danus status"*"--json"*) [[ "$s" == *"|| bin/danus new"* ]] && exit 0; echo '[{"worker":"w1","alive":true}]';; *"tar -cf"*) COPYFILE_DISABLE=1 tar -C "${dir}/data" -cf - fact_graph;; esac
+case "$s" in *"[ -f "*"] && touch "*) if [ -f "${dir}/lost" ]; then rm -f "${dir}/lost"; exit 1; fi;; *"findmnt"*) [ ! -f "${dir}/mounted" ]; exit $?;; *"danus status"*"--json"*) [[ "$s" == *"|| bin/danus new"* ]] && exit 0; echo '[{"worker":"w1","alive":true}]';; *"tar -cf"*) COPYFILE_DISABLE=1 tar -C "${dir}/data" -cf - fact_graph;; esac
 exit 0
 `, { mode: 0o755 });
   return log;

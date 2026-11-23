@@ -1442,3 +1442,24 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: non
 .bib-progress-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
 .bib-progress-foot small:empty { display: none; }
 .bib-progress-foot .btn { margin-left: auto; }
+
+/* Reading view of facts: layout only, around the stored text */
+.fact-view-switch { display: flex; justify-content: flex-end; margin-bottom: -6px; }
+.fact-readable { max-width: 86ch; line-height: 1.68; font-size: 15px; }
+.fact-readable p { margin: 0 0 .8em; }
+.fact-readable .ff-head { margin: 1.25em 0 .4em; padding-bottom: 3px; font-size: 13.5px; font-weight: 700; color: var(--accent); border-bottom: 1px solid var(--line); }
+.fact-readable > .ff-head:first-child { margin-top: 0; }
+.fact-readable .ff-lead { font-weight: 700; }
+.fact-readable .ff-item, .fact-readable .ff-eq { display: grid; grid-template-columns: 3em minmax(0, 1fr); gap: 2px 6px; margin: 0 0 .7em; }
+.fact-readable .ff-label { color: var(--muted, #667085); font-weight: 600; text-align: right; padding-right: 6px; }
+.fact-readable .ff-eq { margin: .55em 0 .85em; padding: 7px 12px 7px 4px; background: #f7f8fc; border-radius: 6px; }
+.fact-readable .ff-eq > div:only-child { grid-column: 1 / -1; padding-left: 12px; }
+.fact-readable .katex { font-size: 1.04em; }
+.ext-refs { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.ext-refs li { padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; min-width: 0; }
+.ext-top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.ext-cited { margin-top: 4px; font-size: 13px; }
+.ext-cited span { color: var(--muted, #667085); font-weight: 600; }
+.ext-link { display: inline-flex; align-items: center; gap: 4px; margin-top: 5px; font-size: 12.5px; }
+.ext-raw { white-space: pre-wrap; overflow-wrap: anywhere; }
+@media (max-width: 640px) { .fact-readable .ff-item, .fact-readable .ff-eq { grid-template-columns: 2.4em minmax(0, 1fr); } }

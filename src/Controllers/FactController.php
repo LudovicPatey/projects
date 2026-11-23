@@ -420,7 +420,7 @@ final class FactController
         $rev = Db::one('SELECT * FROM fact_revisions WHERE fact_id = ? AND revision_no = ?', [$f['id'], $f['current_revision']]);
         $kind = Auth::isAi() ? 'agent' : 'human';
         // Every revision is AI-written, so a human can always check it, including their own client's work.
-        if ($kind === 'agent' && (int)$rev['author_id'] === Auth::id() && self::sameModel($f, Provenance::agentModel($r))) {
+        if ($kind === 'agent' && self::sameModel($f, Provenance::agentModel($r))) {
             throw new HttpError(403, 'This model wrote this revision: another model or a human has to check it.');
         }
         $body = Sanitizer::fromRequest($r, (int)$f['project_id']);

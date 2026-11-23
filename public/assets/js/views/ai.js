@@ -8,7 +8,7 @@ export const AiView = {
   components: { Pill, Kpi, StackBar },
   props: { pid: Number, id: Number, query: Object },
   data() {
-    return { d: null, filter: 'all', draft: { kind: 'bib', prompt: '', document: '', question: '' }, documents: [], references: [], questions: [], busy: false, timer: null, bibData: null };
+    return { d: null, filter: 'all', draft: { kind: 'bib', prompt: '', document: '', question: '', fact: '' }, documents: [], references: [], questions: [], facts: [], busy: false, timer: null, bibData: null };
   },
   computed: {
     tasks() { return filterTasks(this.d?.tasks || [], this.filter); },
@@ -24,7 +24,8 @@ export const AiView = {
   created() { this.kinds = AI_KINDS; this.statuses = TASK_STATUS; this.segments = TASK_SEGMENTS; },
   async mounted() {
     await this.load();
-    const [docs, qs, bib] = await Promise.all([attempt(() => api.get(`api/projects/${this.pid}/documents`)), attempt(() => api.get(`api/projects/${this.pid}/questions`)), attempt(() => api.get(`api/projects/${this.pid}/bib`))]);
+    const [docs, qs, bib, facts] = await Promise.all([attempt(() => api.get(`api/projects/${this.pid}/documents`)), attempt(() => api.get(`api/projects/${this.pid}/questions`)), attempt(() => api.get(`api/projects/${this.pid}/bib`)), attempt(() => api.get(`api/projects/${this.pid}/facts`))]);
+    this.facts = (facts?.facts || []).filter((f) => !f.retracted_at);
     this.references = (bib?.entries || []).filter((e) => e.has_pdf);
     this.bibData = bib?.progress || null;
     this.documents = docs?.documents || (Array.isArray(docs) ? docs : []);
@@ -142,6 +143,7 @@ export const AiView = {
             <p class="ai-hint">{{ kinds[draft.kind].hint }}</p>
             <label v-if="draft.kind === 'extract'" class="field"><span>File or reference</span><select v-model="draft.document"><option value="">Choose…</option><optgroup v-if="documents.length" label="Files"><option v-for="f in documents" :key="f.id" :value="f.id">{{ f.title }}</option></optgroup><optgroup v-if="references.length" label="References with a PDF"><option v-for="b in references" :key="b.id" :value="'bib:' + b.id">{{ b.title }}</option></optgroup></select></label>
             <button v-if="draft.kind === 'extract' && bib.toQueue" class="btn block" @click="extractAll"><icon name="sparkles" :size="14"/> Extract all {{ bib.toQueue }} remaining reference PDFs</button>
+            <label v-if="kinds[draft.kind].needs === 'fact'" class="field"><span>Fact</span><select v-model="draft.fact"><option value="">Choose…</option><option v-for="f in facts" :key="f.id" :value="f.id">{{ f.label }}: {{ f.title }}</option></select></label>
             <label v-if="draft.kind === 'derive'" class="field"><span>Toward a question (optional)</span><select v-model="draft.question"><option value="">The whole project</option><option v-for="q in questions" :key="q.id" :value="q.id">{{ q.title }}</option></select></label>
             <label class="field"><span>{{ draft.kind === 'ask' ? 'Your question' : 'Instructions (optional)' }}</span><textarea v-model="draft.prompt" rows="3" maxlength="4000" :placeholder="draft.kind === 'bib' ? 'For example: work on sunflower bounds since 2019' : ''"></textarea></label>
             <button class="btn primary block" :disabled="!!error || busy" @click="send">Add to the queue</button>

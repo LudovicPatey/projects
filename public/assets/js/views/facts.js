@@ -2,6 +2,7 @@ import { api } from '../api.js';
 import { store, go, link, attempt, toast, refreshMentionables, refreshProject, unreadCount, markRead, markItemUnread } from '../store.js';
 import { timeAgo, fullDate } from '../util.js';
 import { FactGraph, STATUS, PROOF_LABEL } from '../factgraph.js';
+import { factTitle, formatFactHtml, parseExternalRefs, texLine } from '../fact-format.js';
 
 const VERDICTS = {
   correct: { label: 'Correct', cls: 'green' },
@@ -46,6 +47,8 @@ const ByLine = {
   template: `<span class="row-gap small"><b>{{ name }}</b><ai-meta :model="model" :user="user" :ms="ms"/></span>`,
 };
 
+const readView = () => { try { return localStorage.getItem('oq-fact-view') !== 'original'; } catch { return true; } };
+
 export const FactsView = {
   components: { FactGraph, StatusTag, ByLine, LabelChips, ProofTag },
   props: { pid: Number, id: Number, query: Object },
@@ -53,7 +56,7 @@ export const FactsView = {
     return {
       facts: [], edges: [], loaded: false, search: '', fStatus: 'all', fOrigin: 'all', fLabel: 'all', fLean: 'all', sort: 'recent', lineage: false, showFilters: false,
       fact: null, factError: null, tab: 'content', activeThread: null, backlinks: [],
-      reviewVerdict: 'correct', checkForm: null, trace: null, retracting: null, revView: null, denying: null,
+      readable: readView(), reviewVerdict: 'correct', checkForm: null, trace: null, retracting: null, revView: null, denying: null,
     };
   },
   computed: {
@@ -112,6 +115,8 @@ export const FactsView = {
     canDelete() { return this.fact && (this.fact.created_by === this.me || this.isOwner) && !this.fact.dependents.length; },
     shownRevision() { return this.fact.revisions.find((r) => r.revision_no === this.revView) || null; },
     content() { return this.shownRevision || this.fact; },
+    externalRefs() { return parseExternalRefs(this.fact?.external_refs); },
+    headTitle() { return this.fact ? texLine(factTitle(this.fact.title, this.fact.statement_html, true)) : ''; },
     gridClass() {
       if (this.mode === 'list') return 'cols3';
       return this.fact || this.factError ? 'facts-graph has-detail' : 'facts-graph';
@@ -165,7 +170,7 @@ export const FactsView = {
     <div class="list">
       <a v-for="f in filtered" :key="f.id" class="li fact-li" :class="['o-' + f.origin, {active: f.id === id, 'is-new': !!unreadOf(f.id)}]" :href="factLink(f.id)">
         <div class="li-top"><code class="key">{{ f.label }}</code><span class="li-time">{{ f.kind }}</span><unread-badge type="fact" :id="f.id"/></div>
-        <div class="li-subject"><math-text :text="f.title"/></div>
+        <div class="li-subject"><math-text :text="texLine(factTitle(f.title, f.statement_text))"/></div>
         <div class="li-snippet"><math-text :text="f.statement_text"/></div>
         <div class="li-meta wrap">
           <label-chips :labels="f.labels"/>
@@ -194,7 +199,7 @@ export const FactsView = {
       <header class="doc-head">
         <div class="doc-title">
           <div class="fact-id"><code class="key big">{{ fact.label }}</code><span>{{ fact.kind }}</span><span>{{ fact.method }}</span><span v-if="fact.tool">{{ fact.tool }}</span><span>revision {{ fact.current_revision }}</span></div>
-          <h2><math-text :text="fact.title"/></h2>
+          <h2 :title="fact.title"><math-text :text="headTitle"/></h2>
           <div class="fact-chips"><label-chips :labels="fact.labels"/><status-tag :status="fact.status"/><proof-tag :origin="fact.proof_origin"/><span class="lean-tag" :class="fact.lean" v-if="fact.lean !== 'none'">{{ leanLabels[fact.lean] }}</span></div>
           <div class="fact-byline"><ai-meta :model="fact.ai_model" :user="fact.ai_user_name" :ms="fact.ai_generation_ms"/><span class="muted small">added by {{ fact.author }} · updated {{ timeAgo(fact.updated_at) }}</span></div>
           <div v-if="fact.endorsed_by.length" class="endorsers"><icon name="check-circle" :size="14"/> Endorsed by
@@ -206,6 +211,8 @@ export const FactsView = {
           <button v-if="!fact.retracted_at" class="btn sm endorse" :class="{on: endorsed}" :aria-pressed="endorsed" :title="endorsed ? 'Withdraw your endorsement' : 'Endorse this revision: you checked it and consider it correct'" @click="toggleEndorse">
             <icon name="check" :size="14"/> {{ endorsed ? 'Endorsed' : 'Endorse' }}</button>
           <button v-if="!fact.retracted_at" class="btn sm deny" :class="{on: denied}" :aria-pressed="denied" :title="denied ? 'Withdraw your denial' : 'Deny this revision: you found an error'" @click="toggleDeny"><icon name="x" :size="14"/> {{ denied ? 'Denied' : 'Deny' }}</button>
+          <ai-action v-if="!fact.retracted_at" kind="review" source-type="fact" :source-id="fact.id" label="AI review"/>
+          <ai-action v-if="!fact.retracted_at" kind="lean" source-type="fact" :source-id="fact.id" label="Lean proof"/>
           <ai-action v-if="!fact.retracted_at" kind="ask" source-type="fact" :source-id="fact.id" label="Ask AI"/>
           <ai-action v-if="!fact.retracted_at" kind="derive" source-type="fact" :source-id="fact.id" label="Prove from this"/>
           <button v-if="!fact.retracted_at" class="btn sm warn" @click="retracting = {reason: ''}">Retract</button>
@@ -229,9 +236,10 @@ export const FactsView = {
 
       <div v-if="tab==='content'" class="pad scroll fact-body">
         <div v-if="shownRevision" class="fact-alert amber">Viewing revision {{ revView }}. <button class="link-btn" @click="revView = null">Back to current</button></div>
-        <section class="fact-sec statement"><h4>Statement</h4><rich-content :html="content.statement_html"/></section>
-        <section class="fact-sec" v-if="content.proof_html"><h4>Proof</h4><rich-content :html="content.proof_html"/></section>
-        <section class="fact-sec" v-if="content.intuition_html"><h4>Intuition</h4><rich-content :html="content.intuition_html"/></section>
+        <div class="fact-view-switch"><div class="seg small" role="group" aria-label="How the text is shown"><button :class="{on: readable}" :aria-pressed="readable" title="Same content, with headings, lists and formulas typeset in LaTeX" @click="setReadable(true)">Readable</button><button :class="{on: !readable}" :aria-pressed="!readable" title="The text exactly as stored" @click="setReadable(false)">Original</button></div></div>
+        <section class="fact-sec statement"><h4>Statement</h4><rich-content :html="shown(content.statement_html)"/></section>
+        <section class="fact-sec" v-if="content.proof_html"><h4>Proof</h4><rich-content :html="shown(content.proof_html)"/></section>
+        <section class="fact-sec" v-if="content.intuition_html"><h4>Intuition</h4><rich-content :html="shown(content.intuition_html)"/></section>
         <template v-if="!shownRevision">
           <section class="fact-sec" v-if="fact.sources.length"><h4>Sources</h4>
             <div v-for="(x, i) in fact.sources" :key="i" class="fact-source">
@@ -244,8 +252,14 @@ export const FactsView = {
             </div></section>
           <section class="fact-sec" v-if="glossary.length"><h4>Glossary</h4>
             <dl class="fact-glossary"><template v-for="g in glossary" :key="g[0]"><dt><code>{{ g[0] }}</code></dt><dd>{{ g[1] }}</dd></template></dl></section>
-          <section class="fact-sec" v-if="fact.external_refs?.length"><h4>External references</h4>
-            <div v-for="(x, i) in fact.external_refs" :key="i" class="small">{{ refText(x) }}</div></section>
+          <section class="fact-sec" v-if="externalRefs.length"><h4>External references <span class="count">{{ externalRefs.length }}</span></h4>
+            <ol class="ext-refs"><li v-for="(x, i) in externalRefs" :key="i">
+              <code v-if="x.raw" class="ext-raw">{{ x.raw }}</code>
+              <template v-else><div class="ext-top"><b><math-text :text="x.title"/></b><code v-if="x.key" class="key">{{ x.key }}</code></div>
+                <div v-if="x.authors || x.venue || x.year" class="muted small">{{ [x.authors, x.venue, x.year].filter(Boolean).join(' · ') }}</div>
+                <div v-if="x.citedFor" class="ext-cited"><span>Cited for</span> <math-text :text="x.citedFor"/></div>
+                <a v-if="x.link" class="ext-link" :href="x.link.href" target="_blank" rel="noopener noreferrer"><icon name="external" :size="12"/> {{ x.link.label }}</a></template>
+            </li></ol></section>
         </template>
       </div>
 
@@ -387,11 +401,13 @@ export const FactsView = {
 </div>`,
   created() { this.basis = BASIS; this.covers = COVERS; this.statuses = STATUS; this.verdicts = VERDICTS; this.leanLabels = LEAN; this.chainLabels = CHAIN; },
   methods: {
+    factTitle, texLine,
+    shown(html) { return this.readable ? formatFactHtml(html) : html; },
+    setReadable(on) { this.readable = on; try { localStorage.setItem('oq-fact-view', on ? 'readable' : 'original'); } catch { /* the choice lasts for this page only */ } },
     timeAgo, fullDate, link, markItemUnread,
     unreadOf(id) { return unreadCount('fact', id); },
     onActivity() { this.loadList(); if (!this.checkForm && !this.retracting) this.loadFact(); },
     sourceIcon(t) { return { document: 'files', bib: 'book', message: 'mail', comment: 'comment' }[t] || 'link'; },
-    refText(x) { return typeof x === 'string' ? x : [x.key, x.authors, x.title, x.venue, x.year, x.arxiv && `arXiv:${x.arxiv}`, x.doi && `doi:${x.doi}`, x.cited_for && `(${x.cited_for})`].filter(Boolean).join(' · '); },
     factLink(id) { return link('facts', id, this.mode === 'graph' ? { mode: 'graph' } : null); },
     setMode(m) { go(`/p/${this.pid}/facts` + (this.id ? `/${this.id}` : '') + (m === 'graph' ? '?mode=graph' : '')); },
     selectNode(id) { if (id) location.hash = this.factLink(id); else if (this.id) this.closeFact(); },
