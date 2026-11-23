@@ -215,3 +215,33 @@ test('connecting reports each failure, and one unreadable project does not disco
     assert.deepEqual(s.projects.map((p) => [p.title, p.unavailable]), [['Readable title', true]]);
   } finally { child.kill(); fake.close(); }
 });
+
+test('a failed proving setup explains itself and stops its machine', () => {
+  const script = `
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("oq", sys.argv[1]); oq = importlib.util.module_from_spec(spec); spec.loader.exec_module(oq)
+assert "mkdir -p runtime/codex-home" in oq.DANUS_SETUP
+class Vm:
+    name = "test"; env = None; stopped = False
+    def command(self, script): return [sys.executable, "-c", "print('Error loading configuration'); raise SystemExit(1)"]
+    def start(self, step): pass
+    def stop(self): Vm.stopped = True
+    def isolated(self): return True
+m = oq.DanusManager()
+try:
+    m.device_login(Vm())
+    raise SystemExit("no error")
+except oq.Stop as e:
+    assert "Error loading configuration" in str(e)
+oq.pick_vm = lambda: Vm()
+m.unavailable_reason = lambda: None
+m.install = lambda vm, step: (_ for _ in ()).throw(oq.Stop("failed"))
+try:
+    m.setup(lambda s: None)
+    raise SystemExit("no error")
+except oq.Stop:
+    pass
+assert Vm.stopped
+`;
+  execFileSync('python3', ['-c', script, CLIENT], { env: { ...process.env, OQ_CONFIG_DIR: path.join(tmp, 'setup-fail') }, encoding: 'utf8' });
+});

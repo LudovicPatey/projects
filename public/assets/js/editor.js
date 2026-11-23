@@ -34,6 +34,8 @@ class MentionBlot extends Embed {
   }
 }
 Quill.register(MentionBlot);
+// Quill draws inline code and code blocks with the same icon.
+Quill.import('ui/icons')['code-block'] = '<svg viewBox="0 0 18 18"><rect class="ql-stroke" x="2.5" y="3" width="13" height="12" rx="1.5" fill="none"/><polyline class="ql-stroke" points="7 7 5 9 7 11" fill="none"/><polyline class="ql-stroke" points="11 7 13 9 11 11" fill="none"/></svg>';
 
 const FORMATS = ['bold', 'italic', 'underline', 'strike', 'link', 'blockquote', 'code-block', 'code', 'list', 'header', 'indent', 'mention', 'script'];
 
@@ -75,6 +77,9 @@ export const RichEditor = {
       modules: { toolbar },
     });
     this.q = Vue.markRaw(q);
+    const bar = q.getModule('toolbar').container;
+    bar.querySelector('.ql-code-block')?.setAttribute('title', 'Code block');
+    bar.querySelector('.ql-code')?.setAttribute('title', 'Inline code');
     if (this.initialHtml) this.setHTML(this.initialHtml);
     q.on('text-change', (_d, _o, source) => {
       this.$emit('change');
@@ -118,7 +123,7 @@ export const RichEditor = {
       const b = this.q.getBounds(this.menu.start);
       const c = this.$refs.editor;
       this.menu.top = c.offsetTop + b.top + b.height + 4;
-      this.menu.left = Math.max(0, Math.min(c.offsetLeft + b.left, c.clientWidth - 260));
+      this.menu.left = Math.max(0, Math.min(c.offsetLeft + b.left, c.clientWidth - 340));
       this.menu.open = true;
       this.fetchRefs(query, parsed);
     },
@@ -154,7 +159,7 @@ export const RichEditor = {
         ...mm.documents.filter((d) => has(d.title)).slice(0, 5)
           .map((d) => ({ type: 'document', id: d.id, label: d.title, sub: d.origin === 'ai' ? 'AI file' : 'Human file' })),
         ...mm.bib.filter((b) => has(b.cite_key, b.title, b.authors)).slice(0, 5)
-          .map((b) => ({ type: 'bib', id: b.id, label: b.cite_key, sub: b.title })),
+          .map((b) => ({ type: 'bib', id: b.id, label: b.title || b.cite_key, sub: b.cite_key })),
       ];
     },
     withAskAi(query, items) {

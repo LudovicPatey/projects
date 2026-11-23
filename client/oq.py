@@ -51,7 +51,7 @@ import webbrowser
 import zipfile
 import zlib
 
-VERSION = "1.3.1"
+VERSION = "1.4.0"
 API_LEVEL = 1  # raise with the server's AiTaskController::API_LEVEL when a client needs new server features
 GITHUB_REPO = "LudovicPatey/projects"
 KINDS = ["extract", "ask", "bib", "derive"]
@@ -369,6 +369,19 @@ def prepare_document(api, doc, workdir, provider):
             pdf.write_bytes(content)
         elif name.endswith((".tex", ".txt", ".md", ".bib")):
             texts.append(content.decode("utf-8", "replace"))
+    return readable_text(texts, pdf, workdir, provider)
+
+
+def prepare_reference(api, ref, workdir, provider):
+    """The PDF attached to a bibliography entry."""
+    if not ref or not ref.get("has_pdf"):
+        raise RuntimeError("This reference no longer has a PDF.")
+    pdf = workdir / "paper.pdf"
+    pdf.write_bytes(api.raw("GET", f"/api/bib/{int(ref['id'])}/pdf", timeout=300))
+    return readable_text([], pdf, workdir, provider)
+
+
+def readable_text(texts, pdf, workdir, provider):
     if shutil.which("pdftotext") and pdf:
         out = workdir / "paper.txt"
         if subprocess.run(["pdftotext", "-layout", str(pdf), str(out)], capture_output=True).returncode == 0 and out.exists():
@@ -386,6 +399,7 @@ def prepare_document(api, doc, workdir, provider):
 
 def fact_items(task, answer, source_text):
     doc = (task["context"].get("document") or {}) if task["kind"] == "extract" else {}
+    reference = task["context"].get("reference") if task["kind"] == "extract" and task.get("source_type") == "bib" else None
     items, dropped = [], []
     for f in answer.get("facts") or []:
         ref = re.sub(r"[^\w:.-]+", "-", str(f.get("ref") or "")).strip("-")[:32]
@@ -404,7 +418,7 @@ def fact_items(task, answer, source_text):
             if not f.get("quote"):
                 dropped.append((ref, "no quotation"))
                 continue
-            source = {"type": "document", "id": doc["id"], "quote": f["quote"], "covers": f.get("covers") or ("both" if f.get("proof") else "statement")}
+            source = {"type": "bib" if reference else "document", "id": reference["id"] if reference else doc["id"], "quote": f["quote"], "covers": f.get("covers") or ("both" if f.get("proof") else "statement")}
             if f.get("page"):
                 source["page"] = f["page"]
             item.update(method="extracted", sources=[source])
@@ -463,9 +477,12 @@ def process(api, task, opts):
         workdir = pathlib.Path(os.path.realpath(tmp))
         source_text = None
         doc = task["context"].get("document")
-        if kind == "extract" or (kind == "ask" and doc):
+        if kind == "extract" or (kind == "ask" and doc):  # a file, or the PDF of a reference
             try:
-                source_text = prepare_document(api, doc, workdir, opts.provider)
+                if kind == "extract" and task.get("source_type") == "bib":
+                    source_text = prepare_reference(api, task["context"].get("reference"), workdir, opts.provider)
+                else:
+                    source_text = prepare_document(api, doc, workdir, opts.provider)
             except Stop:
                 if kind == "extract":
                     raise
@@ -638,7 +655,7 @@ def work_once(api, opts, name, stop=None):
     if not kinds:
         opts.hold = ("All kinds of work are turned off in your limits.", None)
         return False
-    body = {"kinds": kinds, "client_name": name, "ai_model": opts.model or opts.provider}
+    body = {"kinds": kinds, "client_name": name, "ai_model": opts.model or opts.provider, "features": ["extract_bib"]}
     task, opts.hold = claim_task(api, opts, body)
     if not task:
         return False
@@ -1282,6 +1299,7 @@ cd {DANUS_HOME}
 git fetch --quiet origin codex
 git checkout --quiet {DANUS_COMMIT}
 bash scripts/bootstrap.sh
+mkdir -p runtime/codex-home  # Codex refuses to start, even to sign in, if this folder is missing
 [ -f config/codex.env ] || cp config/codex.env.example config/codex.env
 [ -f config/danus.env ] || cp config/danus.env.example config/danus.env
 grep -q '^CODEX_BACKEND=chatgpt' config/danus.env || echo 'CODEX_BACKEND=chatgpt' >> config/danus.env
@@ -1427,10 +1445,364 @@ class WslVm:
         subprocess.run(["wsl", "--unregister", VM_NAME], capture_output=True, env=self.env)
 
 
-def pick_vm():
+# Danus (Apache-2.0) at DANUS_COMMIT, changed for macOS: Codex keeps its sandbox on instead of bypassing it,
+# the gateway is passed explicitly, and finished processes are detected with kqueue.
+DANUS_MACOS_PATCH = r'''diff --git a/danus/authoring/driver.py b/danus/authoring/driver.py
+index 89279aa..373fd69 100644
+--- a/danus/authoring/driver.py
++++ b/danus/authoring/driver.py
+@@ -22,7 +22,7 @@ Two exec tails share this one driver (see ``run_codex``):
+ - the **offline default** (writer / auditor / reviser) — ``--sandbox read-only``,
+   no MCP, no web; the empty cwd + embedded prompt are the whole world;
+ - the **networked variant** (the reference verifier) — mirrors
+-  ``danus.verify.launcher``: ``--dangerously-bypass-approvals-and-sandbox`` with
++  the verifier role: read-only filesystem access with
+   the danus gateway injected via ``-c`` at ``DANUS_ROLE=verifier`` (the read-only
+   ``search_arxiv_theorems`` role — no new gateway role) plus codex's built-in
+   ``web_search``. The empty cwd is kept, so codex still cannot read/write the
+@@ -53,19 +53,6 @@ DEFAULT_EFFORT = codex.DEFAULT_EFFORT
+ DEFAULT_TIMEOUT = 7200
+ 
+ 
+-def _gateway_config_arg(gateway_role: str) -> str:
+-    """The ``-c`` MCP-injection string that mounts the danus gateway into codex,
+-    mirroring ``danus.verify.launcher._mcp_config_arg`` exactly: it runs the
+-    installed package (``python3 -m danus.gateway``) with the given ``DANUS_ROLE``,
+-    independent of CODEX_HOME. Reuse ``DANUS_ROLE=verifier`` for minimum privilege —
+-    that gateway role exposes ONLY ``search_arxiv_theorems`` (read-only). We do NOT
+-    define a new gateway role for the paper verifier."""
+-    return (
+-        'mcp_servers.danus={command="python3",args=["-m","danus.gateway"],'
+-        f'env={{DANUS_ROLE="{gateway_role}"}}}}'
+-    )
+-
+-
+ def default_model() -> str:
+     """The neutral default codex model (``DANUS_MAIN_MODEL``, back-compat alias
+     ``DANUS_CODEX_MODEL``). Each renderer's server resolves its own per-service
+@@ -105,8 +92,8 @@ def run_codex(
+       nothing. This is what the writer / auditor / reviser use.
+ 
+     - **Networked (``networked=True``)** — the reference-verifier path, mirroring
+-      ``danus.verify.launcher.build_codex_command``: replace the read-only sandbox
+-      with ``--dangerously-bypass-approvals-and-sandbox`` (net-capable), inject the
++      ``danus.verify.launcher.build_codex_command``: retain the read-only sandbox,
++      inject the
+       danus gateway via ``-c`` at ``DANUS_ROLE=<gateway_role>`` (default
+       ``verifier`` — exposes ONLY ``search_arxiv_theorems``, minimum privilege; no
+       new gateway role is created), and enable codex's built-in ``web_search``
+@@ -117,9 +104,9 @@ def run_codex(
+     codex_bin = codex.resolve_bin()
+     if networked:
+         tail = (
+-            "-c", _gateway_config_arg(gateway_role),
++            *codex.gateway_args(gateway_role),
+             "--config", "tools.web_search=true",
+-            "--dangerously-bypass-approvals-and-sandbox",
++            "--sandbox", "read-only",
+             "--skip-git-repo-check",
+             "-",  # read the prompt from stdin
+         )
+diff --git a/danus/codex.py b/danus/codex.py
+index a5ceec7..976e25e 100644
+--- a/danus/codex.py
++++ b/danus/codex.py
+@@ -29,6 +29,7 @@ import json
+ import os
+ import re
+ import shutil
++import sys
+ from dataclasses import dataclass
+ from pathlib import Path
+ from typing import Dict, List, Optional
+@@ -191,7 +192,7 @@ def subprocess_env(codex_bin: str, *, worker_project: Optional[str] = None) -> D
+     """
+     env = os.environ.copy()
+     if os.path.dirname(codex_bin):
+-        codex_dir = os.path.dirname(os.path.abspath(codex_bin))
++        codex_dir = os.path.realpath(os.path.dirname(codex_bin))
+         if codex_dir and codex_dir != ".":
+             existing = env.get("PATH", "")
+             parts = existing.split(os.pathsep) if existing else []
+@@ -204,6 +205,19 @@ def subprocess_env(codex_bin: str, *, worker_project: Optional[str] = None) -> D
+     return env
+ 
+ 
++def gateway_args(role: str, **env: str) -> List[str]:
++    """Set the local role explicitly even when Codex skips project config."""
++    cfg = {"command": sys.executable, "args": ["-m", "danus.gateway"],
++           "required": True, "default_tools_approval_mode": "approve",
++           "tool_timeout_sec": 3600, "env.DANUS_ROLE": role,
++           **{"env." + key: value for key, value in env.items()}}
++    out = ["-c", 'approval_policy="never"', "-c", 'mcp_servers.write-paper={command="/usr/bin/false",enabled=false}',
++           "-c", 'mcp_servers.human-summary={command="/usr/bin/false",enabled=false}']
++    for key, value in cfg.items():
++        out.extend(["-c", f"mcp_servers.danus.{key}={json.dumps(value)}"])
++    return out
++
++
+ def exec_cmd(codex_bin: str, model: str, effort: str, *tail: str) -> List[str]:
+     """The uniform ``codex exec`` command prefix + the caller's exact tail.
+ 
+diff --git a/danus/execution/loop.py b/danus/execution/loop.py
+index 70ab1b5..3ae07f2 100644
+--- a/danus/execution/loop.py
++++ b/danus/execution/loop.py
+@@ -143,7 +143,10 @@ def run_round(wl: L.WorkerLayout, role: dict, prompt: str, log_path: Path,
+         # on an install without .git (tarball download), codex's
+         # trusted-directory check refuses to run the worker round
+         "--skip-git-repo-check",
+-        "--dangerously-bypass-approvals-and-sandbox",
++        "--sandbox", "workspace-write",
++        *codex.gateway_args("worker", DANUS_AUTHOR=wl.name,
++                            DANUS_PROJECT_DIR=str(wl.project_dir),
++                            DANUS_VERIFY_URL=scaffold._verify_url()),
+         prompt,
+     )
+     with open(log_path, "w", encoding="utf-8") as logf:
+@@ -215,7 +218,11 @@ def main(worker_dir: str) -> int:
+ 
+     signal.signal(signal.SIGTERM, _on_term)
+ 
+-    write_status(wl, state="running", round=0, started_at=time.time())
++    # Keep round history when a new single-round run is started from the UI.
++    prior = max((int(m.group(1)) for p in wl.logs.glob("round_*.log")
++                 if (m := re.fullmatch(r"round_(\d+)\.log", p.name))), default=0)
++    write_status(wl, state="running", round=prior, started_at=time.time(), error=None,
++                 last_rc=None, round_started_at=None, last_round_at=None)
+     rnd = 0
+     consec_fail = 0
+     try:
+@@ -232,11 +239,11 @@ def main(worker_dir: str) -> int:
+                 break
+ 
+             rnd += 1
+-            log_path = wl.logs / f"round_{rnd}.log"
+-            write_status(wl, state="running", round=rnd, round_started_at=time.time())
++            log_path = wl.logs / f"round_{prior + rnd}.log"
++            write_status(wl, state="running", round=prior + rnd, round_started_at=time.time())
+             rc = run_round(wl, role, prompt, log_path, hard_timeout)
+             write_status(
+-                wl, state="idle", round=rnd, last_round_at=time.time(),
++                wl, state="idle", round=prior + rnd, last_round_at=time.time(),
+                 last_rc=rc, last_fact_id=_parse_last_fact_id(log_path),
+             )
+ 
+diff --git a/danus/orchestration/cli.py b/danus/orchestration/cli.py
+index db7a1b1..f6daa6d 100644
+--- a/danus/orchestration/cli.py
++++ b/danus/orchestration/cli.py
+@@ -25,6 +25,9 @@ import argparse
+ import fcntl
+ import json
+ import os
++import select
++import sys
++from contextlib import closing
+ import signal
+ import time
+ from pathlib import Path
+@@ -62,6 +65,18 @@ def _alive(pid: Optional[int]) -> bool:
+         return False
+     except PermissionError:
+         return True  # exists but not ours
++    if sys.platform == "darwin":
++        # NOTE_EXIT is immediately ready for a zombie, without reaping it.
++        try:
++            with closing(select.kqueue()) as queue:
++                watch = select.kevent(pid, filter=select.KQ_FILTER_PROC,
++                                      flags=select.KQ_EV_ADD | select.KQ_EV_ONESHOT,
++                                      fflags=select.KQ_NOTE_EXIT)
++                return not queue.control([watch], 1, 0)
++        except ProcessLookupError:
++            return False
++        except OSError:
++            return True  # unable to inspect a process known to exist
+     # The pid exists — but a zombie (killed, not yet reaped by its parent) is
+     # effectively dead. Linux /proc tells us the process state.
+     try:
+diff --git a/danus/verify/launcher.py b/danus/verify/launcher.py
+index 7d4ac3b..c4250cf 100644
+--- a/danus/verify/launcher.py
++++ b/danus/verify/launcher.py
+@@ -94,13 +94,6 @@ def _timeout() -> Optional[int]:
+     return int(os.getenv("CODEX_TIMEOUT_SECONDS", "0")) or None
+ 
+ 
+-def _mcp_config_arg() -> str:
+-    """Inject the danus gateway (role=verifier) into the codex agent via `-c`,
+-    independent of CODEX_HOME. Runs the installed package (``python3 -m
+-    danus.gateway``); the verifier role exposes only search_arxiv_theorems."""
+-    return 'mcp_servers.danus={command="python3",args=["-m","danus.gateway"],env={DANUS_ROLE="verifier"}}'
+-
+-
+ # --------------------------------------------------------------------------- #
+ # run-dir allocation                                                          #
+ # --------------------------------------------------------------------------- #
+@@ -160,8 +153,8 @@ def build_codex_command(run_id: str, statement: str, proof: str) -> List[str]:
+         # on an install without .git (tarball download), codex's
+         # trusted-directory check refuses to run (exit 1 → /verify HTTP 500)
+         "--skip-git-repo-check",
+-        "-c", _mcp_config_arg(),
+-        "--dangerously-bypass-approvals-and-sandbox",
++        *codex.gateway_args("verifier"),
++        "--sandbox", "workspace-write", "--add-dir", str(_results_dir(run_id)),
+         build_prompt(run_id=run_id, statement=statement, proof=proof),
+     )
+ 
+'''
+DANUS_NATIVE_SETUP = f"""set -e
+mkdir -p {DANUS_HOME}
+if [ ! -d {DANUS_HOME}/.git ]; then git clone --quiet --branch codex https://github.com/frenzymath/Danus {DANUS_HOME}; fi
+cd {DANUS_HOME}
+git fetch --quiet origin codex
+git checkout --quiet --force {DANUS_COMMIT}
+git apply --whitespace=nowarn -
+sed -i '' 's/-linux-\\$NARCH/-darwin-$NARCH/' scripts/bootstrap.sh
+bash scripts/bootstrap.sh </dev/null
+mkdir -p runtime/codex-home
+[ -f config/codex.env ] || cp config/codex.env.example config/codex.env
+[ -f config/danus.env ] || cp config/danus.env.example config/danus.env
+grep -q '^CODEX_BACKEND=chatgpt' config/danus.env || echo 'CODEX_BACKEND=chatgpt' >> config/danus.env
+"""
+
+
+class NativeMacVm:
+    """Chosen explicitly. It has its own folder, ports and sign-in, and Codex's macOS sandbox stays on."""
+    name = "Mac, without an isolated machine"
+    native = True
+    python_found = {}
+    setup_script = DANUS_NATIVE_SETUP
+    setup_input = DANUS_MACOS_PATCH
+
+    def __init__(self):
+        self.root = data_dir() / "danus-native"
+        self.home = self.root / "danus"
+        self.tools = self.root / "bin"
+        self.user_home = self.root / "home"
+        env = {k: v for k, v in safe_env().items() if not k.startswith(("CLAUDE", "CODEX_", "ANTHROPIC_", "OPENAI_", "AZURE_OPENAI"))}
+        env.update(HOME=str(self.user_home), PATH=os.pathsep.join([str(self.tools), "/usr/bin", "/bin", "/usr/sbin", "/sbin"]))
+        self.env = env
+
+    @classmethod
+    def python(cls):
+        if "path" not in cls.python_found:
+            names = [f"python3.{n}" for n in range(14, 9, -1)] + ["python3"]
+            dirs = ["/opt/homebrew/bin", "/usr/local/bin", "/Library/Frameworks/Python.framework/Versions/Current/bin"]
+            options = [shutil.which(n) for n in names] + [str(pathlib.Path(d) / n) for d in dirs for n in names]
+            cls.python_found["path"] = None
+            for path in dict.fromkeys(x for x in options if x and os.access(x, os.X_OK)):
+                try:
+                    code = "import sys, venv; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)"
+                    if subprocess.run([path, "-c", code], stdin=subprocess.DEVNULL, capture_output=True, timeout=10, env=safe_env()).returncode == 0:
+                        cls.python_found["path"] = path
+                        break
+                except (OSError, subprocess.SubprocessError):
+                    continue
+        return cls.python_found["path"]
+
+    def missing(self):
+        if not re.fullmatch(r"[\w./-]+", str(self.root)):
+            return "Proving directly on this Mac needs a user folder without spaces or special characters."
+        if not self.python():
+            return "Proving directly on this Mac needs Python 3.10 or later from python.org."
+        try:
+            if subprocess.run(["/usr/bin/git", "--version"], stdin=subprocess.DEVNULL, capture_output=True, timeout=10).returncode != 0:
+                raise OSError
+        except (OSError, subprocess.SubprocessError):
+            return "Proving directly on this Mac needs Apple's command line tools. Run: xcode-select --install"
+        return None
+
+    def exists(self):
+        return (self.home / ".git").exists()
+
+    def command(self, script):
+        return ["/bin/bash", "-c", script.replace(DANUS_HOME, str(self.home))]
+
+    def start(self, say):
+        problem = self.missing()
+        if problem:
+            raise Stop(problem)
+        for folder in (self.tools, self.user_home):
+            folder.mkdir(parents=True, exist_ok=True)
+        python = self.python()
+        link = self.tools / "python3"
+        if link.is_symlink() or link.exists():
+            link.unlink()
+        link.symlink_to(python)
+        shim = self.tools / "setsid"  # macOS has no setsid command
+        shim.write_text(f"#!{python}\nimport os, sys\ntry:\n    os.setsid()\nexcept OSError:\n    pass\nos.execvp(sys.argv[1], sys.argv[1:])\n", encoding="utf-8")
+        shim.chmod(0o755)
+        self.ensure_ports()
+
+    def ensure_ports(self):
+        """Never shares a port with another Danus on this Mac."""
+        path = self.home / "config" / "danus.env"
+        if not path.exists():
+            return
+        try:
+            pid = int((self.home / "runtime" / "run" / "verify.pid").read_text(encoding="utf-8").strip())
+            os.kill(pid, 0)
+            return
+        except (OSError, ValueError):
+            pass
+        lines = path.read_text(encoding="utf-8").splitlines()
+        for name, default in (("VERIFY_PORT", "8091"), ("DASHBOARD_PORT", "8099")):
+            current = next((x.split("=", 1)[1].split("#")[0].strip() for x in lines if x.startswith(name + "=")), default)
+            if current not in (default,) and port_free(int(current)):
+                continue
+            lines = [x for x in lines if not x.startswith(name + "=")] + [f"{name}={free_port()}"]
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    def after_setup(self):
+        self.ensure_ports()
+
+    def sandbox_kept(self):
+        """The patched files must not turn off Codex's sandbox."""
+        for name in ("danus/execution/loop.py", "danus/verify/launcher.py", "danus/authoring/driver.py"):
+            try:
+                code = "\n".join(x for x in (self.home / name).read_text(encoding="utf-8").splitlines() if x.strip().startswith(('"--', '*')))
+            except OSError:
+                return False
+            if "dangerously-bypass" in code:
+                return False
+        return True
+
+    def stop(self):
+        if (self.home / "scripts" / "services.sh").exists():
+            subprocess.run(self.command(f"cd {DANUS_HOME} && bash scripts/services.sh down all"), stdin=subprocess.DEVNULL, capture_output=True, env=self.env, timeout=60)
+
+    def remove(self):
+        self.stop()
+        if self.root.parent == data_dir() and self.root.name == "danus-native":
+            shutil.rmtree(str(self.root), ignore_errors=True)
+
+
+def free_port():
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def port_free(port):
+    with socket.socket() as s:
+        try:
+            s.bind(("127.0.0.1", port))
+            return True
+        except OSError:
+            return False
+
+
+def danus_mode():
+    return "native" if sys.platform == "darwin" and DanusManager().state().get("mode") == "native" else "isolated"
+
+
+def pick_vm(mode=None):
     forced = os.environ.get("OQ_DANUS_BACKEND")
     if forced in ("docker", "podman") and shutil.which(forced):
         return ContainerVm(forced)
+    if (mode or danus_mode()) == "native":
+        return NativeMacVm()
     if sys.platform == "darwin":
         return LimaVm()
     if os.name == "nt" and shutil.which("wsl"):
@@ -1479,12 +1851,41 @@ class DanusManager:
     def unavailable_reason(self):
         if not shutil.which("codex"):
             return "Proving new facts needs a ChatGPT account. Install ChatGPT on the Accounts page first."
-        if not pick_vm():
+        vm = pick_vm()
+        if not vm:
             return "This computer needs Docker or Podman to isolate the proof search."
-        return None
+        return vm.missing() if getattr(vm, "native", False) else None
+
+    def choose_mode(self, mode, accept=False):
+        if mode not in ("isolated", "native"):
+            raise Stop("Choose isolated or native.")
+        if mode == "native" and sys.platform != "darwin":
+            raise Stop("Running directly on the computer is only available on a Mac.")
+        if mode == "native" and not accept:
+            raise Stop("Running directly on this Mac must be accepted: the agents can read the files of your account.")
+        if DanusRun().alive():
+            raise Stop("Stop the proof search first.")
+        d = self.state()
+        ready = set(d.get("ready_modes") or (["isolated"] if d.get("ready") else []))
+        previous = danus_mode()
+        extra = {"native_accepted_at": time.time()} if mode == "native" else {}
+        self.save(mode=mode, ready=mode in ready, ready_modes=sorted(ready), error=None, login=None, step=None, **extra)
+        if previous != mode:
+            try:  # the backend left behind must not keep running
+                vm = pick_vm(previous)
+                if vm and vm.exists():
+                    vm.stop()
+            except (OSError, subprocess.SubprocessError):
+                pass
 
     def assert_isolated(self, vm):
         """Danus runs with its sandbox off: it never starts if the machine can see the computer's files."""
+        if getattr(vm, "native", False):
+            if not self.state().get("native_accepted_at"):
+                raise Stop("Running directly on this Mac has not been accepted.")
+            if (vm.home / "runtime" / "runtime.env").exists() and not vm.sandbox_kept():
+                raise Stop("This Danus would run without the Codex sandbox, so it was not started.")
+            return
         if not (vm.isolated() if hasattr(vm, "isolated") else self.sh(vm, vm.isolation_check, timeout=60).returncode == 0):
             raise Stop("The isolated machine can see files of this computer, so the prover was not started.")
 
@@ -1498,14 +1899,30 @@ class DanusManager:
         if reason:
             raise Stop(reason)
         vm = pick_vm()
-        self.save(ready=False, error=None, step="Starting", login=None)
+        mode = "native" if getattr(vm, "native", False) else "isolated"
+        self.save(ready=False, ready_modes=sorted(set(self.state().get("ready_modes") or []) - {mode}), error=None, step="Starting", login=None)
         step = lambda s: (self.save(step=s), say(s))
+        try:
+            self.install(vm, step)
+        except Exception:
+            self.save(login=None)
+            try:  # a failed setup must not keep a machine running in the background
+                vm.stop()
+            except (OSError, subprocess.SubprocessError):
+                pass
+            raise
+        say("The prover is ready.")
+
+    def install(self, vm, step):
         vm.start(step)
         self.assert_isolated(vm)
         step("Installing Danus (several minutes)")
-        p = self.sh(vm, DANUS_SETUP, timeout=3600)
+        p = self.sh(vm, getattr(vm, "setup_script", DANUS_SETUP), timeout=3600, input_text=getattr(vm, "setup_input", None))
         if p.returncode != 0:
             raise Stop("The prover could not be installed: " + (p.stderr or p.stdout).strip()[-400:])
+        if hasattr(vm, "after_setup"):
+            vm.after_setup()
+        self.assert_isolated(vm)
         if self.sh(vm, f"cd {DANUS_HOME} && bin/codex login status", timeout=60).returncode != 0:
             step("Waiting for you to sign in to ChatGPT")
             self.device_login(vm)
@@ -1513,22 +1930,26 @@ class DanusManager:
         p = self.sh(vm, f"cd {DANUS_HOME} && bash scripts/services.sh up verify", timeout=300)
         if p.returncode != 0:
             raise Stop("The proof verifier could not start: " + (p.stderr or p.stdout).strip()[-300:])
-        self.save(ready=True, step="Ready", login=None, backend=vm.name, commit=DANUS_COMMIT)
-        say("The prover is ready.")
+        mode = "native" if getattr(vm, "native", False) else "isolated"
+        self.save(ready=True, ready_modes=sorted(set(self.state().get("ready_modes") or []) | {mode}), step="Ready", login=None, backend=vm.name, commit=DANUS_COMMIT)
 
     def device_login(self, vm):
         """The account is connected inside the machine: the credentials of this computer are not copied there."""
         p = subprocess.Popen(vm.command(f"cd {DANUS_HOME} && bin/codex login --device-auth"), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace", env=vm.env)
         url = code = None
+        tail = collections.deque(maxlen=4)
         for line in p.stdout:
             clean = re.sub(r"\x1b\[[0-9;]*m", "", line)
+            if clean.strip() and not clean.startswith("WARNING"):
+                tail.append(clean.strip())
             url = url or (re.search(r"https://\S+", clean).group(0) if "https://" in clean else None)
             found = re.search(r"\b[A-Z0-9]{4,}-[A-Z0-9]{4,}\b", clean)
             code = code or (found.group(0) if found else None)
             if url and code:
                 self.save(login={"url": url, "code": code})
         if p.wait() != 0:
-            raise Stop("The ChatGPT sign-in did not finish.")
+            detail = "" if url else " " + " ".join(tail)[-240:]
+            raise Stop(("The ChatGPT sign-in did not finish. Press Set up proving to try again." + detail).strip())
         self.save(login=None)
 
     def fetch_graph(self, vm, project, target):
@@ -1544,10 +1965,17 @@ class DanusManager:
                 safe_extract(t, target)
         return (target / "fact_graph" / "facts").is_dir()
 
-    def remove(self):
-        vm = pick_vm()
+    def remove(self, mode=None):
+        current = danus_mode()
+        mode = mode or current
+        vm = pick_vm(mode)
         if vm:
             vm.remove()
+        d = self.state()
+        left = set(d.get("ready_modes") or (["isolated"] if d.get("ready") else [])) - {mode}
+        if left or current != mode or d.get("native_accepted_at"):
+            self.save(ready_modes=sorted(left), ready=current in left, step=None, login=None, error=None)
+            return
         try:
             self.path.unlink()
         except OSError:
@@ -1804,7 +2232,7 @@ class DanusRun:
         if p.returncode != 0:
             raise RuntimeError("The proof search could not start: " + (p.stderr or p.stdout)[-300:])
         # If this client dies, the workers must not keep spending the subscription.
-        dm.sh(vm, f"""touch {hb}; cd {DANUS_HOME}; nohup setsid bash -c 'while sleep 30; do [ -f {hb} ] || exit 0; a=$(( $(date +%s) - $(stat -c %Y {hb}) )); if [ "$a" -gt 240 ]; then bin/danus stop {name} --force; rm -f {hb}; exit 0; fi; done' >/dev/null 2>&1 &""", timeout=30)
+        dm.sh(vm, f"""touch {hb}; cd {DANUS_HOME}; nohup setsid bash -c 'while sleep 30; do [ -f {hb} ] || exit 0; a=$(( $(date +%s) - $(stat -c %Y {hb} 2>/dev/null || stat -f %m {hb}) )); if [ "$a" -gt 240 ]; then bin/danus stop {name} --force; rm -f {hb}; exit 0; fi; done' >/dev/null 2>&1 &""", timeout=30)
 
     def sh_stop(self, dm, vm, name, hb):
         dm.sh(vm, f"rm -f {hb}; cd {DANUS_HOME} && bin/danus stop {name} --force", timeout=120)
@@ -2069,7 +2497,7 @@ class Service:
         dm = DanusManager()
         return {"backup": backup_public(projects), "update": read_update(), "danus_run": DanusRun().public(), "version": VERSION, "connected": bool(cfg.get("key")) and not error, "url": cfg.get("url", ""), "error": error, "projects": projects, "tools": tools, "provider": provider,
                 "running": self.running(), "allowed": allowed, "reason": reason, "retry_at": retry, "limits": limits, "day": day, "windows": windows,
-                "log": list(self.log)[-60:], "jobs": self.jobs, "danus": {**dm.state(), "unavailable": dm.unavailable_reason()}}
+                "log": list(self.log)[-60:], "jobs": self.jobs, "danus": {**dm.state(), "mode": danus_mode(), "can_native": sys.platform == "darwin", "isolated_installed": sys.platform == "darwin" and danus_mode() == "native" and LimaVm().exists(), "unavailable": dm.unavailable_reason()}}
 
 
 def load_prefs():
@@ -2204,10 +2632,15 @@ def make_handler(service, token, port):
                 open_folder(backup_folder(d, load_config().get("url") or ""))
             elif path == "/api/danus/setup":
                 service.job("danus", lambda: DanusManager().setup(say))
+            elif path == "/api/danus/mode":
+                if service.jobs.get("danus", {}).get("running"):
+                    raise Stop("Wait for the current installation to finish.")
+                DanusManager().choose_mode(b.get("mode"), b.get("accept") is True)
             elif path == "/api/danus/remove":
                 if DanusRun().alive():
                     raise Stop("Stop the proof search first.")
-                service.job("danus", lambda: DanusManager().remove())
+                mode = b.get("mode") if b.get("mode") in ("isolated", "native") else None
+                service.job("danus", lambda: DanusManager().remove(mode))
             elif path == "/api/update/check":
                 check_update(force=True)
             elif path == "/api/update/apply":
@@ -2375,14 +2808,24 @@ def cmd_danus_managed(a):
         print("Stopping the proof search." if run.request_stop() else "No proof search is in progress.")
         return 0
     if a.action == "setup":
+        if a.native and a.isolated:
+            raise Stop("Choose --native or --isolated.")
+        if a.native:
+            if not a.accept_risk:
+                raise Stop("With --native, the agents can read the files of your account. Add --accept-risk to confirm.")
+            dm.choose_mode("native", True)
+        elif a.isolated:
+            dm.choose_mode("isolated")
         dm.setup(print)
     elif a.action == "remove":
         if run.alive():
             raise Stop("Stop the proof search first.")
-        dm.remove()
-        print("The prover and its isolated machine were removed.")
+        mode = "native" if a.native else "isolated" if a.isolated else None
+        dm.remove(mode)
+        print("The prover was removed.")
     else:
         s = dm.state()
+        print(f"Mode: {'directly on this Mac' if danus_mode() == 'native' else 'isolated machine'}")
         print("Prover (Danus): ready" if s.get("ready") else f"Prover (Danus): not installed. {dm.unavailable_reason() or 'Run: python3 oq.py danus setup'}")
         r = run.public()
         if r.get("status") != "idle":
@@ -3046,6 +3489,9 @@ def parser():
     d.add_argument("--stop-weekly", type=int, help="for run: stop at this percent of the weekly limit")
     d.add_argument("--on-limit", choices=["stop", "resume"], default="stop", help="for run: end, or wait and continue after the reset")
     d.add_argument("--workers", type=int, help="for run: parallel agents, 1 to 7")
+    d.add_argument("--native", action="store_true", help="for setup or remove: run directly on this Mac, without an isolated machine")
+    d.add_argument("--isolated", action="store_true", help="for setup or remove: use the isolated machine")
+    d.add_argument("--accept-risk", action="store_true", help="with setup --native: accept that the agents can read your files")
     d.add_argument("--dry-run", action="store_true")
     d.add_argument("--once", action="store_true")
     d.add_argument("--interval", type=int, default=60)
@@ -3097,7 +3543,7 @@ button.btn{border:1px solid var(--line);background:var(--panel);color:var(--text
 .row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px solid var(--line)}.row:first-of-type{border-top:0}.row>div{min-width:0}.row small{display:block;color:var(--muted)}.pill{flex:none;padding:2px 9px;border-radius:99px;background:var(--soft);color:var(--accent);font-size:12px;font-weight:700}.pill.good{background:var(--goodbg);color:var(--good)}.pill.warn{background:var(--warnbg);color:var(--warn)}
 .log{max-height:240px;overflow:auto;font:12px/1.6 ui-monospace,Menlo,monospace;white-space:pre-wrap;overflow-wrap:anywhere}.log span{color:var(--muted);margin-right:8px}.empty{color:var(--muted);padding:6px 0}
 label.f{display:grid;gap:4px;margin-bottom:12px;font-weight:650;font-size:13px}label.f small{font-weight:400;color:var(--muted)}input[type=text],input[type=password],input[type=number],select{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--text);font:inherit}input[type=range]{width:100%;accent-color:var(--accent)}.check{display:flex;gap:8px;align-items:center;padding:4px 0;font-weight:500}.ver{margin-top:auto;display:grid;gap:2px;padding:10px 11px 2px;color:#c7c9f0}.ver small{font-size:11.5px}.ver button{all:unset;cursor:pointer;margin-top:3px;font-size:11.5px;font-weight:700;color:#fff;text-decoration:underline}.ver a{margin-top:3px;font-size:11.5px;color:#c7c9f0}.ver button:focus-visible{outline:2px solid #fff;outline-offset:2px}.update{display:flex;align-items:center;justify-content:space-between;gap:12px;background:var(--soft);border-color:transparent}.update div{display:grid;min-width:0}.update span{color:var(--muted);font-size:13px}.update a.btn{border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:8px;padding:8px 13px;font-weight:650;text-decoration:none}.run-form h3{font-size:13px;margin:0 0 8px}.run-form textarea{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--text);font:inherit;resize:vertical}.run-btn{width:100%;padding:12px;font-size:15px}.pill.bad{background:var(--badbg);color:var(--bad)}.err{padding:9px 11px;border-radius:8px;background:var(--badbg);color:var(--bad);margin-bottom:12px;overflow-wrap:anywhere}.note{padding:9px 11px;border-radius:8px;background:var(--soft);font-size:13px;margin:10px 0}.code{font:700 20px ui-monospace,Menlo,monospace;letter-spacing:.06em}.steps{display:grid;gap:6px;margin:0 0 12px;padding:0;list-style:none}.steps li{display:flex;gap:8px;align-items:center}.steps i{width:20px;height:20px;border-radius:50%;display:grid;place-items:center;background:var(--line);font-style:normal;font-size:11px;font-weight:800}.steps li.ok i{background:var(--good);color:#fff}
-.toggle{all:unset;flex:none;display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-size:12.5px;font-weight:700;color:var(--muted);min-width:86px;justify-content:flex-end}.toggle i{position:relative;width:34px;height:20px;border-radius:99px;background:var(--line);transition:background .15s}.toggle i:after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 1px 2px #0005;transition:left .15s}.toggle[aria-checked=true]{color:var(--good)}.toggle[aria-checked=true] i{background:var(--good)}.toggle[aria-checked=true] i:after{left:16px}.toggle:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:6px}.row.off b{color:var(--muted)}
+.mode-pick{display:grid;gap:6px;margin:0 0 12px}.mode-pick .check{align-items:flex-start;padding:9px 10px;border:1px solid var(--line);border-radius:8px}.actions{display:flex;flex-wrap:wrap;gap:8px}.toggle{all:unset;flex:none;display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-size:12.5px;font-weight:700;color:var(--muted);min-width:86px;justify-content:flex-end}.toggle i{position:relative;width:34px;height:20px;border-radius:99px;background:var(--line);transition:background .15s}.toggle i:after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 1px 2px #0005;transition:left .15s}.toggle[aria-checked=true]{color:var(--good)}.toggle[aria-checked=true] i{background:var(--good)}.toggle[aria-checked=true] i:after{left:16px}.toggle:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:6px}.row.off b{color:var(--muted)}
 @media(max-width:680px){.app{display:block}nav{flex-direction:row;overflow-x:auto;padding:8px}.brand{display:none}nav button{flex:none}.ver{margin:0 0 0 auto;flex:none;display:flex;align-items:center;gap:8px;padding:0 6px}.ver small:first-child,.ver a{display:none}.update{flex-wrap:wrap}main{padding:16px}.grid{grid-template-columns:minmax(0,1fr)}.hero{flex-wrap:wrap}.hero .btn{width:100%}}
 </style></head><body><div class="app"><nav aria-label="Sections"><div class="brand">Open Questions AI</div><button data-v="home">Home</button><button data-v="limits">Usage limits</button><button data-v="danus">Prove new facts</button><button data-v="backup">Backups</button><button data-v="account">Accounts</button><div class=ver id=ver></div></nav><main id="m">Loading…</main></div>
 <script>
@@ -3133,16 +3579,18 @@ const runForm=()=>{const l=S.limits;if(!R||!S.projects.some(p=>p.id===R.project_
  const o=O[R.project_id]||{questions:[],requests:[]};const time=R.minutes?fmtMin(R.minutes):'no time limit';return`<section class="panel run-form"><h2>New proof search</h2><div class=grid><div><label class=f>Project<select data-r=project_id>${S.projects.map(p=>`<option value=${p.id} ${p.id===R.project_id?'selected':''} ${p.paused?'disabled':''}>${e(p.title)}${p.paused?' (paused)':''}</option>`).join('')}</select></label><label class=f>Goal<select data-r=goal><option value="">The whole project</option>${o.requests.length?`<optgroup label="Waiting requests">${o.requests.map(x=>`<option value="t${x.id}" ${R.goal==='t'+x.id?'selected':''}>${e(x.label)}</option>`).join('')}</optgroup>`:''}${o.questions.length?`<optgroup label="Questions">${o.questions.map(x=>`<option value="q${x.id}" ${R.goal==='q'+x.id?'selected':''}>${e(x.title)}</option>`).join('')}</optgroup>`:''}</select></label><label class=f>Instructions (optional)<textarea data-r=prompt rows=3 maxlength=4000 placeholder="For example: focus on the case k = 3">${e(R.prompt)}</textarea></label><label class=f><span>Parallel agents: <span id=rw>${R.workers}</span></span><small>More agents use your subscription faster.</small><input type=range min=1 max=7 data-r=workers value="${R.workers}"></label></div><div><h3>Stop when</h3><label class=f>Running time (minutes)<small>Time spent waiting does not count. 0 means no time limit.</small><input type=number min=0 max=43200 step=15 data-r=minutes value="${R.minutes}"></label><label class=f><span>Session usage reaches <span id=rs>${R.stop_session}</span>%</span><small>Your general limit is ${l.max_session_percent}%.</small><input type=range min=5 max=${l.max_session_percent} step=5 data-r=stop_session value="${R.stop_session}"></label><label class=f><span>Weekly usage reaches <span id=rk>${R.stop_weekly}</span>%</span><small>Your general limit is ${l.max_weekly_percent}%.</small><input type=range min=5 max=${l.max_weekly_percent} step=5 data-r=stop_weekly value="${R.stop_weekly}"></label><h3>When a usage limit is reached</h3><label class=check><input type=radio name=onlimit data-r=on_limit value=stop ${R.on_limit==='stop'?'checked':''}> <span><b>End the run</b></span></label><label class=check><input type=radio name=onlimit data-r=on_limit value=resume ${R.on_limit==='resume'?'checked':''}> <span><b>Wait, and continue after the reset</b></span></label></div></div><div class=note id=runsum>${runSummary(time)}</div><button class="btn primary run-btn" data-a=danusrun>▶ Start proving</button></section>`};
 const runSummary=t=>`Runs for <b>${t}</b>, and stops at <b>${R.stop_session}%</b> of the session or <b>${R.stop_weekly}%</b> of the week. ${R.on_limit==='resume'?(R.minutes?'It waits for each reset, then continues until the time is used.':'<b>It continues after every reset until you stop it.</b>'):'It ends at the first limit.'}`;
 const options=async()=>{const id=R?.project_id;if(!id||O[id])return;try{const r=await fetch('/api/danus/options',{method:'POST',headers:{'Content-Type':'application/json','X-OQ-Token':T},body:JSON.stringify({project_id:id})});if(r.ok){O[id]=await r.json();if(view==='danus'){const a=document.activeElement;if(a?.dataset?.r!=='goal')render()}}}catch{}};
-const danus=()=>{const d=S.danus,j=S.jobs.danus?.running,r=S.danus_run||{};return`<h1>Prove new facts</h1><p class=sub>A team of AI agents searches for new proofs, using the open-source system Danus. It is the heaviest use of your subscription, so it runs only when you press Start.</p>${d.error?`<div class=err>${e(d.error)}</div>`:''}${d.login?`<section class=panel><div class=note><b>Sign in to ChatGPT to start proving</b><br>Open <a href="${e(d.login.url)}" target=_blank rel="noopener noreferrer">${e(d.login.url)}</a> and enter:<div class=code>${e(d.login.code)}</div></div></section>`:''}${d.ready?runStatus(r)+(r.active?'':runForm())+`<section class=panel><div class=row><div><b>Installed</b><small>Runs in an isolated ${e(d.backend||'machine')}.</small></div><button class="btn danger" data-a=danusremove ${j||r.active?'disabled':''}>Remove the prover</button></div></section>`:`<section class=panel>${d.unavailable?`<div class=note>${e(d.unavailable)}</div>`:j?`<div class=row><div><b>${e(d.step||'Installing')}</b><small>You can keep using your computer.</small></div><span class=pill>In progress</span></div>`:`<p>The first installation downloads about 2 GB and takes several minutes. The agents never see your files: they run in a separate machine.</p><button class="btn primary" data-a=danus>Set up proving</button>`}</section>`}`};
+const NATIVE_WARNING='Run proof searches directly on this Mac?\n\nThe AI agents stay inside the Codex sandbox: they can write only in their folder and temporary folders, and have no direct network access. But they CAN READ the files of your macOS account, and what they read can be sent to ChatGPT as part of their work. An isolated machine prevents this. Choose this only if you trust the problems and sources you give them.';
+const modeChoice=d=>d.can_native?`<div class=mode-pick role=radiogroup aria-label="Where proving runs"><label class=check><input type=radio name=dmode data-dmode=isolated ${d.mode!=='native'?'checked':''}> <span><b>Isolated machine</b> (recommended). The agents cannot see your files. Can use about 8 GB of disk.</span></label><label class=check><input type=radio name=dmode data-dmode=native ${d.mode==='native'?'checked':''}> <span><b>Directly on this Mac</b>. About 1 GB. The agents can write only in their folder and temporary folders, but <b>can read your files</b>.</span></label></div>`:'<p>The agents run in a separate machine that cannot see your files. It can use about 8 GB of disk.</p>';
+const danus=()=>{const d=S.danus,j=S.jobs.danus?.running,r=S.danus_run||{};return`<h1>Prove new facts</h1><p class=sub>A team of AI agents searches for new proofs, using the open-source system Danus. It is the heaviest use of your subscription, so it runs only when you press Start.</p>${d.error?`<div class=err>${e(d.error)}</div>`:''}${d.login?`<section class=panel><div class=note><b>Sign in to ChatGPT to start proving</b><br>Open <a href="${e(d.login.url)}" target=_blank rel="noopener noreferrer">${e(d.login.url)}</a> and enter:<div class=code>${e(d.login.code)}</div></div></section>`:''}${d.ready?runStatus(r)+(r.active?'':runForm())+`<section class=panel><div class=row><div><b>Installed</b><small>${d.mode==='native'?'Runs directly on this Mac, inside the Codex sandbox.':'Runs in an isolated '+e(d.backend||'machine')+'.'}</small></div><div class=actions>${d.can_native?`<button class=btn data-a=danusmode ${j||r.active?'disabled':''}>${d.mode==='native'?'Use an isolated machine':'Run directly on this Mac'}</button>`:''}<button class="btn danger" data-a=danusremove ${j||r.active?'disabled':''}>Remove the prover</button></div></div>${d.isolated_installed?`<div class=row><div><b>Isolated machine</b><small>Still on this Mac, and can use about 8 GB.</small></div><button class="btn danger" data-a=danusremoveiso ${j||r.active?'disabled':''}>Remove it</button></div>`:''}</section>`:`<section class=panel>${d.unavailable?`<div class=note>${e(d.unavailable)}</div>`:j?`<div class=row><div><b>${e(d.step||'Installing')}</b><small>You can keep using your computer.</small></div><span class=pill>In progress</span></div>`:`<p>Proving uses a <b>ChatGPT account</b>, even if Claude handles your other AI work. The first installation takes several minutes.</p>${modeChoice(d)}<button class="btn primary" data-a=danus>Set up proving</button>`}</section>`}`};
 const size=n=>n>=1048576?(n/1048576).toFixed(1)+' MB':n?Math.max(1,Math.round(n/1024))+' KB':'0 KB';
 const longDate=t=>t?new Date(t*1000).toLocaleDateString([],{day:'numeric',month:'short',year:'numeric'}):'';
 const backup=()=>{const b=S.backup,s=b.settings,j=S.jobs.backup;BD=BD||{...s};const busy=j?.running||b.current;const fails=b.projects.filter(p=>p.error).length;const next=b.projects.map(p=>p.next_at).filter(Boolean).sort((x,y)=>x-y)[0];
  const st=!S.connected?['hold','Connect your account','Backups start once this computer is connected.']:busy?['on','Backing up'+(b.current?' '+b.current:''),'You can keep working.']:fails?['hold',fails+' backup(s) failed','Your earlier backups were kept. The client tries again in an hour.']:s.enabled?['on','Automatic backups are on',next?'Next check: '+longDate(next)+'.':'The first backup starts within 15 minutes.']:['','Automatic backups are off','Optional. Nothing is copied to this computer unless you turn them on or press Back up now.'];
  return`<h1>Backups</h1><p class=sub>Dated copies of your projects, on this computer.</p><section class="panel hero ${st[0]}"><span class=dot></span><div><b>${e(st[1])}</b><span>${e(st[2])}</span></div><button class="btn primary" data-a=backupnow ${busy||!S.connected?'disabled':''}>${busy?'Working…':'Back up now'}</button></section>${j?.error?`<div class=err>${e(j.error)}</div>`:''}<div class=grid><section class=panel><h2>Schedule</h2><label class=check><input type=checkbox data-b=enabled ${BD.enabled?'checked':''}> <span><b>Back up automatically</b> (optional)</span></label><label class=f>Frequency<select data-b=every_days>${[[1,'Every day'],[7,'Every week'],[14,'Every 2 weeks'],[30,'Every month']].concat([1,7,14,30].includes(+BD.every_days)?[]:[[+BD.every_days,'Every '+BD.every_days+' days']]).map(([v,l])=>`<option value=${v} ${+BD.every_days===v?'selected':''}>${l}</option>`).join('')}</select></label><label class=f>Backups kept per project<small>Older ones are removed only after a new backup is verified.</small><input type=number min=1 max=100 data-b=keep value="${e(BD.keep)}"></label><label class=f>Folder<small>Leave empty for the default folder.</small><input type=text data-b=folder value="${e(BD.folder)}" placeholder="Open Questions backups"></label><button class="btn primary" data-a=backupsave>Save</button></section><section class=panel><h2>Your backups</h2>${b.projects.map(p=>`<div class=row><div><b>${e(p.title)}</b><small>${p.last_ok?'Last: '+e(longDate(p.last_ok)):'No backup yet'} · ${p.count} kept · ${e(size(p.size))}${p.left?' · no longer a member':''}${p.error?'<br>'+e(p.error):''}${p.missing?'<br>'+p.missing+' file(s) were already missing on the platform':''}</small></div><span class="pill ${p.error?'bad':p.last_ok?'good':'warn'}">${p.error?'Failed':p.last_ok?'Saved':'Waiting'}</span></div>`).join('')||'<div class=empty>No project yet.</div>'}<p style="overflow-wrap:anywhere"><small>${e(b.folder)}</small></p><button class=btn data-a=backupopen>Open the folder</button></section></div><div class=note style="margin-top:14px">When turned on, backups run while this app is open, and catch up when you reopen it. Each one contains what you can see in the project, so keep the folder private. It is a readable copy for you, not a full restore of the platform.</div>`};
 const render=()=>{if(pressing)return;const a=document.activeElement;if(a&&['INPUT','SELECT','TEXTAREA'].includes(a.tagName)&&view!=='home')return;for(const b of document.querySelectorAll('nav button')){b.classList.toggle('on',b.dataset.v===view);b.setAttribute('aria-current',b.dataset.v===view?'page':'false')}document.getElementById('ver').innerHTML=versionBox();const m=document.getElementById('m');const sc=m.querySelector('.log')?.scrollTop;m.innerHTML=(msg?`<div class=err role=alert>${e(msg)}</div>`:'')+{home,limits,danus,backup,account}[view]();if(sc)m.querySelector('.log').scrollTop=sc};
-document.addEventListener('click',ev=>{const b=ev.target.closest('button');if(!b)return;if(b.dataset.v){view=b.dataset.v;msg='';draft={...S.limits};BD=null;return render()}if(b.dataset.go){view=b.dataset.go;return render()}if(b.dataset.pswitch){const q=S.projects.find(p=>p.id===+b.dataset.pswitch);return call('/api/project/pause',{project_id:q.id,paused:!q.paused})}if(b.dataset.tool)return call('/api/tool/'+b.dataset.tool,{tool:b.dataset.n});if(b.dataset.use)return call('/api/limits',{}).then(()=>call('/api/start',{provider:b.dataset.use}));const x=b.dataset.a;if(x==='start')call('/api/start',{provider:S.provider});if(x==='stop')call('/api/stop');if(x==='disconnect'&&confirm('Disconnect this computer?'))call('/api/disconnect');if(x==='connect'&&!connecting){CF={url:document.getElementById('url').value,key:document.getElementById('key').value};connecting=true;connectErr='';render();call('/api/connect',CF).then(()=>{connecting=false;if(msg){connectErr=msg;msg=''}else{CF={};connectErr=''}render();document.getElementById('cerr')?.scrollIntoView({block:'center'})})}if(x==='save'){const{paused,...rest}=draft;document.activeElement?.blur();call('/api/limits',rest).then(()=>{if(!msg)draft={...S.limits}})}if(x==='updatecheck'){checking=true;render();call('/api/update/check').finally(()=>{checking=false;render()})}if(x==='updateapply'&&confirm('Install version '+S.update.latest+' now? The client restarts.')){updating=true;render();call('/api/update/apply').finally(()=>{setTimeout(()=>{updating=false;load()},2500)})}if(x==='backupnow')call('/api/backup/run');if(x==='backupopen')call('/api/backup/open');if(x==='backupsave'){document.activeElement?.blur();call('/api/backup/settings',BD).then(()=>{if(!msg){BD=null;render()}})}if(x==='danus')call('/api/danus/setup');if(x==='danusstop'&&confirm('Stop the proof search now? Its facts so far are kept.'))call('/api/danus/stop');if(x==='danusrun'){document.activeElement?.blur();const g=R.goal||'',b={project_id:R.project_id,prompt:R.prompt,minutes:R.minutes,stop_session:R.stop_session,stop_weekly:R.stop_weekly,on_limit:R.on_limit,workers:R.workers,task_id:g[0]==='t'?+g.slice(1):null,question_id:g[0]==='q'?+g.slice(1):null};if(R.on_limit==='resume'&&!R.minutes&&!confirm('This run continues after every reset until you stop it. Start it?'))return;call('/api/danus/run',b).then(()=>{if(!msg)O={}})}if(x==='danusremove'&&confirm('Remove the prover and its isolated machine?'))call('/api/danus/remove')});
+document.addEventListener('click',ev=>{const b=ev.target.closest('button');if(!b)return;if(b.dataset.v){view=b.dataset.v;msg='';draft={...S.limits};BD=null;return render()}if(b.dataset.go){view=b.dataset.go;return render()}if(b.dataset.pswitch){const q=S.projects.find(p=>p.id===+b.dataset.pswitch);return call('/api/project/pause',{project_id:q.id,paused:!q.paused})}if(b.dataset.tool)return call('/api/tool/'+b.dataset.tool,{tool:b.dataset.n});if(b.dataset.use)return call('/api/limits',{}).then(()=>call('/api/start',{provider:b.dataset.use}));const x=b.dataset.a;if(x==='start')call('/api/start',{provider:S.provider});if(x==='stop')call('/api/stop');if(x==='disconnect'&&confirm('Disconnect this computer?'))call('/api/disconnect');if(x==='connect'&&!connecting){CF={url:document.getElementById('url').value,key:document.getElementById('key').value};connecting=true;connectErr='';render();call('/api/connect',CF).then(()=>{connecting=false;if(msg){connectErr=msg;msg=''}else{CF={};connectErr=''}render();document.getElementById('cerr')?.scrollIntoView({block:'center'})})}if(x==='save'){const{paused,...rest}=draft;document.activeElement?.blur();call('/api/limits',rest).then(()=>{if(!msg)draft={...S.limits}})}if(x==='updatecheck'){checking=true;render();call('/api/update/check').finally(()=>{checking=false;render()})}if(x==='updateapply'&&confirm('Install version '+S.update.latest+' now? The client restarts.')){updating=true;render();call('/api/update/apply').finally(()=>{setTimeout(()=>{updating=false;load()},2500)})}if(x==='backupnow')call('/api/backup/run');if(x==='backupopen')call('/api/backup/open');if(x==='backupsave'){document.activeElement?.blur();call('/api/backup/settings',BD).then(()=>{if(!msg){BD=null;render()}})}if(x==='danus')call('/api/danus/setup');if(x==='danusmode'){const m=S.danus.mode==='native'?'isolated':'native';if(m==='isolated'||confirm(NATIVE_WARNING))call('/api/danus/mode',{mode:m,accept:m==='native'})}if(x==='danusremoveiso'&&confirm('Remove the isolated machine and free its disk space?'))call('/api/danus/remove',{mode:'isolated'});if(x==='danusstop'&&confirm('Stop the proof search now? Its facts so far are kept.'))call('/api/danus/stop');if(x==='danusrun'){document.activeElement?.blur();const g=R.goal||'',b={project_id:R.project_id,prompt:R.prompt,minutes:R.minutes,stop_session:R.stop_session,stop_weekly:R.stop_weekly,on_limit:R.on_limit,workers:R.workers,task_id:g[0]==='t'?+g.slice(1):null,question_id:g[0]==='q'?+g.slice(1):null};if(R.on_limit==='resume'&&!R.minutes&&!confirm('This run continues after every reset until you stop it. Start it?'))return;call('/api/danus/run',b).then(()=>{if(!msg)O={}})}if(x==='danusremove'&&confirm('Remove the prover and its isolated machine?'))call('/api/danus/remove')});
 document.addEventListener('pointerdown',()=>{pressing=true});for(const n of ['pointerup','pointercancel'])document.addEventListener(n,()=>setTimeout(()=>{pressing=false},0));document.addEventListener('input',ev=>{const t=ev.target;if(t.dataset.c){CF[t.dataset.c]=t.value;connectErr=''}if(t.dataset.b&&BD){const k=t.dataset.b;BD[k]=k==='enabled'?t.checked:k==='folder'?t.value:+t.value;if(t.type==='checkbox'||t.tagName==='SELECT')t.blur()}if(t.dataset.l){draft[t.dataset.l]=t.type==='text'?t.value:+t.value;if(t.type==='range'){t.closest('label').firstChild.textContent=t.closest('label').firstChild.textContent.replace(/\d+%/,t.value+'%')}}if(t.dataset.k){draft.kinds=['extract','ask','bib','derive'].filter(k=>k===t.dataset.k?t.checked:draft.kinds.includes(k))}if('danus'in t.dataset)draft.danus_enabled=t.checked;if(t.dataset.r&&R){const k=t.dataset.r;R[k]=['goal','prompt','on_limit'].includes(k)?t.value:+t.value;if(k==='project_id'){R.goal='';t.blur();options();render()}const set=(i,v)=>{const x=document.getElementById(i);if(x)x.textContent=v};if(k==='workers')set('rw',t.value);if(k==='stop_session')set('rs',t.value);if(k==='stop_weekly')set('rk',t.value);const n=document.getElementById('runsum');if(n)n.innerHTML=runSummary(R.minutes?fmtMin(R.minutes):'no time limit')}});
-document.addEventListener('change',ev=>{const b=ev.target.dataset?.billing;if(!b)return;ev.target.blur();if(b==='api'&&!confirm('Allow a paid API key? The AI provider will charge each use to that key.'))return load();call('/api/limits',{ai_billing:b}).then(()=>{if(!msg)draft={...S.limits}})});
+document.addEventListener('change',ev=>{const dm=ev.target.dataset?.dmode;if(dm){ev.target.blur();if(dm==='native'&&!confirm(NATIVE_WARNING))return load();return call('/api/danus/mode',{mode:dm,accept:dm==='native'})}const b=ev.target.dataset?.billing;if(!b)return;ev.target.blur();if(b==='api'&&!confirm('Allow a paid API key? The AI provider will charge each use to that key.'))return load();call('/api/limits',{ai_billing:b}).then(()=>{if(!msg)draft={...S.limits}})});
 load();setInterval(()=>{if(!document.hidden)load()},3000);
 </script></body></html>
 '''

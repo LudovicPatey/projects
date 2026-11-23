@@ -206,7 +206,7 @@ final class References
                 break;
             case 'bib':
                 foreach ($q("SELECT id, cite_key, title, authors, year, venue, ai_model, updated_at FROM bib_entries WHERE project_id = ? AND id IN $in") as $r) {
-                    $out[(int)$r['id']] = self::item($type, (int)$r['id'], $r['cite_key'], $r['title'], trim($r['authors'] . ($r['year'] ? " ({$r['year']})" : '')), null, (string)$r['venue'], null, $r['ai_model'], $r['updated_at'], ['view' => 'bib', 'id' => (int)$r['id']]);
+                    $out[(int)$r['id']] = self::item($type, (int)$r['id'], $r['title'] ?: $r['cite_key'], $r['title'], implode(' · ', array_filter([$r['cite_key'], trim($r['authors'] . ($r['year'] ? " ({$r['year']})" : ''))])), null, (string)$r['venue'], null, $r['ai_model'], $r['updated_at'], ['view' => 'bib', 'id' => (int)$r['id']]);
                 }
                 break;
             case 'suggestion':

@@ -13,6 +13,7 @@ test('a request is validated before it is sent', () => {
   assert.equal(requestError({ kind: 'bib' }), null);
   assert.deepEqual(requestBody({ kind: 'extract', document: '4', prompt: '' }), { kind: 'extract', source_type: 'document', source_id: 4 });
   assert.deepEqual(requestBody({ kind: 'derive', question: '2', prompt: ' go ' }), { kind: 'derive', prompt_text: 'go', source_type: 'question', source_id: 2 });
+  assert.deepEqual(requestBody({ kind: 'extract', document: 'bib:7', prompt: '' }), { kind: 'extract', source_type: 'bib', source_id: 7 });
   assert.deepEqual(requestBody({ kind: 'bib', document: '4', question: '2' }), { kind: 'bib' });
 });
 

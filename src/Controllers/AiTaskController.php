@@ -17,7 +17,7 @@ final class AiTaskController
     private const MAX_REQUESTS_PER_DAY = 40;
     private const ONLINE_SECONDS = 180;
     private const ASSISTANT = 'ai-assistant';
-    private const SOURCES = ['document', 'question', 'strategy', 'fact'];
+    private const SOURCES = ['document', 'bib', 'question', 'strategy', 'fact'];
     /** Raise it when a client release needs new server features: older platforms are then not offered that release. */
     public const API_LEVEL = 1;
 
@@ -103,7 +103,9 @@ final class AiTaskController
             throw new HttpError(422, 'Invalid subject.');
         }
         if ($sourceType !== null && self::sourceProject($sourceType, $sourceId) !== $pid) throw new HttpError(404, 'This subject is not in the project.');
-        if ($kind === 'extract' && $sourceType !== 'document') throw new HttpError(422, 'Choose the file to extract facts from.');
+        if ($kind === 'extract' && !in_array($sourceType, ['document', 'bib'], true)) throw new HttpError(422, 'Choose the file or reference to extract facts from.');
+        if ($sourceType === 'bib' && $kind !== 'extract') throw new HttpError(422, 'Invalid subject.');
+        if ($sourceType === 'bib' && !Db::value('SELECT pdf_blob_id FROM bib_entries WHERE id = ?', [$sourceId])) throw new HttpError(422, 'This reference has no PDF.');
         if ($kind === 'ask' && $prompt === '') throw new HttpError(422, 'Write your question for the AI.');
         $versionId = $sourceType === 'document' ? (int)Db::value('SELECT current_version_id FROM documents WHERE id = ?', [$sourceId]) : null;
         $open = Db::value("SELECT id FROM ai_tasks WHERE project_id = ? AND kind = ? AND status IN ('pending', 'running')
@@ -144,7 +146,7 @@ final class AiTaskController
             $existing = $s['doi'] ? Db::value('SELECT id FROM bib_entries WHERE project_id = ? AND LOWER(doi) = LOWER(?)', [$pid, $s['doi']]) : null;
             if ($existing) $bid = (int)$existing;
             else {
-                $fields = array_filter(['title' => $s['title'], 'author' => $s['authors'], 'year' => $s['year'], 'journal' => $s['venue'],
+                $fields = array_filter(['title' => $s['title'], 'author' => BibTex::authorList($s['authors']), 'year' => $s['year'], 'journal' => $s['venue'],
                     'doi' => $s['doi'], 'url' => $s['url'], 'eprint' => $s['arxiv'], 'archiveprefix' => $s['arxiv'] ? 'arXiv' : null], fn($v) => $v !== null && $v !== '');
                 $now = Db::now();
                 $bid = Db::insert('bib_entries', BibTex::columns($fields) + [
@@ -185,6 +187,8 @@ final class AiTaskController
         $project = (int)$r->input('project_id');
         $only = (int)$r->input('task_id');
         $where = ($project ? ' AND t.project_id = ?' : '') . ($only ? ' AND t.id = ?' : '');
+        // A client from before this feature would fail these tasks and use up their attempts.
+        if (!in_array('extract_bib', (array)$r->input('features', []), true)) $where .= " AND (t.kind <> 'extract' OR t.source_type IS NULL OR t.source_type <> 'bib')";
         $candidates = Db::all(
             "SELECT t.id, t.status FROM ai_tasks t JOIN project_members m ON m.project_id = t.project_id AND m.user_id = ?
              WHERE t.kind IN $in AND (t.status = 'pending' OR (t.status = 'running' AND t.lease_until < ?))
@@ -433,6 +437,7 @@ final class AiTaskController
         ];
         $type = $t['source_type']; $id = (int)$t['source_id'];
         if ($type === 'document') $ctx['document'] = self::documentContext($id, $t['version_id'] ? (int)$t['version_id'] : null);
+        if ($type === 'bib') $ctx['reference'] = Db::one('SELECT id, cite_key, title, authors, year, venue, doi, CASE WHEN pdf_blob_id IS NULL THEN 0 ELSE 1 END AS has_pdf FROM bib_entries WHERE id = ? AND project_id = ?', [$id, $pid]) ?: null;
         if ($type === 'message') {
             $cid = (int)$t['conversation_id'];
             $ctx['thread'] = self::thread(Db::all('SELECT * FROM (SELECT m.id, m.body_html, m.created_at, u.name AS author, u.kind FROM messages m JOIN users u ON u.id = m.author_id WHERE m.conversation_id = ? ORDER BY m.id DESC LIMIT 30) x ORDER BY id', [$cid]));
@@ -481,6 +486,10 @@ final class AiTaskController
 
     private static function sourceProject(string $type, int $id): ?int
     {
+        if ($type === 'bib') {
+            $pid = Db::value('SELECT project_id FROM bib_entries WHERE id = ?', [$id]);
+            return $pid ? (int)$pid : null;
+        }
         $table = ['document' => 'documents', 'question' => 'open_questions', 'strategy' => 'proof_strategies', 'fact' => 'facts'][$type];
         $pid = Db::value("SELECT project_id FROM $table WHERE id = ? AND deleted_at IS NULL", [$id]);
         return $pid ? (int)$pid : null;
@@ -526,9 +535,10 @@ final class AiTaskController
     private static function listSql(): string
     {
         return 'SELECT t.*, r.name AS requested_by_name, c.name AS claimed_by_name,
-                       d.title AS document_title, q.title AS question_title, s.title AS strategy_title, f.title AS fact_title
+                       d.title AS document_title, b.title AS bib_title, q.title AS question_title, s.title AS strategy_title, f.title AS fact_title
                 FROM ai_tasks t LEFT JOIN users r ON r.id = t.requested_by LEFT JOIN users c ON c.id = t.claimed_by
                 LEFT JOIN documents d ON t.source_type = \'document\' AND d.id = t.source_id
+                LEFT JOIN bib_entries b ON t.source_type = \'bib\' AND b.id = t.source_id
                 LEFT JOIN open_questions q ON t.source_type = \'question\' AND q.id = t.source_id
                 LEFT JOIN proof_strategies s ON t.source_type = \'strategy\' AND s.id = t.source_id
                 LEFT JOIN facts f ON t.source_type = \'fact\' AND f.id = t.source_id';
@@ -542,7 +552,7 @@ final class AiTaskController
     private static function present(array $t): array
     {
         $result = json_decode((string)($t['result_json'] ?? ''), true) ?: ['fact_ids' => [], 'suggestion_ids' => [], 'reply' => null];
-        $subject = $t['document_title'] ?? $t['question_title'] ?? $t['strategy_title'] ?? $t['fact_title'] ?? null;
+        $subject = $t['document_title'] ?? $t['bib_title'] ?? $t['question_title'] ?? $t['strategy_title'] ?? $t['fact_title'] ?? null;
         foreach (['id', 'project_id', 'source_id', 'version_id', 'conversation_id', 'requested_by', 'claimed_by', 'attempts'] as $k) $t[$k] = $t[$k] === null ? null : (int)$t[$k];
         $out = array_intersect_key($t, array_flip(['id', 'project_id', 'kind', 'status', 'source_type', 'source_id', 'version_id', 'conversation_id', 'prompt_text', 'requested_by', 'requested_by_name',
             'claimed_by', 'claimed_by_name', 'client_name', 'ai_model', 'ai_generation_ms', 'attempts', 'summary_text', 'error_text', 'created_at', 'updated_at', 'finished_at']));

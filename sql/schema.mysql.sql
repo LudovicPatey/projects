@@ -511,7 +511,7 @@ CREATE TABLE IF NOT EXISTS ai_tasks (
   project_id INT UNSIGNED NOT NULL,
   kind VARCHAR(10) NOT NULL,              -- extract, ask, bib, derive
   status VARCHAR(10) NOT NULL DEFAULT 'pending',  -- pending, running, done, failed, cancelled
-  source_type VARCHAR(12) NULL,           -- document, message, comment, question, strategy, fact
+  source_type VARCHAR(12) NULL,           -- document, bib, message, comment, question, strategy, fact
   source_id INT UNSIGNED NULL,
   version_id INT UNSIGNED NULL,
   conversation_id INT UNSIGNED NULL,      -- set when the task exposes a private conversation

@@ -8,7 +8,7 @@ export const ArchitectureDiagram = {
     <div class="arch-side">
       <p class="arch-label">On each member's computer</p>
       <div class="arch-node"><span class="arch-icon ai"><icon name="sparkles" :size="19"/></span><div><b>AI client</b><small>Runs Claude or ChatGPT with your own account</small></div></div>
-      <div class="arch-node"><span class="arch-icon"><icon name="graph" :size="19"/></span><div><b>Prove new facts, optional</b><small>AI agents search for proofs in an isolated machine</small></div></div>
+      <div class="arch-node"><span class="arch-icon"><icon name="graph" :size="19"/></span><div><b>Prove new facts, optional</b><small>AI agents search for proofs, isolated by default</small></div></div>
       <div class="arch-node"><span class="arch-icon"><icon name="clock" :size="19"/></span><div><b>Your usage limits</b><small>Checked before work starts</small></div></div>
     </div>
     <div class="arch-flow" aria-hidden="true">

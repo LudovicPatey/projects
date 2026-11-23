@@ -957,7 +957,7 @@ final class FactController
                     $item['link'] = ['view' => 'files', 'id' => $sid, 'query' => ['v' => (int)$s['version_id']]];
                     break;
                 case 'bib':
-                    $item['label'] = (string)(Db::value('SELECT cite_key FROM bib_entries WHERE id = ?', [$sid]) ?: 'Deleted reference');
+                    $item['label'] = (string)(Db::value("SELECT COALESCE(NULLIF(title, ''), cite_key) FROM bib_entries WHERE id = ?", [$sid]) ?: 'Deleted reference');
                     $item['link'] = ['view' => 'bib', 'id' => $sid];
                     break;
                 case 'message':

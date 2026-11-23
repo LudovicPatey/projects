@@ -189,7 +189,7 @@ The platform stores AI requests and results and never runs a model. A client on 
 |---|---|---|---|
 | GET | `/api/client/info`, `/api/client/download?system=` | public | Current `api_level`, `version`, `script_sha256`, and published installers. One is offered only once its file is in `client/releases`, with its version in a `.version` file. |
 | GET | `/api/projects/{id}/ai` | members | `tasks`, `counts`, running `clients`, `suggestions`. |
-| POST | `/api/projects/{id}/ai/tasks` | people | `{"kind": "extract" \| "ask" \| "bib" \| "derive", "prompt_text"?, "source_type"?, "source_id"?}`. Subjects: `document`, `question`, `strategy`, `fact`. |
+| POST | `/api/projects/{id}/ai/tasks` | people | `{"kind": "extract" \| "ask" \| "bib" \| "derive", "prompt_text"?, "source_type"?, "source_id"?}`. Subjects: `document`, `bib` (for `extract`, when the reference has a PDF), `question`, `strategy`, `fact`. |
 | POST | `/api/ai/tasks/claim` | AI | `{"client_name", "ai_model"?, "kinds"?, "project_id"?}`. Returns `{task}` with its `lease` and `context`, or `{task: null}`. |
 | POST | `/api/ai/tasks/{id}/heartbeat` | AI | `{"lease"}`. A lease lasts 15 minutes. |
 | POST | `/api/ai/tasks/{id}/complete` | AI | `{"lease", "ai_model", "generation_seconds"?, "summary"?, "reply_text"?, "fact_ids"?, "suggestion_ids"?}`. `reply_text` is required for `ask`, and is posted in the same thread. |
@@ -198,6 +198,7 @@ The platform stores AI requests and results and never runs a model. A client on 
 | POST | `/api/projects/{id}/ai/suggestions` | AI | `{"suggestions": [{"title", "reason_text", "doi" or "arxiv" or "url", "authors"?, "year"?, "venue"?}], "ai_model", "task_id"?}`. At most 25. |
 | POST | `/api/bib-suggestions/{id}/accept`, `/reject` | people | Only an accepted suggestion enters the bibliography. |
 
+- A person can queue an `extract` task for a reference with a PDF. Clients that handle it send `"features": ["extract_bib"]` when claiming, and cite the fact sources as `{"type": "bib", "id": …, "page": …, "quote": …}`.
 - A file or version uploaded by a person queues an `extract` task. `@AI` in a person's message or comment queues an `ask` task. Text written by an AI never queues one.
 - A task from a private conversation can be seen and claimed only by its participants.
 - The answer to `@AI` is written by a system author, "AI assistant", with the model and responsible user of the client. It is not a project member and has no credential.
@@ -206,6 +207,7 @@ The platform stores AI requests and results and never runs a model. A client on 
 - By default (`ai_billing: subscription`), `oq.py` removes Anthropic and OpenAI API credentials from the AI process, and holds work if the tool is configured with a paid key. `oq.py limits --billing api` allows them.
 - `POST /api/projects/{id}/ai/tasks` also accepts a personal key for `kind: derive` only, so that a client records the Danus run its user launched. `claim` accepts `task_id` to take that task.
 - Danus starts only from the client's Run button or `oq.py danus run`, with stops on running time, session usage and weekly usage, and a choice to end or wait for the reset. A watchdog in the machine stops its workers if the client disappears.
+- `oq.py danus setup --native --accept-risk` is an opt-in on macOS. It installs Danus in the client's own folder with Codex's sandbox on: agents can read the user's files, can write only in their folder and temporary folders, and have no direct network access.
 - `oq.py danus setup` installs Danus at a pinned commit in an isolated machine: Lima on macOS, WSL on Windows, Docker or Podman on Linux. No folder of the computer and no platform key enter it.
 - `oq.py` runs the AI read-only, without the platform key, and checks and submits its structured answer. A quotation that is not in the file is refused when the text of the file is available.
 

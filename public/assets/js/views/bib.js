@@ -8,7 +8,7 @@ export const BibView = {
   props: { pid: Number, id: Number, query: Object },
   data() {
     return {
-      entries: [], loaded: false, search: '', sort: 'key',
+      entries: [], loaded: false, search: '', sort: 'key', extracting: false,
       entry: null, entryError: null, tab: 'pdf',
       adding: false, addMode: 'doi', addDoi: '', addBibtex: '', addManual: { entry_type: 'article', title: '', author: '', year: '', journal: '', url: '', doi: '' }, busy: false,
       editBib: null, uploadProgress: null,
@@ -57,9 +57,9 @@ export const BibView = {
         <div class="li-meta">
           <span v-if="e.has_pdf" class="tag red"><icon name="pdf" :size="11"/> PDF</span>
           <span v-else class="tag muted-tag">no PDF</span>
-          <ai-meta :model="e.ai_model" :user="e.ai_user_name" :ms="e.ai_generation_ms"/>
+          <ai-meta compact :model="e.ai_model" :user="e.ai_user_name" :ms="e.ai_generation_ms"/>
           <span v-if="e.comment_count"><icon name="comment" :size="12"/> {{ e.comment_count }}</span>
-          <span class="grow"></span><span class="muted small ellipsis">{{ e.venue }}</span>
+          <span class="muted small ellipsis">{{ e.venue }}</span>
         </div>
       </a>
       <div v-if="loaded && !filtered.length" class="empty">{{ entries.length ? 'No match.' : 'The bibliography is empty. Add references by DOI, arXiv id or BibTeX.' }}</div>
@@ -86,6 +86,7 @@ export const BibView = {
         <div class="doc-actions">
           <label class="btn sm"><icon name="upload" :size="14"/> {{ entry.has_pdf ? 'Replace PDF' : 'Upload PDF' }}
             <input type="file" accept="application/pdf,.pdf" hidden @change="uploadPdf"></label>
+          <button v-if="entry.has_pdf" class="btn sm" :disabled="extracting" title="Ask an AI client to extract the results stated in this PDF" @click="extractFacts"><icon name="sparkles" :size="14"/> Extract facts</button>
           <button v-if="entry.has_pdf" class="icon-btn" title="Remove PDF" @click="removePdf"><icon name="x"/></button>
           <button class="icon-btn" title="Mark as unread" @click="markItemUnread('bib', entry.id)"><icon name="mail-unread"/></button>
           <button v-if="canDelete" class="icon-btn" title="Delete entry" @click="remove"><icon name="trash"/></button>
@@ -182,6 +183,11 @@ export const BibView = {
         markRead('bib', e.id, e.last_activity_id);
         if (this.tab === 'links') this.loadBacklinks();
       } catch (e) { this.entry = null; this.entryError = e.message; }
+    },
+    async extractFacts() {
+      this.extracting = true;
+      await attempt(() => api.post(`api/projects/${this.pid}/ai/tasks`, { kind: 'extract', source_type: 'bib', source_id: this.entry.id }), 'Added to the AI queue. A running AI client will extract the facts.');
+      this.extracting = false;
     },
     async loadBacklinks() {
       if (!this.entry) return;

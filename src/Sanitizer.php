@@ -88,8 +88,8 @@ final class Sanitizer
             'user' => Db::one('SELECT u.id, u.name AS label FROM users u JOIN project_members pm ON pm.user_id = u.id AND pm.project_id = ? WHERE u.id = ?', [$projectId, (int)$ref]),
             'document' => Db::one('SELECT id, title AS label FROM documents WHERE project_id = ? AND id = ? AND deleted_at IS NULL', [$projectId, (int)$ref]),
             'bib' => ctype_digit($ref)
-                ? Db::one('SELECT id, cite_key AS label FROM bib_entries WHERE project_id = ? AND id = ?', [$projectId, (int)$ref])
-                : Db::one('SELECT id, cite_key AS label FROM bib_entries WHERE project_id = ? AND cite_key = ?', [$projectId, $ref]),
+                ? Db::one("SELECT id, COALESCE(NULLIF(title, ''), cite_key) AS label FROM bib_entries WHERE project_id = ? AND id = ?", [$projectId, (int)$ref])
+                : Db::one("SELECT id, COALESCE(NULLIF(title, ''), cite_key) AS label FROM bib_entries WHERE project_id = ? AND cite_key = ?", [$projectId, $ref]),
             'fact' => ctype_digit($ref)
                 ? Db::one('SELECT id, label FROM facts WHERE project_id = ? AND id = ? AND deleted_at IS NULL', [$projectId, (int)$ref])
                 : Db::one('SELECT id, label FROM facts WHERE project_id = ? AND label = ? AND deleted_at IS NULL', [$projectId, html_entity_decode($ref, ENT_QUOTES | ENT_HTML5, 'UTF-8')]),

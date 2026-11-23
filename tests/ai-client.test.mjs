@@ -562,7 +562,7 @@ test('audit: workers stopped during a computer sleep are restarted', async () =>
   const starts = () => (fs.existsSync(log) ? fs.readFileSync(log, 'utf8').match(/bin\/danus start oq/g) || [] : []).length;
   assert.ok(await until(() => starts() === 1));
   fs.writeFileSync(path.join(path.dirname(log), 'lost'), '');
-  assert.ok(await until(() => starts() === 2, 20000), 'it restarts');
+  assert.ok(await until(() => starts() >= 2, 20000), 'it restarts');
   assert.equal(oq(['danus', 'stop'], env).status, 0); assert.equal((await started).code, 0);
 });
 

@@ -121,6 +121,22 @@ final class BibTex
         };
     }
 
+    /** AI clients often write "A B, C D and E F": BibTeX needs "and" between authors. "Last, First" is kept. */
+    public static function authorList(?string $text): ?string
+    {
+        $text = trim((string)$text);
+        if ($text === '') return null;
+        $names = [];
+        foreach (preg_split('/\s*;\s*|\s+and\s+|\s*&\s*/iu', $text) ?: [] as $part) {
+            $part = trim($part, " ,\t\n");
+            if ($part === '') continue;
+            $pieces = array_map('trim', explode(',', $part));
+            $full = count($pieces) > 1 && !array_filter($pieces, fn($x) => !preg_match('/\S\s+\S/u', $x));
+            array_push($names, ...($full ? $pieces : [$part]));
+        }
+        return implode(' and ', $names);
+    }
+
     /** Columns stored for listing/sorting. */
     public static function columns(array $fields): array
     {

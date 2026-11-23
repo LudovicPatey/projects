@@ -8,7 +8,7 @@ export const AiView = {
   components: { Pill, Kpi, StackBar },
   props: { pid: Number, id: Number, query: Object },
   data() {
-    return { d: null, filter: 'all', draft: { kind: 'bib', prompt: '', document: '', question: '' }, documents: [], questions: [], busy: false, timer: null };
+    return { d: null, filter: 'all', draft: { kind: 'bib', prompt: '', document: '', question: '' }, documents: [], references: [], questions: [], busy: false, timer: null };
   },
   computed: {
     tasks() { return filterTasks(this.d?.tasks || [], this.filter); },
@@ -23,7 +23,8 @@ export const AiView = {
   created() { this.kinds = AI_KINDS; this.statuses = TASK_STATUS; this.segments = TASK_SEGMENTS; },
   async mounted() {
     await this.load();
-    const [docs, qs] = await Promise.all([attempt(() => api.get(`api/projects/${this.pid}/documents`)), attempt(() => api.get(`api/projects/${this.pid}/questions`))]);
+    const [docs, qs, bib] = await Promise.all([attempt(() => api.get(`api/projects/${this.pid}/documents`)), attempt(() => api.get(`api/projects/${this.pid}/questions`)), attempt(() => api.get(`api/projects/${this.pid}/bib`))]);
+    this.references = (bib?.entries || []).filter((e) => e.has_pdf);
     this.documents = docs?.documents || (Array.isArray(docs) ? docs : []);
     this.questions = qs?.questions || [];
     this.timer = setInterval(() => { if (!document.hidden) this.load(); }, 15000);
@@ -115,7 +116,7 @@ export const AiView = {
             <p v-if="task.summary_text">{{ task.summary_text }}</p>
             <p v-if="task.error_text" class="ai-error"><icon name="x" :size="14"/> {{ task.error_text }}</p>
             <div v-if="resultLinks(task).length" class="ai-results"><a v-for="x in resultLinks(task)" :key="x.label" class="chip-link" :href="resultHref(x)">{{ x.label }}</a></div>
-            <dl class="ai-meta">
+            <dl class="ai-task-meta">
               <div><dt>Requested by</dt><dd>{{ task.requested_by_name || 'Platform' }}</dd></div>
               <div><dt>Created</dt><dd :title="fullDate(task.created_at)">{{ timeAgo(task.created_at) }}</dd></div>
               <div v-if="task.claimed_by_name"><dt>Computed by</dt><dd>{{ task.claimed_by_name }}</dd></div>
@@ -131,7 +132,7 @@ export const AiView = {
               <label v-for="(k, key) in kinds" :key="key" :class="{on: draft.kind === key}"><input type="radio" name="ai-kind" :value="key" v-model="draft.kind"><icon :name="k.icon" :size="15"/><span>{{ k.label }}</span></label>
             </div>
             <p class="ai-hint">{{ kinds[draft.kind].hint }}</p>
-            <label v-if="draft.kind === 'extract'" class="field"><span>File</span><select v-model="draft.document"><option value="">Choose a file…</option><option v-for="f in documents" :key="f.id" :value="f.id">{{ f.title }}</option></select></label>
+            <label v-if="draft.kind === 'extract'" class="field"><span>File or reference</span><select v-model="draft.document"><option value="">Choose…</option><optgroup v-if="documents.length" label="Files"><option v-for="f in documents" :key="f.id" :value="f.id">{{ f.title }}</option></optgroup><optgroup v-if="references.length" label="References with a PDF"><option v-for="b in references" :key="b.id" :value="'bib:' + b.id">{{ b.title }}</option></optgroup></select></label>
             <label v-if="draft.kind === 'derive'" class="field"><span>Toward a question (optional)</span><select v-model="draft.question"><option value="">The whole project</option><option v-for="q in questions" :key="q.id" :value="q.id">{{ q.title }}</option></select></label>
             <label class="field"><span>{{ draft.kind === 'ask' ? 'Your question' : 'Instructions (optional)' }}</span><textarea v-model="draft.prompt" rows="3" maxlength="4000" :placeholder="draft.kind === 'bib' ? 'For example: work on sunflower bounds since 2019' : ''"></textarea></label>
             <button class="btn primary block" :disabled="!!error || busy" @click="send">Add to the queue</button>
