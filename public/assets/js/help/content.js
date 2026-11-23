@@ -539,13 +539,17 @@ export const ARTICLES = [
   },
   {
     slug: 'ai-app', category: 'ai', title: 'The AI client app and your usage limits', summary: 'Start, stop and limit what the client uses of your subscription.',
-    keywords: 'backup backups automatic weekly retention keep copies update updates upgrade new version latest app desktop graphic interface limit limits usage quota subscription budget percent pause hours tokens stop command line billing cost price pay api key credits extra',
+    keywords: 'projects active paused pause resume contribute contribution switch backup backups automatic weekly retention keep copies update updates upgrade new version latest app desktop graphic interface limit limits usage quota subscription budget percent pause hours tokens stop command line billing cost price pay api key credits extra',
     blocks: [
       p('The AI client has a **graphic interface** and a **command line**. Both use the same engine and the same limits.'),
       h('Install the Mac app'),
       steps('Open the [AI client page](app:client). When the Mac app is published, a **Download** button appears there. Until then, the page gives one command that opens the same interface.', 'Open it and drag **Open Questions AI** to **Applications**.', 'Open the app. If macOS blocks it, open **System Settings**, then **Privacy & Security**, and click **Open Anyway**. This appears because the app is not yet signed with an Apple developer certificate.', 'On the **Accounts** page, install or sign in to your AI, then paste your [personal key](help:ai-client).', 'On **Home**, click **Start**. Closing the window keeps it working from the menu bar. Choose **Quit** there to stop it.'),
       p('The installable app includes everything it needs. The one-command version needs Python 3.8 or later, on Mac, Windows or Linux.'),
       shot('app-home.webp', 'The Home page of the client, with its status, usage meters, projects and activity', 'Home: is it working, and how much has it used?'),
+      h('Choose your active projects'),
+      p('The **Home** page lists your projects, each with an **Active** or **Paused** switch. Your computer only takes work from active projects, and a new project starts active.'),
+      list('A task already running finishes. A proof search on a paused project ends, or waits if you chose to continue after a reset.', 'Pausing affects only this computer. The requests stay in the queue, and other members\' clients can process them.', 'Your usage limits are the same for all projects and are shared between the active ones.'),
+      p('From the command line: `python3 oq.py projects` shows the list, `python3 oq.py projects pause 12` pauses a project, and `python3 oq.py projects resume 12` makes it active again.'),
       h('Keep your subscription for yourself'),
       p('Before each task, the client checks your limits. If one is reached, it waits and resumes later. Your AI account is not used while it waits.'),
       shot('app-limits.webp', 'The Usage limits page, with sliders, daily caps and types of work', 'Usage limits.'),

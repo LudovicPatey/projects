@@ -12,6 +12,7 @@ Open Questions AI client. It runs on your computer, with your own Claude or Chat
     python3 oq.py run --once    process what is waiting, then stop
     python3 oq.py update    check for a new version, and install it
     python3 oq.py backup    back up your projects now (--list, --if-due, --every-days, --keep, --folder, --on, --off)
+    python3 oq.py projects  list your projects (pause ID, resume ID: choose which ones this computer works for)
     python3 oq.py limits    show or change what the client may use of your subscription
     python3 oq.py danus setup|status|remove    install Danus in an isolated machine
     python3 oq.py danus run --project ID --minutes 120 --stop-session 40 --stop-weekly 50 --on-limit resume
@@ -50,7 +51,7 @@ import webbrowser
 import zipfile
 import zlib
 
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 API_LEVEL = 1  # raise with the server's AiTaskController::API_LEVEL when a client needs new server features
 GITHUB_REPO = "LudovicPatey/projects"
 KINDS = ["extract", "ask", "bib", "derive"]
@@ -577,7 +578,7 @@ def cmd_status(a):
         d = api.get(f"/api/projects/{p['id']}/ai")
         c = d["counts"]
         review = sum(1 for s in d["suggestions"] if s["status"] == "proposed")
-        print(f"{p['title']} (project {p['id']}): {c['pending']} waiting, {c['running']} running, {c['done']} done, {c['failed']} failed, {review} reference(s) to validate")
+        print(f"{p['title']} (project {p['id']}){' [paused]' if project_key(api.url, p['id']) in read_paused() else ''}: {c['pending']} waiting, {c['running']} running, {c['done']} done, {c['failed']} failed, {review} reference(s) to validate")
     return 0
 
 
@@ -600,6 +601,33 @@ def describe(task):
     return f"#{task['id']} {KIND_NAMES[task['kind']]}" + (f": {subject}" if subject else "")
 
 
+def claim_task(api, opts, body):
+    """Takes the next task, never from a project paused on this computer. Returns (task, hold)."""
+    paused = read_paused()
+    claim = lambda pid=None: api.post("/api/ai/tasks/claim", {**body, **({"project_id": pid} if pid else {})}).get("task")
+    if opts.project:
+        if project_key(api.url, opts.project) in paused:
+            return None, ("This project is paused on this computer.", None)
+        return claim(opts.project), None
+    prefix = site_name(api.url) + ":"
+    if not any(k.startswith(prefix) for k in paused):
+        return claim(), None
+    cached = getattr(opts, "project_rows", None)
+    if not cached or time.time() - cached[0] > 30:
+        cached = (time.time(), project_list(api.get("/api/projects")))
+        opts.project_rows = cached
+    active = [int(r["id"]) for r in cached[1] if project_key(api.url, r["id"]) not in paused]
+    if cached[1] and not active:
+        return None, ("All your projects are paused.", None)
+    served = opts.__dict__.setdefault("project_served", {})
+    for pid in sorted(active, key=lambda x: (served.get(x, 0), x)):  # active projects take turns
+        task = claim(pid)
+        if task:
+            served[pid] = time.time()
+            return task, None
+    return None, None
+
+
 def work_once(api, opts, name, stop=None):
     """Processes one task. Returns False when nothing may or can be done now."""
     allowed, reason, retry, limits = guard(opts.provider)
@@ -611,9 +639,7 @@ def work_once(api, opts, name, stop=None):
         opts.hold = ("All kinds of work are turned off in your limits.", None)
         return False
     body = {"kinds": kinds, "client_name": name, "ai_model": opts.model or opts.provider}
-    if opts.project:
-        body["project_id"] = opts.project
-    task = api.post("/api/ai/tasks/claim", body).get("task")
+    task, opts.hold = claim_task(api, opts, body)
     if not task:
         return False
     Ledger().add(tasks=1)
@@ -1021,6 +1047,34 @@ def save_limits(raw):
     data_dir().mkdir(parents=True, exist_ok=True)
     (data_dir() / "limits.json").write_text(json.dumps(clean, indent=2), encoding="utf-8")
     return clean
+
+
+# ----- which projects this computer works for: the limits are the same for all -----
+
+paused_lock = threading.Lock()
+
+
+def project_key(url, project):
+    return f"{site_name(url)}:{int(project)}"
+
+
+def read_paused():
+    try:
+        d = json.loads((data_dir() / "paused_projects.json").read_text(encoding="utf-8"))
+        return {str(x) for x in d} if isinstance(d, list) else set()
+    except (OSError, ValueError):
+        return set()
+
+
+def set_paused(url, ids, paused):
+    with paused_lock:
+        keys = {project_key(url, x) for x in ids}
+        current = read_paused()
+        current = current | keys if paused else current - keys
+        data_dir().mkdir(parents=True, exist_ok=True)
+        tmp = data_dir() / "paused_projects.tmp"
+        tmp.write_text(json.dumps(sorted(current)), encoding="utf-8")
+        os.replace(str(tmp), str(data_dir() / "paused_projects.json"))
 
 
 class Ledger:
@@ -1830,6 +1884,8 @@ def danus_block(run):
     allowed, reason, retry = evaluate_limits(limits, Ledger().read(), windows, time.localtime().tm_hour)
     if not allowed:
         return reason, retry, False
+    if project_key(load_config().get("url") or "", run["project_id"]) in read_paused():
+        return "This project is paused on this computer.", None, False
     if not windows:
         return "Your ChatGPT usage cannot be read, so the proof search does not run.", now + 300, True
     for w in windows:
@@ -1952,6 +2008,10 @@ class Service:
                 self.projects_cache = (cfg.get("key"), time.time(), projects)
             except ApiError as e:
                 error = str(e)
+        paused = read_paused()
+        projects = [{**p, "paused": project_key(cfg.get("url") or "", p["id"]) in paused} for p in projects]
+        if allowed and projects and all(p["paused"] for p in projects):
+            allowed, reason, retry = False, "All your projects are paused.", None
         dm = DanusManager()
         return {"backup": backup_public(projects), "update": read_update(), "danus_run": DanusRun().public(), "version": VERSION, "connected": bool(cfg.get("key")) and not error, "url": cfg.get("url", ""), "error": error, "projects": projects, "tools": tools, "provider": provider,
                 "running": self.running(), "allowed": allowed, "reason": reason, "retry_at": retry, "limits": limits, "day": day, "windows": windows,
@@ -2065,6 +2125,12 @@ def make_handler(service, token, port):
                     open_login_terminal(name)
                 else:
                     service.job(f"login-{name}", lambda: check_run([shutil.which(name)] + TOOL_LOGIN[name][1:], f"Signing in to {name}", name))
+            elif path == "/api/project/pause":
+                pid = int(b.get("project_id") or 0)
+                if pid <= 0:
+                    raise Stop("Choose a project.")
+                set_paused(load_config().get("url") or "", [pid], bool(b.get("paused")))
+                service.projects_cache = None
             elif path == "/api/backup/settings":
                 save_backup_settings({k: b[k] for k in ("enabled", "every_days", "keep", "folder") if k in b})
             elif path == "/api/backup/run":
@@ -2204,6 +2270,25 @@ def cmd_limits(a):
     for provider in ("codex",):
         for w in (UsageReader.read(provider) or []):
             print(f"{provider} {w['name']} usage: {w['used']}%")
+    return 0
+
+
+def cmd_projects(a):
+    api, cfg = connect()
+    rows = project_list(api.get("/api/projects"))
+    if a.action != "list":
+        if not a.ids:
+            raise Stop("Give the project number. See: python3 oq.py projects")
+        known = {int(r["id"]) for r in rows}
+        unknown = [x for x in a.ids if x not in known]
+        if unknown:
+            raise Stop(f"You are not a member of project {unknown[0]}.")
+        set_paused(cfg["url"], a.ids, a.action == "pause")
+    paused = read_paused()
+    for r in rows:
+        print(f"#{r['id']} {r['title']}: {'paused' if project_key(cfg['url'], r['id']) in paused else 'active'}")
+    if not rows:
+        print("You have no project yet.")
     return 0
 
 
@@ -2873,6 +2958,10 @@ def parser():
     b.add_argument("--keep", type=int, help="backups kept per project (default 4)")
     b.add_argument("--folder", help="where backups are stored")
     b.set_defaults(fn=cmd_backup)
+    pj = sub.add_parser("projects", help="list your projects, and choose which ones are active")
+    pj.add_argument("action", nargs="?", choices=["list", "pause", "resume"], default="list")
+    pj.add_argument("ids", nargs="*", type=int, help="project numbers")
+    pj.set_defaults(fn=cmd_projects)
     l = sub.add_parser("limits", help="show or change usage limits")
     for flag, kind in (("max-session-percent", int), ("max-weekly-percent", int), ("tasks-per-day", int), ("minutes-per-day", int), ("tokens-per-day", int), ("task-minutes", int), ("hours", str), ("danus-workers", int), ("danus-minutes", int)):
         l.add_argument("--" + flag, type=kind)
@@ -2945,6 +3034,7 @@ button.btn{border:1px solid var(--line);background:var(--panel);color:var(--text
 .row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px solid var(--line)}.row:first-of-type{border-top:0}.row>div{min-width:0}.row small{display:block;color:var(--muted)}.pill{flex:none;padding:2px 9px;border-radius:99px;background:var(--soft);color:var(--accent);font-size:12px;font-weight:700}.pill.good{background:var(--goodbg);color:var(--good)}.pill.warn{background:var(--warnbg);color:var(--warn)}
 .log{max-height:240px;overflow:auto;font:12px/1.6 ui-monospace,Menlo,monospace;white-space:pre-wrap;overflow-wrap:anywhere}.log span{color:var(--muted);margin-right:8px}.empty{color:var(--muted);padding:6px 0}
 label.f{display:grid;gap:4px;margin-bottom:12px;font-weight:650;font-size:13px}label.f small{font-weight:400;color:var(--muted)}input[type=text],input[type=password],input[type=number],select{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--text);font:inherit}input[type=range]{width:100%;accent-color:var(--accent)}.check{display:flex;gap:8px;align-items:center;padding:4px 0;font-weight:500}.ver{margin-top:auto;display:grid;gap:2px;padding:10px 11px 2px;color:#c7c9f0}.ver small{font-size:11.5px}.ver button{all:unset;cursor:pointer;margin-top:3px;font-size:11.5px;font-weight:700;color:#fff;text-decoration:underline}.ver a{margin-top:3px;font-size:11.5px;color:#c7c9f0}.ver button:focus-visible{outline:2px solid #fff;outline-offset:2px}.update{display:flex;align-items:center;justify-content:space-between;gap:12px;background:var(--soft);border-color:transparent}.update div{display:grid;min-width:0}.update span{color:var(--muted);font-size:13px}.update a.btn{border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:8px;padding:8px 13px;font-weight:650;text-decoration:none}.run-form h3{font-size:13px;margin:0 0 8px}.run-form textarea{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--text);font:inherit;resize:vertical}.run-btn{width:100%;padding:12px;font-size:15px}.pill.bad{background:var(--badbg);color:var(--bad)}.err{padding:9px 11px;border-radius:8px;background:var(--badbg);color:var(--bad);margin-bottom:12px;overflow-wrap:anywhere}.note{padding:9px 11px;border-radius:8px;background:var(--soft);font-size:13px;margin:10px 0}.code{font:700 20px ui-monospace,Menlo,monospace;letter-spacing:.06em}.steps{display:grid;gap:6px;margin:0 0 12px;padding:0;list-style:none}.steps li{display:flex;gap:8px;align-items:center}.steps i{width:20px;height:20px;border-radius:50%;display:grid;place-items:center;background:var(--line);font-style:normal;font-size:11px;font-weight:800}.steps li.ok i{background:var(--good);color:#fff}
+.toggle{all:unset;flex:none;display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-size:12.5px;font-weight:700;color:var(--muted);min-width:86px;justify-content:flex-end}.toggle i{position:relative;width:34px;height:20px;border-radius:99px;background:var(--line);transition:background .15s}.toggle i:after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 1px 2px #0005;transition:left .15s}.toggle[aria-checked=true]{color:var(--good)}.toggle[aria-checked=true] i{background:var(--good)}.toggle[aria-checked=true] i:after{left:16px}.toggle:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:6px}.row.off b{color:var(--muted)}
 @media(max-width:680px){.app{display:block}nav{flex-direction:row;overflow-x:auto;padding:8px}.brand{display:none}nav button{flex:none}.ver{margin:0 0 0 auto;flex:none;display:flex;align-items:center;gap:8px;padding:0 6px}.ver small:first-child,.ver a{display:none}.update{flex-wrap:wrap}main{padding:16px}.grid{grid-template-columns:minmax(0,1fr)}.hero{flex-wrap:wrap}.hero .btn{width:100%}}
 </style></head><body><div class="app"><nav aria-label="Sections"><div class="brand">Open Questions AI</div><button data-v="home">Home</button><button data-v="limits">Usage limits</button><button data-v="danus">Prove new facts</button><button data-v="backup">Backups</button><button data-v="account">Accounts</button><div class=ver id=ver></div></nav><main id="m">Loading…</main></div>
 <script>
@@ -2965,9 +3055,9 @@ const usage=()=>{const l=S.limits,d=S.day;let h='<section class=panel><h2>Usage 
  h+=meter('Tasks',d.tasks,l.tasks_per_day,`${d.tasks} of ${l.tasks_per_day||'∞'}`)+meter('Computing time',d.seconds/60,l.minutes_per_day,`${Math.round(d.seconds/60)} of ${l.minutes_per_day||'∞'} min`)+meter('Tokens',d.tokens,l.tokens_per_day,`${d.tokens.toLocaleString()} of ${l.tokens_per_day?l.tokens_per_day.toLocaleString():'∞'}`);return h+'</section>'};
 const updateBanner=()=>{const u=S.update;if(!u?.available)return'';return`<section class="panel update"><div><b>Version ${e(u.latest)} is available</b><span>You have version ${e(u.current)}.${u.mode==='installer'?' Download the new app.':S.running||S.danus_run?.active?' Stop the current work to update.':''}</span></div>${u.mode==='installer'?(u.download_url?`<a class="btn primary" href="${e(u.download_url)}" target=_blank rel="noopener noreferrer">Download</a>`:''):`<button class="btn primary" data-a=updateapply ${S.running||S.danus_run?.active||updating?'disabled':''}>${updating?'Updating…':'Update now'}</button>`}</section>`};
 const versionBox=()=>{const u=S.update||{};const label=u.available?`Version ${u.latest} available`:u.error?'Check failed':u.checked_at?'Up to date':'Not checked yet';return`<small>Version ${e(S.version)}</small><small>${e(label)}</small><button data-a=updatecheck ${checking?'disabled':''}>${checking?'Checking…':'Check for updates'}</button><a href="https://github.com/LudovicPatey/projects" target=_blank rel="noopener noreferrer">Source code (AGPL-3.0)</a>`};
-const home=()=>`<h1>Home</h1><p class=sub>Your computer helps your research projects, within the limits you set.</p>${updateBanner()}${hero()}<div class=grid>${usage()}<section class=panel><h2>Your projects</h2>${S.projects.map(p=>`<div class=row><div><b>${e(p.title)}</b><small>${p.review?p.review+' reference(s) to validate':'Nothing to validate'}</small></div><span class="pill ${p.waiting?'warn':'good'}">${p.waiting} waiting</span></div>`).join('')||'<div class=empty>No project yet.</div>'}</section></div><section class=panel style="margin-top:14px"><h2>Activity</h2><div class=log tabindex=0>${S.log.slice().reverse().map(x=>`<div><span>${e(x.at)}</span>${e(x.text)}</div>`).join('')||'<div class=empty>Nothing yet.</div>'}</div></section>`;
+const home=()=>`<h1>Home</h1><p class=sub>Your computer helps your research projects, within the limits you set.</p>${updateBanner()}${hero()}<div class=grid>${usage()}<section class=panel><h2>Your projects</h2>${S.projects.map(p=>`<div class="row ${p.paused?'off':''}"><div><b>${e(p.title)}</b><small>${p.waiting} waiting${p.review?' · '+p.review+' reference(s) to validate':''}</small></div><button class=toggle role=switch aria-checked=${!p.paused} aria-label="${e(p.title)}: ${p.paused?'paused':'active'}" data-pswitch=${p.id}>${p.paused?'Paused':'Active'}<i></i></button></div>`).join('')||'<div class=empty>No project yet.</div>'}</section></div><section class=panel style="margin-top:14px"><h2>Activity</h2><div class=log tabindex=0>${S.log.slice().reverse().map(x=>`<div><span>${e(x.at)}</span>${e(x.text)}</div>`).join('')||'<div class=empty>Nothing yet.</div>'}</div></section>`;
 const num=(k,l,h,min,max,unit)=>`<label class=f>${e(l)}<small>${e(h)}</small><input type=number data-l=${k} min=${min} max=${max} value="${e(draft[k])}"></label>`;
-const limits=()=>`<h1>Usage limits</h1><p class=sub>Keep your AI subscription for your own work. The client stops before crossing these limits.</p><div class=grid><section class=panel><h2>Share of your subscription</h2><label class=f>Stop at this share of the session limit: ${draft.max_session_percent}%<small>ChatGPT reports this directly.</small><input type=range min=5 max=100 step=5 data-l=max_session_percent value="${draft.max_session_percent}"></label><label class=f>Stop at this share of the weekly limit: ${draft.max_weekly_percent}%<input type=range min=5 max=100 step=5 data-l=max_weekly_percent value="${draft.max_weekly_percent}"></label><label class=f>Working hours<small>For example 22-7 for nights. Empty means all day.</small><input type=text data-l=hours value="${e(draft.hours)}" placeholder="All day"></label></section><section class=panel><h2>Daily caps</h2>${num('tasks_per_day','Tasks per day','0 means no cap.',0,1000)}${num('minutes_per_day','Computing minutes per day','0 means no cap.',0,1440)}${num('tokens_per_day','Tokens per day','0 means no cap.',0,10000000000)}${num('task_minutes','Maximum minutes per task','A longer task is stopped.',1,720)}</section></div><section class=panel style="margin-top:14px"><h2>What this computer may do</h2>${[['extract','Extract facts from new files'],['ask','Answer @AI questions'],['bib','Suggest references'],['derive','Prove new facts automatically, without pressing Start (uses more of your subscription)']].map(([k,l])=>`<label class=check><input type=checkbox data-k=${k} ${draft.kinds.includes(k)?'checked':''}> ${l}</label>`).join('')}<p><button class="btn primary" data-a=save>Save limits</button></p></section>`;
+const limits=()=>`<h1>Usage limits</h1><p class=sub>Keep your AI subscription for your own work. These limits apply to all your active projects together.</p><div class=grid><section class=panel><h2>Share of your subscription</h2><label class=f>Stop at this share of the session limit: ${draft.max_session_percent}%<small>ChatGPT reports this directly.</small><input type=range min=5 max=100 step=5 data-l=max_session_percent value="${draft.max_session_percent}"></label><label class=f>Stop at this share of the weekly limit: ${draft.max_weekly_percent}%<input type=range min=5 max=100 step=5 data-l=max_weekly_percent value="${draft.max_weekly_percent}"></label><label class=f>Working hours<small>For example 22-7 for nights. Empty means all day.</small><input type=text data-l=hours value="${e(draft.hours)}" placeholder="All day"></label></section><section class=panel><h2>Daily caps</h2>${num('tasks_per_day','Tasks per day','0 means no cap.',0,1000)}${num('minutes_per_day','Computing minutes per day','0 means no cap.',0,1440)}${num('tokens_per_day','Tokens per day','0 means no cap.',0,10000000000)}${num('task_minutes','Maximum minutes per task','A longer task is stopped.',1,720)}</section></div><section class=panel style="margin-top:14px"><h2>What this computer may do</h2>${[['extract','Extract facts from new files'],['ask','Answer @AI questions'],['bib','Suggest references'],['derive','Prove new facts automatically, without pressing Start (uses more of your subscription)']].map(([k,l])=>`<label class=check><input type=checkbox data-k=${k} ${draft.kinds.includes(k)?'checked':''}> ${l}</label>`).join('')}<p><button class="btn primary" data-a=save>Save limits</button></p></section>`;
 const account=()=>{const t=n=>{const x=S.tools[n],j=S.jobs['install-'+n]?.running,g=S.jobs['login-'+n]?.running;return`<div class=row><div><b>${toolName(n)}</b><small>${x.installed?(x.signed_in?'Installed and signed in':'Installed, sign-in needed'):'Not installed'}</small></div>${!x.installed?`<button class=btn data-tool=install data-n=${n} ${j?'disabled':''}>${j?'Installing…':'Install'}</button>`:!x.signed_in?`<button class="btn primary" data-tool=login data-n=${n} ${g?'disabled':''}>${g?'Check your browser…':'Sign in'}</button>`:`<button class=btn data-use=${n} ${S.provider===n?'disabled':''}>${S.provider===n?'In use':'Use this'}</button>`}</div>`};
  return`<h1>Accounts</h1><p class=sub>The app uses your own AI account, on this computer.</p><section class=panel><h2>1. Choose your AI</h2>${t('claude')}${t('codex')}</section><section class=panel><h2>2. Connect to the platform</h2>${S.connected?`<div class=row><div><b>Connected</b><small>${e(S.url)}</small></div><button class="btn danger" data-a=disconnect>Disconnect</button></div>`:`<label class=f>Platform address<input type=text id=url value="${e(S.url||'https://projects.ludovicpatey.com')}"></label><label class=f>Personal key<small>Create it on your profile page on the platform.</small><input type=password id=key autocomplete=off placeholder="ouk_…"></label><button class="btn primary" data-a=connect>Connect</button>`}</section><section class=panel><h2>3. How AI use is paid</h2><label class=check><input type=radio name=billing data-billing=subscription ${S.limits.ai_billing==='subscription'?'checked':''}> <span><b>My subscription only</b> (recommended). API keys on this computer are ignored.</span></label><label class=check><input type=radio name=billing data-billing=api ${S.limits.ai_billing==='api'?'checked':''}> <span><b>Allow a paid API key.</b> The provider charges each use.</span></label><div class=note>If you turned on <b>usage credits</b> in your Claude settings, background work can spend them after your plan limit. Keep them off, or set a monthly cap.</div></section>`};
 const fmtMin=m=>{m=Math.round(m);return m>=60?`${Math.floor(m/60)} h ${String(m%60).padStart(2,'0')}`:`${m} min`};
@@ -2975,9 +3065,9 @@ const runLabels={starting:['Starting','warn'],running:['Running','good'],waiting
 const runStatus=r=>{if(!r.status||r.status==='idle')return'';const l=runLabels[r.status]||[r.status,''];const active=r.active;let h=`<section class="panel hero ${r.status==='running'?'on':active?'hold':''}"><span class=dot></span><div><b>Proof search: ${e(l[0])}</b><span>${r.status==='waiting'?e(r.wait_reason||'')+(r.retry_at?' · continues around '+e(when(r.retry_at)):''):active?'Your limits are checked continuously.':r.stop_reason?'Stopped at '+e(r.stop_reason)+'.':''}</span></div>${active?`<button class="btn danger" data-a=danusstop ${r.status==='stopping'?'disabled':''}>${r.status==='stopping'?'Stopping…':'Stop now'}</button>`:''}</section>`;
  if(active){const sec=r.active_seconds||0;h+='<section class=panel><h2>This run</h2>'+(r.minutes?meter('Running time',sec/60,r.minutes,`${fmtMin(sec/60)} of ${fmtMin(r.minutes)}`):meter('Running time',0,0,`${fmtMin(sec/60)}, no time limit`));for(const w of S.windows||[]){const cap=w.name==='weekly'?Math.min(r.stop_weekly,S.limits.max_weekly_percent):Math.min(r.stop_session,S.limits.max_session_percent);h+=meter(`${w.name==='weekly'?'Weekly':'Session'} usage`,w.used,100,`${w.used}%, stops at ${cap}%`+(w.resets_at?' · resets '+when(w.resets_at):''),cap)}h+=`<div class=row><div><b>New facts</b><small>${r.on_limit==='resume'?'Continues automatically after each reset':'Ends at the first limit'}</small></div><span class="pill good">${r.fact_count}</span></div></section>`}
  else if(r.status&&r.status!=='idle')h+=`<section class=panel><div class=row><div><b>Last run</b><small>${fmtMin((r.active_seconds||0)/60)} of computing</small></div><span class="pill good">${r.fact_count} new fact(s)</span></div></section>`;return h};
-const runForm=()=>{const l=S.limits;if(!R||!S.projects.some(p=>p.id===R.project_id)){R={project_id:S.projects[0]?.id||0,goal:'',prompt:R?.prompt||'',minutes:120,stop_session:Math.min(40,l.max_session_percent),stop_weekly:Math.min(50,l.max_weekly_percent),on_limit:'stop',workers:l.danus_workers};options()}
+const runForm=()=>{const l=S.limits;if(!R||!S.projects.some(p=>p.id===R.project_id&&!p.paused)){R={project_id:(S.projects.find(p=>!p.paused)||{}).id||0,goal:'',prompt:R?.prompt||'',minutes:120,stop_session:Math.min(40,l.max_session_percent),stop_weekly:Math.min(50,l.max_weekly_percent),on_limit:'stop',workers:l.danus_workers};options()}
  if(!S.projects.length)return'<section class=panel><div class=empty>Join a project on the platform first.</div></section>';
- const o=O[R.project_id]||{questions:[],requests:[]};const time=R.minutes?fmtMin(R.minutes):'no time limit';return`<section class="panel run-form"><h2>New proof search</h2><div class=grid><div><label class=f>Project<select data-r=project_id>${S.projects.map(p=>`<option value=${p.id} ${p.id===R.project_id?'selected':''}>${e(p.title)}</option>`).join('')}</select></label><label class=f>Goal<select data-r=goal><option value="">The whole project</option>${o.requests.length?`<optgroup label="Waiting requests">${o.requests.map(x=>`<option value="t${x.id}" ${R.goal==='t'+x.id?'selected':''}>${e(x.label)}</option>`).join('')}</optgroup>`:''}${o.questions.length?`<optgroup label="Questions">${o.questions.map(x=>`<option value="q${x.id}" ${R.goal==='q'+x.id?'selected':''}>${e(x.title)}</option>`).join('')}</optgroup>`:''}</select></label><label class=f>Instructions (optional)<textarea data-r=prompt rows=3 maxlength=4000 placeholder="For example: focus on the case k = 3">${e(R.prompt)}</textarea></label><label class=f><span>Parallel agents: <span id=rw>${R.workers}</span></span><small>More agents use your subscription faster.</small><input type=range min=1 max=7 data-r=workers value="${R.workers}"></label></div><div><h3>Stop when</h3><label class=f>Running time (minutes)<small>Time spent waiting does not count. 0 means no time limit.</small><input type=number min=0 max=43200 step=15 data-r=minutes value="${R.minutes}"></label><label class=f><span>Session usage reaches <span id=rs>${R.stop_session}</span>%</span><small>Your general limit is ${l.max_session_percent}%.</small><input type=range min=5 max=${l.max_session_percent} step=5 data-r=stop_session value="${R.stop_session}"></label><label class=f><span>Weekly usage reaches <span id=rk>${R.stop_weekly}</span>%</span><small>Your general limit is ${l.max_weekly_percent}%.</small><input type=range min=5 max=${l.max_weekly_percent} step=5 data-r=stop_weekly value="${R.stop_weekly}"></label><h3>When a usage limit is reached</h3><label class=check><input type=radio name=onlimit data-r=on_limit value=stop ${R.on_limit==='stop'?'checked':''}> <span><b>End the run</b></span></label><label class=check><input type=radio name=onlimit data-r=on_limit value=resume ${R.on_limit==='resume'?'checked':''}> <span><b>Wait, and continue after the reset</b></span></label></div></div><div class=note id=runsum>${runSummary(time)}</div><button class="btn primary run-btn" data-a=danusrun>▶ Start proving</button></section>`};
+ const o=O[R.project_id]||{questions:[],requests:[]};const time=R.minutes?fmtMin(R.minutes):'no time limit';return`<section class="panel run-form"><h2>New proof search</h2><div class=grid><div><label class=f>Project<select data-r=project_id>${S.projects.map(p=>`<option value=${p.id} ${p.id===R.project_id?'selected':''} ${p.paused?'disabled':''}>${e(p.title)}${p.paused?' (paused)':''}</option>`).join('')}</select></label><label class=f>Goal<select data-r=goal><option value="">The whole project</option>${o.requests.length?`<optgroup label="Waiting requests">${o.requests.map(x=>`<option value="t${x.id}" ${R.goal==='t'+x.id?'selected':''}>${e(x.label)}</option>`).join('')}</optgroup>`:''}${o.questions.length?`<optgroup label="Questions">${o.questions.map(x=>`<option value="q${x.id}" ${R.goal==='q'+x.id?'selected':''}>${e(x.title)}</option>`).join('')}</optgroup>`:''}</select></label><label class=f>Instructions (optional)<textarea data-r=prompt rows=3 maxlength=4000 placeholder="For example: focus on the case k = 3">${e(R.prompt)}</textarea></label><label class=f><span>Parallel agents: <span id=rw>${R.workers}</span></span><small>More agents use your subscription faster.</small><input type=range min=1 max=7 data-r=workers value="${R.workers}"></label></div><div><h3>Stop when</h3><label class=f>Running time (minutes)<small>Time spent waiting does not count. 0 means no time limit.</small><input type=number min=0 max=43200 step=15 data-r=minutes value="${R.minutes}"></label><label class=f><span>Session usage reaches <span id=rs>${R.stop_session}</span>%</span><small>Your general limit is ${l.max_session_percent}%.</small><input type=range min=5 max=${l.max_session_percent} step=5 data-r=stop_session value="${R.stop_session}"></label><label class=f><span>Weekly usage reaches <span id=rk>${R.stop_weekly}</span>%</span><small>Your general limit is ${l.max_weekly_percent}%.</small><input type=range min=5 max=${l.max_weekly_percent} step=5 data-r=stop_weekly value="${R.stop_weekly}"></label><h3>When a usage limit is reached</h3><label class=check><input type=radio name=onlimit data-r=on_limit value=stop ${R.on_limit==='stop'?'checked':''}> <span><b>End the run</b></span></label><label class=check><input type=radio name=onlimit data-r=on_limit value=resume ${R.on_limit==='resume'?'checked':''}> <span><b>Wait, and continue after the reset</b></span></label></div></div><div class=note id=runsum>${runSummary(time)}</div><button class="btn primary run-btn" data-a=danusrun>▶ Start proving</button></section>`};
 const runSummary=t=>`Runs for <b>${t}</b>, and stops at <b>${R.stop_session}%</b> of the session or <b>${R.stop_weekly}%</b> of the week. ${R.on_limit==='resume'?(R.minutes?'It waits for each reset, then continues until the time is used.':'<b>It continues after every reset until you stop it.</b>'):'It ends at the first limit.'}`;
 const options=async()=>{const id=R?.project_id;if(!id||O[id])return;try{const r=await fetch('/api/danus/options',{method:'POST',headers:{'Content-Type':'application/json','X-OQ-Token':T},body:JSON.stringify({project_id:id})});if(r.ok){O[id]=await r.json();if(view==='danus'){const a=document.activeElement;if(a?.dataset?.r!=='goal')render()}}}catch{}};
 const danus=()=>{const d=S.danus,j=S.jobs.danus?.running,r=S.danus_run||{};return`<h1>Prove new facts</h1><p class=sub>A team of AI agents searches for new proofs, using the open-source system Danus. It is the heaviest use of your subscription, so it runs only when you press Start.</p>${d.error?`<div class=err>${e(d.error)}</div>`:''}${d.login?`<section class=panel><div class=note><b>Sign in to ChatGPT to start proving</b><br>Open <a href="${e(d.login.url)}" target=_blank rel="noopener noreferrer">${e(d.login.url)}</a> and enter:<div class=code>${e(d.login.code)}</div></div></section>`:''}${d.ready?runStatus(r)+(r.active?'':runForm())+`<section class=panel><div class=row><div><b>Installed</b><small>Runs in an isolated ${e(d.backend||'machine')}.</small></div><button class="btn danger" data-a=danusremove ${j||r.active?'disabled':''}>Remove the prover</button></div></section>`:`<section class=panel>${d.unavailable?`<div class=note>${e(d.unavailable)}</div>`:j?`<div class=row><div><b>${e(d.step||'Installing')}</b><small>You can keep using your computer.</small></div><span class=pill>In progress</span></div>`:`<p>The first installation downloads about 2 GB and takes several minutes. The agents never see your files: they run in a separate machine.</p><button class="btn primary" data-a=danus>Set up proving</button>`}</section>`}`};
@@ -2987,7 +3077,7 @@ const backup=()=>{const b=S.backup,s=b.settings,j=S.jobs.backup;BD=BD||{...s};co
  const st=!S.connected?['hold','Connect your account','Backups start once this computer is connected.']:busy?['on','Backing up'+(b.current?' '+b.current:''),'You can keep working.']:fails?['hold',fails+' backup(s) failed','Your earlier backups were kept. The client tries again in an hour.']:s.enabled?['on','Automatic backups are on',next?'Next check: '+longDate(next)+'.':'The first backup starts within 15 minutes.']:['','Automatic backups are off','Optional. Nothing is copied to this computer unless you turn them on or press Back up now.'];
  return`<h1>Backups</h1><p class=sub>Dated copies of your projects, on this computer.</p><section class="panel hero ${st[0]}"><span class=dot></span><div><b>${e(st[1])}</b><span>${e(st[2])}</span></div><button class="btn primary" data-a=backupnow ${busy||!S.connected?'disabled':''}>${busy?'Working…':'Back up now'}</button></section>${j?.error?`<div class=err>${e(j.error)}</div>`:''}<div class=grid><section class=panel><h2>Schedule</h2><label class=check><input type=checkbox data-b=enabled ${BD.enabled?'checked':''}> <span><b>Back up automatically</b> (optional)</span></label><label class=f>Frequency<select data-b=every_days>${[[1,'Every day'],[7,'Every week'],[14,'Every 2 weeks'],[30,'Every month']].concat([1,7,14,30].includes(+BD.every_days)?[]:[[+BD.every_days,'Every '+BD.every_days+' days']]).map(([v,l])=>`<option value=${v} ${+BD.every_days===v?'selected':''}>${l}</option>`).join('')}</select></label><label class=f>Backups kept per project<small>Older ones are removed only after a new backup is verified.</small><input type=number min=1 max=100 data-b=keep value="${e(BD.keep)}"></label><label class=f>Folder<small>Leave empty for the default folder.</small><input type=text data-b=folder value="${e(BD.folder)}" placeholder="Open Questions backups"></label><button class="btn primary" data-a=backupsave>Save</button></section><section class=panel><h2>Your backups</h2>${b.projects.map(p=>`<div class=row><div><b>${e(p.title)}</b><small>${p.last_ok?'Last: '+e(longDate(p.last_ok)):'No backup yet'} · ${p.count} kept · ${e(size(p.size))}${p.left?' · no longer a member':''}${p.error?'<br>'+e(p.error):''}${p.missing?'<br>'+p.missing+' file(s) were already missing on the platform':''}</small></div><span class="pill ${p.error?'bad':p.last_ok?'good':'warn'}">${p.error?'Failed':p.last_ok?'Saved':'Waiting'}</span></div>`).join('')||'<div class=empty>No project yet.</div>'}<p style="overflow-wrap:anywhere"><small>${e(b.folder)}</small></p><button class=btn data-a=backupopen>Open the folder</button></section></div><div class=note style="margin-top:14px">When turned on, backups run while this app is open, and catch up when you reopen it. Each one contains what you can see in the project, so keep the folder private. It is a readable copy for you, not a full restore of the platform.</div>`};
 const render=()=>{const a=document.activeElement;if(a&&['INPUT','SELECT','TEXTAREA'].includes(a.tagName)&&view!=='home')return;for(const b of document.querySelectorAll('nav button')){b.classList.toggle('on',b.dataset.v===view);b.setAttribute('aria-current',b.dataset.v===view?'page':'false')}document.getElementById('ver').innerHTML=versionBox();const m=document.getElementById('m');const sc=m.querySelector('.log')?.scrollTop;m.innerHTML=(msg?`<div class=err role=alert>${e(msg)}</div>`:'')+{home,limits,danus,backup,account}[view]();if(sc)m.querySelector('.log').scrollTop=sc};
-document.addEventListener('click',ev=>{const b=ev.target.closest('button');if(!b)return;if(b.dataset.v){view=b.dataset.v;msg='';draft={...S.limits};BD=null;return render()}if(b.dataset.go){view=b.dataset.go;return render()}if(b.dataset.tool)return call('/api/tool/'+b.dataset.tool,{tool:b.dataset.n});if(b.dataset.use)return call('/api/limits',{}).then(()=>call('/api/start',{provider:b.dataset.use}));const x=b.dataset.a;if(x==='start')call('/api/start',{provider:S.provider});if(x==='stop')call('/api/stop');if(x==='disconnect'&&confirm('Disconnect this computer?'))call('/api/disconnect');if(x==='connect')call('/api/connect',{url:document.getElementById('url').value,key:document.getElementById('key').value});if(x==='save'){const{paused,...rest}=draft;document.activeElement?.blur();call('/api/limits',rest).then(()=>{if(!msg)draft={...S.limits}})}if(x==='updatecheck'){checking=true;render();call('/api/update/check').finally(()=>{checking=false;render()})}if(x==='updateapply'&&confirm('Install version '+S.update.latest+' now? The client restarts.')){updating=true;render();call('/api/update/apply').finally(()=>{setTimeout(()=>{updating=false;load()},2500)})}if(x==='backupnow')call('/api/backup/run');if(x==='backupopen')call('/api/backup/open');if(x==='backupsave'){document.activeElement?.blur();call('/api/backup/settings',BD).then(()=>{if(!msg){BD=null;render()}})}if(x==='danus')call('/api/danus/setup');if(x==='danusstop'&&confirm('Stop the proof search now? Its facts so far are kept.'))call('/api/danus/stop');if(x==='danusrun'){document.activeElement?.blur();const g=R.goal||'',b={project_id:R.project_id,prompt:R.prompt,minutes:R.minutes,stop_session:R.stop_session,stop_weekly:R.stop_weekly,on_limit:R.on_limit,workers:R.workers,task_id:g[0]==='t'?+g.slice(1):null,question_id:g[0]==='q'?+g.slice(1):null};if(R.on_limit==='resume'&&!R.minutes&&!confirm('This run continues after every reset until you stop it. Start it?'))return;call('/api/danus/run',b).then(()=>{if(!msg)O={}})}if(x==='danusremove'&&confirm('Remove the prover and its isolated machine?'))call('/api/danus/remove')});
+document.addEventListener('click',ev=>{const b=ev.target.closest('button');if(!b)return;if(b.dataset.v){view=b.dataset.v;msg='';draft={...S.limits};BD=null;return render()}if(b.dataset.go){view=b.dataset.go;return render()}if(b.dataset.pswitch){const q=S.projects.find(p=>p.id===+b.dataset.pswitch);return call('/api/project/pause',{project_id:q.id,paused:!q.paused})}if(b.dataset.tool)return call('/api/tool/'+b.dataset.tool,{tool:b.dataset.n});if(b.dataset.use)return call('/api/limits',{}).then(()=>call('/api/start',{provider:b.dataset.use}));const x=b.dataset.a;if(x==='start')call('/api/start',{provider:S.provider});if(x==='stop')call('/api/stop');if(x==='disconnect'&&confirm('Disconnect this computer?'))call('/api/disconnect');if(x==='connect')call('/api/connect',{url:document.getElementById('url').value,key:document.getElementById('key').value});if(x==='save'){const{paused,...rest}=draft;document.activeElement?.blur();call('/api/limits',rest).then(()=>{if(!msg)draft={...S.limits}})}if(x==='updatecheck'){checking=true;render();call('/api/update/check').finally(()=>{checking=false;render()})}if(x==='updateapply'&&confirm('Install version '+S.update.latest+' now? The client restarts.')){updating=true;render();call('/api/update/apply').finally(()=>{setTimeout(()=>{updating=false;load()},2500)})}if(x==='backupnow')call('/api/backup/run');if(x==='backupopen')call('/api/backup/open');if(x==='backupsave'){document.activeElement?.blur();call('/api/backup/settings',BD).then(()=>{if(!msg){BD=null;render()}})}if(x==='danus')call('/api/danus/setup');if(x==='danusstop'&&confirm('Stop the proof search now? Its facts so far are kept.'))call('/api/danus/stop');if(x==='danusrun'){document.activeElement?.blur();const g=R.goal||'',b={project_id:R.project_id,prompt:R.prompt,minutes:R.minutes,stop_session:R.stop_session,stop_weekly:R.stop_weekly,on_limit:R.on_limit,workers:R.workers,task_id:g[0]==='t'?+g.slice(1):null,question_id:g[0]==='q'?+g.slice(1):null};if(R.on_limit==='resume'&&!R.minutes&&!confirm('This run continues after every reset until you stop it. Start it?'))return;call('/api/danus/run',b).then(()=>{if(!msg)O={}})}if(x==='danusremove'&&confirm('Remove the prover and its isolated machine?'))call('/api/danus/remove')});
 document.addEventListener('input',ev=>{const t=ev.target;if(t.dataset.b&&BD){const k=t.dataset.b;BD[k]=k==='enabled'?t.checked:k==='folder'?t.value:+t.value;if(t.type==='checkbox'||t.tagName==='SELECT')t.blur()}if(t.dataset.l){draft[t.dataset.l]=t.type==='text'?t.value:+t.value;if(t.type==='range'){t.closest('label').firstChild.textContent=t.closest('label').firstChild.textContent.replace(/\d+%/,t.value+'%')}}if(t.dataset.k){draft.kinds=['extract','ask','bib','derive'].filter(k=>k===t.dataset.k?t.checked:draft.kinds.includes(k))}if('danus'in t.dataset)draft.danus_enabled=t.checked;if(t.dataset.r&&R){const k=t.dataset.r;R[k]=['goal','prompt','on_limit'].includes(k)?t.value:+t.value;if(k==='project_id'){R.goal='';t.blur();options();render()}const set=(i,v)=>{const x=document.getElementById(i);if(x)x.textContent=v};if(k==='workers')set('rw',t.value);if(k==='stop_session')set('rs',t.value);if(k==='stop_weekly')set('rk',t.value);const n=document.getElementById('runsum');if(n)n.innerHTML=runSummary(R.minutes?fmtMin(R.minutes):'no time limit')}});
 document.addEventListener('change',ev=>{const b=ev.target.dataset?.billing;if(!b)return;ev.target.blur();if(b==='api'&&!confirm('Allow a paid API key? The AI provider will charge each use to that key.'))return load();call('/api/limits',{ai_billing:b}).then(()=>{if(!msg)draft={...S.limits}})});
 load();setInterval(()=>{if(!document.hidden)load()},3000);

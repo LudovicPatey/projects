@@ -38,7 +38,7 @@ const FEATURES = [
   {
     kicker: 'The AI client', title: 'An app for your computer, with your own limits',
     text: 'The client connects your Claude or ChatGPT account to your projects. It processes new papers, answers @AI and suggests references, then waits whenever you reach a limit you chose.',
-    points: ['A graphic interface, and a full command line for servers', 'Set daily caps, working hours, and a share of your ChatGPT limits', 'Start proof searches with a time limit and usage stops, in an isolated machine', 'Optionally keep regular backups of your projects on your computer'],
+    points: ['A graphic interface, and a full command line for servers', 'Choose which projects are active, and pause the others', 'Set daily caps, working hours, and a share of your ChatGPT limits', 'Start proof searches with a time limit and usage stops, in an isolated machine', 'Optionally keep regular backups of your projects on your computer'],
     src: 'assets/img/guide/app-home.webp', img: 'app-home.webp', w: 1560, h: 1140, alt: 'The AI client showing its status, usage against the limits, and the waiting work of a project',
   },
 ];
