@@ -117,7 +117,10 @@ final class ProjectAdmin
         Db::run("DELETE FROM activity WHERE project_id = ? AND item_type = 'fact'", [$pid]);
         $out['tasks'] = Db::run('DELETE FROM ai_tasks WHERE project_id = ? AND ' . self::FACT_TASKS, [$pid])->rowCount();
         Db::run('UPDATE notations SET definition_fact_id = NULL WHERE project_id = ?', [$pid]);
-        if ($notation) $out['notation'] = Db::run('DELETE FROM notations WHERE project_id = ?', [$pid])->rowCount();
+        if ($notation) {
+            Db::run("DELETE FROM comments WHERE project_id = ? AND target_type = 'notation'", [$pid]);
+            $out['notation'] = Db::run('DELETE FROM notations WHERE project_id = ?', [$pid])->rowCount();
+        }
         // Revisions, sources, dependencies, reviews, other proofs, Lean proofs, rewrites and the answers they back go with their fact.
         Db::run('DELETE FROM facts WHERE project_id = ?', [$pid]);
         return $out;
@@ -125,7 +128,11 @@ final class ProjectAdmin
 
     private static function clearNotation(int $pid, bool $all): array
     {
-        if (!$all) return ['entries' => Db::run("DELETE FROM notations WHERE project_id = ? AND status <> 'agreed'", [$pid])->rowCount(), 'rephrasings' => 0];
+        if (!$all) {
+            Db::run("DELETE FROM comments WHERE project_id = ? AND target_type = 'notation' AND target_id IN (SELECT id FROM notations WHERE project_id = ? AND status <> 'agreed')", [$pid, $pid]);
+            return ['entries' => Db::run("DELETE FROM notations WHERE project_id = ? AND status <> 'agreed'", [$pid])->rowCount(), 'rephrasings' => 0];
+        }
+        Db::run("DELETE FROM comments WHERE project_id = ? AND target_type = 'notation'", [$pid]);
         $r = Db::run('DELETE FROM fact_rephrasings WHERE fact_id IN (SELECT id FROM facts WHERE project_id = ?)', [$pid])->rowCount();
         Db::run("DELETE FROM ai_tasks WHERE project_id = ? AND kind = 'notation'", [$pid]);
         return ['entries' => Db::run('DELETE FROM notations WHERE project_id = ?', [$pid])->rowCount(), 'rephrasings' => $r];

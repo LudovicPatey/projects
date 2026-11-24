@@ -21,6 +21,7 @@ final class CommentController
             $qid = (int)Db::value('SELECT question_id FROM proof_strategies WHERE id = ?', [$id]);
             return QuestionController::strategyLink($qid, $id) + ['comment' => $comment];
         }
+        if ($type === 'notation') return ['view' => 'facts', 'query' => ['mode' => 'notation', 'notation' => $id, 'comment' => $comment]];
         return ['view' => self::VIEWS[$type], 'id' => $id, 'comment' => $comment];
     }
 

@@ -9,6 +9,12 @@ export const toRewrite = (p) => Math.max(0, (p?.stale || 0) + (p?.unfaithful || 
 /** A symbol as LaTeX between dollars, whatever the person typed. */
 export const asMath = (symbol) => `$${String(symbol || '').trim().replace(/^\$+|\$+$/g, '')}$`;
 
+/** Instances of one general notion, and genuinely different meanings that sources give the symbol. */
+export function splitVariants(variants) {
+  const all = variants || [];
+  return { instances: all.filter((v) => v.relation === 'instance'), clashes: all.filter((v) => v.relation !== 'instance') };
+}
+
 export function entryError(d) {
   if (!String(d?.symbol || '').trim()) return 'Give the symbol, for example \\mathrm{FS}(X).';
   if (String(d.symbol).length > 160) return 'The symbol is too long.';
@@ -16,7 +22,10 @@ export function entryError(d) {
   return null;
 }
 
-export const entryBody = (d) => ({ symbol: String(d.symbol).trim(), meaning_text: String(d.meaning).trim(), note_text: String(d.note || '').trim(), definition_fact_id: d.fact ? +d.fact : null });
+export const entryBody = (d) => ({ symbol: String(d.symbol).trim(), meaning_text: String(d.meaning).trim(), note_text: String(d.note || '').trim(), definition_fact_id: d.fact ? +d.fact : null, ...(d.facts?.length ? { facts: d.facts } : {}) });
+
+/** A symbol that several facts define for themselves: worth making global when they agree on its meaning. */
+export const sharedDraft = (s) => ({ symbol: s.symbol, meaning: s.meanings[0]?.meaning || '', note: s.meanings.length > 1 ? `Facts define it in ${s.meanings.length} ways: the others need another symbol.` : `Defined locally in ${s.facts} facts.`, fact: '', facts: s.meanings[0]?.facts || [] });
 
 /** The rewrite a fact page shows in project notation: one that follows the current notation and that nobody found unfaithful. */
 export function shownRephrasing(fact, wantProject) {

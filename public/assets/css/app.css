@@ -467,6 +467,15 @@ h4.mt { margin-top: 18px; }
 .dep-menu .mi { width: 100%; border: 0; background: none; text-align: left; }
 .dep-menu .mi:hover { background: var(--accent-2); }
 .facts-notation { height: var(--app-h); overflow-y: auto; }
+.fg-views { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--line); background: #fff; }
+.fg-views .muted { margin-left: auto; }
+.fg-hint-star { color: #a16207; font-weight: 700; }
+.star-btn { display: inline-flex; align-items: center; gap: 3px; padding: 2px 5px; border: 0; border-radius: 6px; background: none; color: #98a2b3; font-size: 11.5px; cursor: pointer; }
+.star-btn:hover { background: var(--line-2); color: #a16207; }
+.star-btn.on { color: #ca8a04; }
+.star-btn.on svg { fill: currentColor; }
+.btn.star-toggle.on { border-color: #facc15; background: #fefce8; color: #a16207; }
+.btn.star-toggle.on svg { fill: currentColor; }
 .admin-kpis { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }
 .admin-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; align-items: start; }
 .admin-grid > .panel:first-child { grid-row: span 2; }
@@ -493,9 +502,17 @@ h4.mt { margin-top: 18px; }
 .notation-note { display: flex; gap: 6px; margin: 0; color: var(--warn); font-size: 13px; }
 .notation-note svg { flex: none; margin-top: 2px; }
 .notation-variants { margin: 0; padding-left: 18px; font-size: 13px; }
+.notation-variants-group > small { color: var(--muted); font-size: 11.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .03em; }
+.notation-variants-group.g-clashes > small { color: var(--warn); }
 .notation-variants small { margin-left: 6px; color: var(--muted); }
 .notation-actions { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
 .notation-edit { grid-column: 1 / -1; }
+.notation-talk .comments, .notation-talk .col-comments { height: auto; max-height: 60vh; overflow-y: auto; }
+.notation-talk .ai-head h2 { font-size: 16px; }
+.notation-shared { display: grid; grid-template-columns: fit-content(150px) minmax(0, 1fr) auto; gap: 8px 14px; align-items: start; padding: 10px 2px; border-top: 1px solid var(--line); }
+.warn-text { color: var(--warn); }
+.fact-project-symbols { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; margin: 8px 0 0; }
+@media (max-width: 900px) { .notation-shared { grid-template-columns: minmax(0, 1fr); } }
 .notation-def { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px 12px; padding: 10px 2px; border-top: 1px solid var(--line); }
 .notation-def-main { flex: 1 1 260px; min-width: 0; }
 .notation-def-main p { margin: 4px 0; overflow-wrap: anywhere; }

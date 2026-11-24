@@ -39,6 +39,27 @@ function upload(url, formData, onProgress) {
   });
 }
 
+/**
+ * A GET that sends back the ETag of the previous answer. Returns {changed: false} when the server answers 304,
+ * so that a poll costs neither the server's work nor the transfer when nothing changed.
+ */
+export async function getIfChanged(url, etag) {
+  const headers = { Accept: 'application/json' };
+  if (etag) headers['If-None-Match'] = etag;
+  const res = await fetch(url, { headers, credentials: 'same-origin', cache: 'no-store' });
+  if (res.status === 304) return { changed: false, etag };
+  let data = null;
+  try { data = await res.json(); } catch { /* empty */ }
+  if (!res.ok) { const err = new Error(data?.error || `Request failed (${res.status})`); err.status = res.status; throw err; }
+  return { changed: true, etag: res.headers.get('ETag'), data };
+}
+
+/** The compact facts list arrives as columns: one object per fact again. */
+export function expandFacts(data) {
+  if (!data?.columns) return data?.facts || [];
+  return data.rows.map((row) => Object.fromEntries(data.columns.map((c, i) => [c, row[i]])));
+}
+
 export const api = {
   get: (u) => request('GET', u),
   post: (u, b) => request('POST', u, b ?? {}),

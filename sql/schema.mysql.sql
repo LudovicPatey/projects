@@ -295,6 +295,17 @@ CREATE TABLE IF NOT EXISTS fact_reviews (
   FOREIGN KEY (reviewer_id) REFERENCES users(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- Members mark the facts they find interesting. Shared: everyone sees how many stars a fact has.
+CREATE TABLE IF NOT EXISTS fact_stars (
+  fact_id INT UNSIGNED NOT NULL,
+  user_id INT UNSIGNED NOT NULL,
+  created_at DATETIME NOT NULL,
+  PRIMARY KEY (fact_id, user_id),
+  KEY idx_fact_star_user (user_id),
+  FOREIGN KEY (fact_id) REFERENCES facts(id) ON DELETE CASCADE,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- Other proofs of a fact's statement, proposed by people or AI clients, each reviewed on its own.
 CREATE TABLE IF NOT EXISTS fact_proofs (
   id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -321,7 +332,8 @@ CREATE TABLE IF NOT EXISTS notations (
   symbol_key VARCHAR(160) NOT NULL,       -- compared without spaces or case
   meaning_html MEDIUMTEXT NOT NULL,
   note_html MEDIUMTEXT NULL,              -- how sources differ, e.g. which papers include 0
-  variants_json TEXT NULL,                -- [{symbol, meaning, where}] the same notion written otherwise
+  variants_json TEXT NULL,                -- [{symbol, meaning, where, relation}] the same notion written otherwise
+  facts_json TEXT NULL,                   -- ids of the facts that define it locally, when proposed to make it global
   definition_fact_id INT UNSIGNED NULL,
   status VARCHAR(10) NOT NULL DEFAULT 'proposed', -- proposed, agreed, rejected
   author_id INT UNSIGNED NOT NULL,
@@ -348,6 +360,7 @@ CREATE TABLE IF NOT EXISTS fact_rephrasings (
   statement_html MEDIUMTEXT NOT NULL,
   proof_html MEDIUMTEXT NULL,
   uses_json TEXT NULL,                    -- [{symbol, meaning_here, project_symbol}] how the original reads
+  local_json TEXT NULL,                   -- {symbol: meaning} defined within the fact, in this version
   author_id INT UNSIGNED NOT NULL,
   ai_model VARCHAR(120) NULL,
   ai_user_id INT UNSIGNED NULL,

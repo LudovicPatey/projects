@@ -12,14 +12,16 @@ use App\{Access, Activity, Auth, Db, HttpError, Notify, Provenance, Request, Res
  */
 final class NotationController
 {
-    private const STATUSES = ['proposed', 'agreed', 'rejected'];
+    /** local: too specific to be a project symbol. A rewrite unfolds it, or defines it within the fact. */
+    private const STATUSES = ['proposed', 'agreed', 'local', 'rejected'];
+    private const RELATIONS = ['instance', 'clash'];
     private const MAX_VARIANTS = 20;
 
     public static function list(Request $r): never
     {
         $pid = $r->int('id');
         Access::member($pid);
-        Response::json(['entries' => self::entries($pid), 'definitions' => self::definitions($pid), 'progress' => self::progress($pid), 'hash' => self::hash($pid)]);
+        Response::json(['entries' => self::entries($pid), 'definitions' => self::definitions($pid), 'shared' => self::shared($pid), 'progress' => self::progress($pid), 'hash' => self::hash($pid)]);
     }
 
     /** People and AI clients propose an entry. Only a person agrees on it. */
@@ -37,7 +39,8 @@ final class NotationController
             $variants = json_decode((string)$same['variants_json'], true) ?: [];
             foreach ($variants as $v) if (self::sameText((string)$v['meaning'], $meaning)) throw new HttpError(409, 'This meaning is already recorded for this symbol.');
             if (count($variants) >= self::MAX_VARIANTS) throw new HttpError(409, 'This symbol already lists many meanings.');
-            $variants[] = ['symbol' => $data['symbol'], 'meaning' => mb_substr($meaning, 0, 1000), 'where' => mb_substr(trim($r->str('where')) ?: 'found by ' . ($model ?: 'an AI client'), 0, 300)];
+            $variants[] = ['symbol' => $data['symbol'], 'meaning' => mb_substr($meaning, 0, 1000), 'where' => mb_substr(trim($r->str('where')) ?: 'found by ' . ($model ?: 'an AI client'), 0, 300),
+                'relation' => in_array($r->str('relation'), self::RELATIONS, true) ? $r->str('relation') : 'clash'];
             Db::update('notations', ['variants_json' => json_encode($variants, JSON_UNESCAPED_UNICODE), 'updated_at' => Db::now()], 'id = :id', ['id' => $same['id']]);
             Response::json(self::one((int)$same['id']) + ['merged' => true]);
         }
@@ -66,7 +69,7 @@ final class NotationController
         self::humanOnly();
         $n = self::row($r->int('nid'));
         $status = $r->str('status');
-        if (!in_array($status, self::STATUSES, true)) throw new HttpError(422, 'The status must be proposed, agreed or rejected.');
+        if (!in_array($status, self::STATUSES, true)) throw new HttpError(422, 'The status must be proposed, agreed, local or rejected.');
         if ($status === 'agreed' && Db::value("SELECT 1 FROM notations WHERE project_id = ? AND symbol_key = ? AND status = 'agreed' AND id <> ?", [$n['project_id'], $n['symbol_key'], $n['id']])) {
             throw new HttpError(409, 'This symbol already has an agreed meaning. Change or reject that entry first.');
         }
@@ -83,6 +86,7 @@ final class NotationController
         $n = self::row($r->int('nid'));
         if ((int)$n['author_id'] !== Auth::id()) Access::owner((int)$n['project_id']);
         if ($n['status'] === 'agreed') throw new HttpError(409, 'An agreed entry cannot be deleted. Reject it first.');
+        Db::run("DELETE FROM comments WHERE target_type = 'notation' AND target_id = ?", [$n['id']]);
         Db::run('DELETE FROM notations WHERE id = ?', [$n['id']]);
         Response::json(['ok' => true]);
     }
@@ -101,10 +105,11 @@ final class NotationController
         $proof = $unchanged ? ($rev['proof_html'] ?: null) : ($proofText !== '' ? Sanitizer::clean(Sanitizer::textToHtml($proofText, $pid))['html'] : null);
         if (!$unchanged && $rev['proof_html'] && $proof === null) throw new HttpError(422, 'The fact has a proof: send proof_text too.');
         $uses = self::uses($r->input('uses', []));
+        $local = self::localNotation($r->input('local_notation', []));
         $model = Provenance::agentModel($r);
         $id = Db::insert('fact_rephrasings', Provenance::stamp($model, $r->input('generation_seconds')) + [
             'fact_id' => $f['id'], 'revision_no' => $f['current_revision'], 'notation_hash' => self::hash($pid), 'unchanged' => $unchanged ? 1 : 0,
-            'statement_html' => $statement['html'], 'proof_html' => $proof, 'uses_json' => $uses ? json_encode($uses, JSON_UNESCAPED_UNICODE) : null,
+            'statement_html' => $statement['html'], 'proof_html' => $proof, 'uses_json' => $uses ? json_encode($uses, JSON_UNESCAPED_UNICODE) : null, 'local_json' => $local ? json_encode($local, JSON_UNESCAPED_UNICODE) : null,
             'author_id' => Auth::id(), 'ai_model' => $model, 'created_at' => Db::now(),
         ]);
         Activity::touch($pid, 'fact', (int)$f['id'], 'rephrased', $id);
@@ -134,7 +139,7 @@ final class NotationController
         $pid = $r->int('id');
         Access::member($pid);
         $hash = self::hash($pid);
-        if ($hash === self::EMPTY) throw new HttpError(422, 'Agree on at least one notation entry first.');
+        if ($hash === self::EMPTY) throw new HttpError(422, 'Agree on at least one notation entry, or mark one as local, first.');
         $queued = 0;
         foreach (self::states($pid) as $fid => $s) {
             if (!in_array($s['state'], ['none', 'stale', 'unfaithful'], true) || $s['queued']) continue;
@@ -151,16 +156,23 @@ final class NotationController
     /** Changes whenever the agreed notation changes: a rephrasing that followed another one is out of date. */
     public static function hash(int $pid): string
     {
-        $rows = Db::all("SELECT id, symbol_key, meaning_html FROM notations WHERE project_id = ? AND status = 'agreed' ORDER BY id", [$pid]);
-        return $rows ? sha1(json_encode(array_map(fn($n) => [(int)$n['id'], $n['symbol_key'], $n['meaning_html']], $rows))) : self::EMPTY;
+        // Local entries count too: a rewrite unfolds them.
+        $rows = Db::all("SELECT id, symbol_key, meaning_html, status FROM notations WHERE project_id = ? AND status IN ('agreed', 'local') ORDER BY id", [$pid]);
+        return $rows ? sha1(json_encode(array_map(fn($n) => [(int)$n['id'], $n['symbol_key'], $n['meaning_html'], $n['status'] === 'local' ? 'local' : ''], $rows))) : self::EMPTY;
     }
 
     /** The entries for an AI client: agreed ones are binding, proposed ones are suggestions. */
-    public static function forTask(int $pid, bool $agreedOnly): array
+    public static function forTask(int $pid, bool $agreedOnly, bool $withLocal = true): array
     {
+        // The members' discussion of each entry, so that an AI proposing or rewriting takes it into account.
+        $talk = [];
+        foreach (Db::all("SELECT c.target_id, c.body_html, c.resolved, u.name FROM comments c JOIN users u ON u.id = c.author_id WHERE c.project_id = ? AND c.target_type = 'notation' ORDER BY c.id", [$pid]) as $c) {
+            $talk[(int)$c['target_id']][] = ['author' => $c['name'], 'resolved' => (bool)$c['resolved'], 'text' => mb_substr(Sanitizer::toText((string)$c['body_html']), 0, 2000)];
+        }
         return array_map(fn($n) => ['id' => (int)$n['id'], 'symbol' => $n['symbol'], 'meaning' => Sanitizer::toText((string)$n['meaning_html']), 'status' => $n['status'],
-            'note' => $n['note_html'] ? Sanitizer::toText((string)$n['note_html']) : null, 'variants' => json_decode((string)$n['variants_json'], true) ?: []],
-            Db::all("SELECT * FROM notations WHERE project_id = ? AND status " . ($agreedOnly ? "= 'agreed'" : "<> 'rejected'") . ' ORDER BY symbol_key LIMIT 300', [$pid]));
+            'note' => $n['note_html'] ? Sanitizer::toText((string)$n['note_html']) : null, 'variants' => json_decode((string)$n['variants_json'], true) ?: [],
+            'comments' => array_slice($talk[(int)$n['id']] ?? [], -20)],
+            Db::all("SELECT * FROM notations WHERE project_id = ? AND status " . ($agreedOnly ? ($withLocal ? "IN ('agreed', 'local')" : "= 'agreed'") : "<> 'rejected'") . ' ORDER BY symbol_key LIMIT 300', [$pid]));
     }
 
     /** Where each fact's current revision stands. */
@@ -184,7 +196,7 @@ final class NotationController
 
     public static function progress(int $pid): array
     {
-        $p = ['facts' => 0, 'current' => 0, 'unchanged' => 0, 'stale' => 0, 'unfaithful' => 0, 'none' => 0, 'queued' => 0, 'agreed' => 0, 'proposed' => 0];
+        $p = ['facts' => 0, 'current' => 0, 'unchanged' => 0, 'stale' => 0, 'unfaithful' => 0, 'none' => 0, 'queued' => 0, 'agreed' => 0, 'proposed' => 0, 'local' => 0];
         foreach (self::states($pid) as $s) { $p['facts']++; $p[$s['state']]++; if ($s['queued']) $p['queued']++; }
         foreach (Db::all('SELECT status, COUNT(*) AS n FROM notations WHERE project_id = ? GROUP BY status', [$pid]) as $c) if (isset($p[$c['status']])) $p[$c['status']] = (int)$c['n'];
         return $p;
@@ -198,7 +210,8 @@ final class NotationController
             foreach (['id', 'fact_id', 'revision_no', 'author_id', 'checked_by', 'ai_generation_ms'] as $k) $x[$k] = $x[$k] === null ? null : (int)$x[$k];
             $x['unchanged'] = (bool)$x['unchanged'];
             $x['uses'] = json_decode((string)$x['uses_json'], true) ?: [];
-            unset($x['uses_json']);
+            $x['local'] = json_decode((string)$x['local_json'], true) ?: (object)[];
+            unset($x['uses_json'], $x['local_json']);
             $x['current'] = $x['revision_no'] === $revision && $x['notation_hash'] === $hash;
             return $x;
         }, Db::all('SELECT x.*, u.name AS checked_by_name, au.name AS ai_user_name FROM fact_rephrasings x LEFT JOIN users u ON u.id = x.checked_by LEFT JOIN users au ON au.id = x.ai_user_id
@@ -218,13 +231,75 @@ final class NotationController
         $fact = $r->has('definition_fact_id') ? ((int)$r->input('definition_fact_id') ?: null) : ($old['definition_fact_id'] ?? null);
         if ($fact && (int)Db::value('SELECT project_id FROM facts WHERE id = ? AND deleted_at IS NULL', [$fact]) !== $pid) throw new HttpError(422, 'The definition must be a fact of this project.');
         $variants = $r->has('variants') ? self::variants($r->input('variants')) : null;
+        $facts = null;
+        if ($r->has('facts')) {
+            $want = array_values(array_unique(array_filter(array_map('intval', array_filter((array)$r->input('facts'), 'is_numeric')))));
+            $facts = [];
+            if ($want) { [$in, $p] = Db::in(array_slice($want, 0, 200)); $facts = array_map('intval', array_column(Db::all("SELECT id FROM facts WHERE project_id = ? AND deleted_at IS NULL AND id IN $in", array_merge([$pid], $p)), 'id')); }
+        }
         return array_filter([
             'symbol' => $symbol, 'symbol_key' => self::key($symbol),
             'meaning_html' => $meaning !== null ? Sanitizer::clean(Sanitizer::textToHtml($meaning, $pid))['html'] : null,
             'note_html' => $note !== null ? ($note === '' ? '' : Sanitizer::clean(Sanitizer::textToHtml($note, $pid))['html']) : null,
             'variants_json' => $variants !== null ? ($variants ? json_encode($variants, JSON_UNESCAPED_UNICODE) : '') : null,
+            'facts_json' => $facts !== null ? ($facts ? json_encode($facts) : '') : null,
             'definition_fact_id' => $fact,
         ], fn($v) => $v !== null) + ($r->has('definition_fact_id') ? ['definition_fact_id' => $fact] : []);
+    }
+
+    /** {symbol: meaning}, from a list [{symbol, meaning}] or an object. */
+    private static function localNotation(mixed $in): array
+    {
+        $out = [];
+        if (!is_array($in)) return $out;
+        foreach ($in as $k => $v) {
+            [$symbol, $meaning] = is_array($v) ? [$v['symbol'] ?? '', $v['meaning'] ?? ''] : [$k, $v];
+            $symbol = mb_substr(trim(is_scalar($symbol) ? (string)$symbol : ''), 0, 160);
+            $meaning = mb_substr(trim(is_scalar($meaning) ? (string)$meaning : ''), 0, 1000);
+            if ($symbol !== '' && $meaning !== '' && count($out) < 40) $out[$symbol] = $meaning;
+        }
+        return $out;
+    }
+
+    /**
+     * The notation each fact defines for itself, as the project shows it: its rewrite in project notation when there is one,
+     * otherwise its own glossary. Symbols that several facts define are the candidates to make global.
+     * @return list<array{symbol: string, facts: int, meanings: list<array{meaning: string, facts: list<int>}>, entry: ?array}>
+     */
+    public static function shared(int $pid, int $min = 2, int $limit = 100): array
+    {
+        $local = [];
+        foreach (Db::all('SELECT f.id, r.glossary_json FROM facts f JOIN fact_revisions r ON r.fact_id = f.id AND r.revision_no = f.current_revision
+                          WHERE f.project_id = ? AND f.deleted_at IS NULL AND f.retracted_at IS NULL', [$pid]) as $f) {
+            $local[(int)$f['id']] = self::localNotation(json_decode((string)$f['glossary_json'], true) ?: []);
+        }
+        $hash = self::hash($pid);
+        foreach (Db::all("SELECT x.fact_id, x.local_json FROM fact_rephrasings x JOIN facts f ON f.id = x.fact_id AND x.revision_no = f.current_revision
+                          WHERE f.project_id = ? AND x.notation_hash = ? AND x.unchanged = 0 AND (x.check_verdict IS NULL OR x.check_verdict <> 'unfaithful') ORDER BY x.id", [$pid, $hash]) as $x) {
+            if (isset($local[(int)$x['fact_id']])) $local[(int)$x['fact_id']] = self::localNotation(json_decode((string)$x['local_json'], true) ?: []);
+        }
+        $entries = [];
+        foreach (Db::all("SELECT id, symbol_key, status FROM notations WHERE project_id = ? AND status <> 'rejected'", [$pid]) as $n) $entries[$n['symbol_key']] = ['id' => (int)$n['id'], 'status' => $n['status']];
+        $by = [];
+        foreach ($local as $fid => $defs) {
+            foreach ($defs as $symbol => $meaning) {
+                $k = self::key($symbol);
+                $by[$k] ??= ['symbol' => $symbol, 'facts' => [], 'meanings' => []];
+                $by[$k]['facts'][$fid] = true;
+                $mk = mb_strtolower(preg_replace('/[\s.]+/u', '', $meaning) ?? '');
+                $by[$k]['meanings'][$mk] ??= ['meaning' => $meaning, 'facts' => []];
+                $by[$k]['meanings'][$mk]['facts'][] = $fid;
+            }
+        }
+        $out = [];
+        foreach ($by as $k => $s) {
+            if (count($s['facts']) < $min) continue;
+            $meanings = array_values($s['meanings']);
+            usort($meanings, fn($a, $b) => count($b['facts']) <=> count($a['facts']));
+            $out[] = ['symbol' => $s['symbol'], 'facts' => count($s['facts']), 'meanings' => array_map(fn($m) => ['meaning' => $m['meaning'], 'facts' => array_slice($m['facts'], 0, 50)], array_slice($meanings, 0, 8)), 'entry' => $entries[$k] ?? null];
+        }
+        usort($out, fn($a, $b) => [$b['entry'] === null, $b['facts']] <=> [$a['entry'] === null, $a['facts']]);
+        return array_slice($out, 0, $limit);
     }
 
     private static function sameText(string $a, string $b): bool
@@ -257,7 +332,8 @@ final class NotationController
     {
         if (!is_array($list) || !array_is_list($list) || count($list) > self::MAX_VARIANTS) throw new HttpError(422, 'variants must be a list of at most ' . self::MAX_VARIANTS . ' items.');
         $s = fn($x, $k, $max) => mb_substr(trim(is_array($x) && is_scalar($x[$k] ?? null) ? (string)$x[$k] : ''), 0, $max);
-        return array_values(array_filter(array_map(fn($x) => ['symbol' => $s($x, 'symbol', 160), 'meaning' => $s($x, 'meaning', 1000), 'where' => $s($x, 'where', 300)], $list), fn($v) => $v['symbol'] !== '' && $v['meaning'] !== ''));
+        return array_values(array_filter(array_map(fn($x) => ['symbol' => $s($x, 'symbol', 160), 'meaning' => $s($x, 'meaning', 1000), 'where' => $s($x, 'where', 300),
+            'relation' => in_array($s($x, 'relation', 10), self::RELATIONS, true) ? $s($x, 'relation', 10) : 'clash'], $list), fn($v) => $v['symbol'] !== '' && $v['meaning'] !== ''));
     }
 
     private static function uses(mixed $list): array
@@ -279,17 +355,20 @@ final class NotationController
 
     private static function sql(): string
     {
-        return 'SELECT n.*, u.name AS author_name, d.name AS decided_by_name, au.name AS ai_user_name, f.label AS definition_label FROM notations n JOIN users u ON u.id = n.author_id
+        return 'SELECT n.*, u.name AS author_name, d.name AS decided_by_name, au.name AS ai_user_name, f.label AS definition_label,
+                (SELECT COUNT(*) FROM comments c WHERE c.target_type = \'notation\' AND c.target_id = n.id) AS comment_count,
+                (SELECT COUNT(*) FROM comments c WHERE c.target_type = \'notation\' AND c.target_id = n.id AND c.parent_id IS NULL AND c.resolved = 0) AS open_threads FROM notations n JOIN users u ON u.id = n.author_id
                 LEFT JOIN users d ON d.id = n.decided_by LEFT JOIN users au ON au.id = n.ai_user_id LEFT JOIN facts f ON f.id = n.definition_fact_id AND f.deleted_at IS NULL';
     }
 
     private static function present(array $n): array
     {
-        foreach (['id', 'project_id', 'author_id', 'decided_by', 'definition_fact_id', 'ai_user_id', 'ai_generation_ms'] as $k) $n[$k] = $n[$k] === null ? null : (int)$n[$k];
+        foreach (['id', 'project_id', 'author_id', 'decided_by', 'definition_fact_id', 'ai_user_id', 'ai_generation_ms', 'comment_count', 'open_threads'] as $k) $n[$k] = $n[$k] === null ? null : (int)$n[$k];
         $n['variants'] = json_decode((string)$n['variants_json'], true) ?: [];
+        $n['facts'] = json_decode((string)$n['facts_json'], true) ?: [];
         $n['meaning_text'] = Sanitizer::toText((string)$n['meaning_html']);
         $n['note_text'] = $n['note_html'] ? Sanitizer::toText((string)$n['note_html']) : '';
-        unset($n['variants_json']);
+        unset($n['variants_json'], $n['facts_json']);
         return $n;
     }
 

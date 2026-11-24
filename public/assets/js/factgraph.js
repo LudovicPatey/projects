@@ -1,5 +1,7 @@
 // Dependency graph of the fact database, drawn on a canvas so it stays fluid with
 // thousands of facts. Layered layout: a fact sits below everything it depends on.
+// Only what is on screen is drawn, labels are fitted once, and a grid finds the fact under the pointer.
+// Starred facts stand out, and keep their name when the graph is zoomed out.
 export const STATUS = {
   unchecked: { label: 'Unchecked', color: '#667085', bg: '#f2f4f7' },
   ai_checked: { label: 'AI-checked', color: '#7c3aed', bg: '#f3edff' },
@@ -14,7 +16,7 @@ export const STATUS = {
 export const PROOF_COLOR = { human: '#0f766e', ai: '#7c3aed', mixed: '#d97706', none: '#98a2b3' };
 export const PROOF_LABEL = { human: 'Human proof', ai: 'AI proof', mixed: 'Human + AI proof', none: 'No proof' };
 
-const W = 204, H = 50, GAP_X = 26, GAP_Y = 62;
+const W = 204, H = 50, GAP_X = 26, GAP_Y = 62, CELL = 256;
 
 function layout(nodes, edges) {
   const ids = new Set(nodes.map((n) => n.id));
@@ -55,7 +57,13 @@ function layout(nodes, edges) {
   }
   const pos = new Map();
   layers.forEach((l, y) => l?.forEach((id) => pos.set(id, { x: order.get(id) * (W + GAP_X), y: y * (H + GAP_Y) })));
-  return { pos, deps, users };
+  // A grid of the canvas, so that finding the fact under the pointer does not scan them all.
+  const grid = new Map();
+  for (const [id, q] of pos) {
+    const key = `${Math.floor(q.x / CELL)},${Math.floor(q.y / CELL)}`;
+    (grid.get(key) || grid.set(key, []).get(key)).push(id);
+  }
+  return { pos, deps, users, grid };
 }
 
 function reach(start, next) {
@@ -91,11 +99,11 @@ function fit(c, text, max) {
 }
 
 export const FactGraph = {
-  props: { nodes: Array, edges: Array, selected: Number, unread: Object },
+  props: { nodes: Array, edges: Array, selected: Number, unread: Object, emphasis: { type: Boolean, default: true } },
   emits: ['select'],
   data() { return { zoomPct: 100, hint: null }; },
   template: `<div class="fg" ref="box">
-    <canvas ref="canvas" role="img" :aria-label="'Dependency graph of ' + nodes.length + ' facts'"
+    <canvas ref="canvas" role="img" :aria-label="'Dependency graph of ' + nodes.length + ' facts, ' + nodes.filter((n) => n.stars).length + ' starred'"
       @pointerdown="down" @pointermove="move" @pointerup="up" @pointerleave="leave" @wheel.prevent="wheel"></canvas>
     <div class="fg-tools">
       <button class="icon-btn sm" title="Zoom in" @click="zoomBy(1.25)"><icon name="zoom-in" :size="16"/></button>
@@ -104,7 +112,7 @@ export const FactGraph = {
       <button class="btn xs" @click="fitView">Fit</button>
     </div>
     <div v-if="hint" class="fg-hint" :style="{left: hint.x + 'px', top: hint.y + 'px'}">
-      <b>{{ hint.n.label }}</b><div>{{ hint.n.title }}</div>
+      <b>{{ hint.n.label }}</b><span v-if="hint.n.stars" class="fg-hint-star"> ★ {{ hint.n.stars }}</span><div>{{ hint.n.title }}</div>
       <div class="muted small">{{ proofLabel[hint.n.proof_origin] }} · entered by {{ hint.n.ai_model }} · {{ status[hint.n.status].label }}</div>
       <div class="muted small" v-if="hint.n.labels.length">{{ hint.n.labels.join(', ').replaceAll('_', ' ') }}</div>
     </div>
@@ -131,6 +139,7 @@ export const FactGraph = {
       this.sig = sig;
       this.g = layout(this.nodes, this.edges);
       this.byId = new Map(this.nodes.map((n) => [n.id, n]));
+      this.labels = new Map(); // fitted once per fact, not at every frame
       this.computeFocus();
       if (first || changed) this.fitView(); else this.draw();
     },
@@ -170,9 +179,10 @@ export const FactGraph = {
       if (!pts.length) return this.draw();
       this.fitted = true;
       this.userMoved = false;
-      const minX = Math.min(...pts.map((p) => p.x)) - W / 2, maxX = Math.max(...pts.map((p) => p.x)) + W / 2;
-      const minY = Math.min(...pts.map((p) => p.y)) - H / 2, maxY = Math.max(...pts.map((p) => p.y)) + H / 2;
-      const k = Math.min(1.1, (box.clientWidth - 48) / (maxX - minX), (box.clientHeight - 48) / (maxY - minY));
+      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity; // no spread: graphs can be huge
+      for (const q of pts) { if (q.x < minX) minX = q.x; if (q.x > maxX) maxX = q.x; if (q.y < minY) minY = q.y; if (q.y > maxY) maxY = q.y; }
+      minX -= W / 2; maxX += W / 2; minY -= H / 2; maxY += H / 2;
+      const k = Math.max(0.02, Math.min(1.1, (box.clientWidth - 48) / (maxX - minX), (box.clientHeight - 48) / (maxY - minY)));
       this.view = { k, x: box.clientWidth / 2 - k * (minX + maxX) / 2, y: box.clientHeight / 2 - k * (minY + maxY) / 2 };
       this.zoomPct = Math.round(k * 100);
       this.draw();
@@ -181,7 +191,7 @@ export const FactGraph = {
       const box = this.$refs.box;
       const v = this.view;
       cx ??= box.clientWidth / 2; cy ??= box.clientHeight / 2;
-      const k = Math.max(0.05, Math.min(3, v.k * f));
+      const k = Math.max(0.02, Math.min(3, v.k * f));
       v.x = cx - (cx - v.x) * (k / v.k);
       v.y = cy - (cy - v.y) * (k / v.k);
       v.k = k;
@@ -197,7 +207,13 @@ export const FactGraph = {
     at(e) {
       const r = this.$refs.canvas.getBoundingClientRect();
       const x = (e.clientX - r.left - this.view.x) / this.view.k, y = (e.clientY - r.top - this.view.y) / this.view.k;
-      for (const [id, p] of this.g.pos) if (Math.abs(x - p.x) <= W / 2 && Math.abs(y - p.y) <= H / 2) return id;
+      const cx = Math.floor(x / CELL), cy = Math.floor(y / CELL);
+      for (let i = cx - 1; i <= cx + 1; i++) for (let j = cy - 1; j <= cy + 1; j++) {
+        for (const id of this.g.grid.get(`${i},${j}`) || []) {
+          const p = this.g.pos.get(id);
+          if (Math.abs(x - p.x) <= W / 2 && Math.abs(y - p.y) <= H / 2) return id;
+        }
+      }
       return null;
     },
     down(e) {
@@ -229,6 +245,19 @@ export const FactGraph = {
       if (d && !d.moved) this.$emit('select', this.at(e));
     },
     leave() { this.hover = null; this.hint = null; this.draw(); },
+    labelOf(c, n, reserved) {
+      const key = `${n.id}:${reserved}:${n.label}:${n.title}`;
+      let v = this.labels.get(n.id);
+      if (!v || v.key !== key) {
+        c.font = '600 12px ui-monospace, Menlo, monospace';
+        const label = fit(c, n.label, W - 14 - reserved);
+        c.font = '11px -apple-system, "Segoe UI", sans-serif';
+        v = { key, label, title: fit(c, n.title, W - 20) };
+        this.labels.set(n.id, v);
+      }
+      c.font = '600 12px ui-monospace, Menlo, monospace';
+      return v;
+    },
     draw() {
       cancelAnimationFrame(this.raf);
       this.raf = requestAnimationFrame(() => this.paint());
@@ -245,10 +274,17 @@ export const FactGraph = {
       const f = this.focus, s = this.selected;
       const lit = (id) => !f || id === s || f.up.has(id) || f.down.has(id);
       const { pos } = this.g;
+      // The part of the graph on screen, with a margin: nothing else is drawn.
+      const box = this.$refs.box;
+      const vx0 = -x / k - W, vy0 = -y / k - H, vx1 = (box.clientWidth - x) / k + W, vy1 = (box.clientHeight - y) / k + H;
+      const shown = (q) => q.x >= vx0 && q.x <= vx1 && q.y >= vy0 && q.y <= vy1;
+      const crowded = this.edges.length > 3000 && k < 0.12;
 
-      for (const [a, b] of this.edges) {
+      for (const [a, b, via] of this.edges) {
         const pa = pos.get(a), pb = pos.get(b);
         if (!pa || !pb) continue;
+        if (!shown(pa) && !shown(pb) && !(Math.min(pa.y, pb.y) < vy1 && Math.max(pa.y, pb.y) > vy0 && Math.min(pa.x, pb.x) < vx1 && Math.max(pa.x, pb.x) > vx0)) continue;
+        if (crowded && !(f && (f.up.has(b) || f.down.has(a) || a === s || b === s))) continue;
         const on = f && ((a === s || f.down.has(a)) && (b === s || f.down.has(b)) || (a === s || f.up.has(a)) && (b === s || f.up.has(b)));
         const broken = ['retracted', 'disputed'].includes(this.byId.get(b).status);
         c.globalAlpha = f && !on ? 0.1 : on ? 0.95 : 0.55;
@@ -260,18 +296,35 @@ export const FactGraph = {
         c.setLineDash([]);
         c.fillStyle = c.strokeStyle;
         c.beginPath(); c.moveTo(pa.x, y2); c.lineTo(pa.x - 4, y2 - 7); c.lineTo(pa.x + 4, y2 - 7); c.closePath(); c.fill();
+        if (via && k >= 0.3) { // a link of the key facts, through other facts
+          const lx = (pa.x + pb.x) / 2, ly = m;
+          c.globalAlpha = Math.max(c.globalAlpha, 0.85);
+          c.font = '600 10.5px -apple-system, "Segoe UI", sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
+          const t = `via ${via} fact${via > 1 ? 's' : ''}`, tw = c.measureText(t).width + 10;
+          roundRect(c, lx - tw / 2, ly - 8, tw, 16, 8); c.fillStyle = '#fff'; c.fill(); c.lineWidth = 1 / k; c.strokeStyle = '#d0d5dd'; c.stroke();
+          c.fillStyle = '#475467'; c.fillText(t, lx, ly + 0.5);
+        }
       }
+      const starred = [];
 
       for (const n of this.nodes) {
         const p = pos.get(n.id);
-        if (!p) continue;
-        const st = STATUS[n.status];
+        if (!p || !shown(p)) continue;
+        const st = STATUS[n.status] || STATUS.unchecked;
+        const star = this.emphasis && n.stars > 0;
+        if (star) starred.push(n);
         const nx = p.x - W / 2, ny = p.y - H / 2;
         c.globalAlpha = lit(n.id) ? 1 : 0.22;
+        if (k < 0.08) { // far out, a fact is a mark of its status, at least a few pixels wide
+          const mw = Math.max(W, 4 / k), mh = Math.max(H, 4 / k);
+          c.fillStyle = star ? '#ca8a04' : n.id === s ? '#4338ca' : st.color;
+          c.fillRect(p.x - mw / 2, p.y - mh / 2, mw, mh);
+          continue;
+        }
         roundRect(c, nx, ny, W, H, 7);
         c.fillStyle = st.bg; c.fill();
-        c.lineWidth = n.id === s ? 3 : n.id === this.hover ? 2 : 1.2;
-        c.strokeStyle = n.id === s ? '#4338ca' : st.color;
+        c.lineWidth = n.id === s ? 3 : star ? 2.6 : n.id === this.hover ? 2 : 1.2;
+        c.strokeStyle = n.id === s ? '#4338ca' : star ? '#ca8a04' : st.color;
         if (n.chain === 'broken') c.setLineDash([5, 3]);
         c.stroke();
         c.setLineDash([]);
@@ -283,9 +336,16 @@ export const FactGraph = {
         c.textBaseline = 'middle'; c.textAlign = 'left';
         c.fillStyle = '#1c2230'; c.font = '600 12px ui-monospace, Menlo, monospace';
         const right = n.lean === 'compiled' ? 34 : 8;
-        c.fillText(fit(c, n.label, W - 14 - right), nx + 11, p.y - 11);
+        const starW = star ? 34 : 0;
+        const fitted = this.labelOf(c, n, right + starW);
+        c.fillText(fitted.label, nx + 11, p.y - 11);
         c.fillStyle = '#475467'; c.font = '11px -apple-system, "Segoe UI", sans-serif';
-        c.fillText(fit(c, n.title, W - 20), nx + 11, p.y + 9);
+        c.fillText(fitted.title, nx + 11, p.y + 9);
+        if (star) {
+          c.fillStyle = '#a16207'; c.font = '700 11px -apple-system, sans-serif'; c.textAlign = 'right';
+          c.fillText(`★ ${n.stars}`, nx + W - 8 - right, p.y - 11);
+          c.textAlign = 'left';
+        }
         if (n.lean === 'compiled') {
           roundRect(c, nx + W - 35, ny + 5, 30, 15, 4);
           c.fillStyle = '#1e40af'; c.fill();
@@ -293,11 +353,26 @@ export const FactGraph = {
           c.fillText('Lean', nx + W - 31, ny + 13);
         }
       }
+      // Zoomed out, the starred facts keep a readable name, at screen size.
+      if (k < 0.32 && starred.length <= 400) {
+        c.globalAlpha = 1;
+        const fs = 12 / k;
+        c.font = `700 ${fs}px -apple-system, "Segoe UI", sans-serif`; c.textAlign = 'center'; c.textBaseline = 'bottom';
+        for (const n of starred) {
+          const p = pos.get(n.id);
+          const t = `★ ${n.title.length > 40 ? n.title.slice(0, 39) + '…' : n.title}`;
+          const tw = c.measureText(t).width + 8 / k;
+          roundRect(c, p.x - tw / 2, p.y - H / 2 - fs * 1.45, tw, fs * 1.3, 4 / k);
+          c.fillStyle = 'rgba(255, 251, 235, .95)'; c.fill();
+          c.fillStyle = '#854d0e'; c.fillText(t, p.x, p.y - H / 2 - fs * 0.25);
+        }
+        c.textAlign = 'left';
+      }
       // iPhone-style counters, drawn last so that no node covers them.
       for (const n of this.nodes) {
         const count = this.unread?.[n.id];
         const p = pos.get(n.id);
-        if (!count || !p) continue;
+        if (!count || !p || !shown(p)) continue;
         const bx = p.x + W / 2 - 2, by = p.y - H / 2 + 2, r = 10 / Math.max(k, 0.55);
         c.globalAlpha = 1;
         c.beginPath(); c.arc(bx, by, r, 0, Math.PI * 2);

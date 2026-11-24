@@ -90,8 +90,18 @@ final class Access
             'fact' => self::fact($id)['project_id'],
             'oquestion' => self::question($id)['project_id'],
             'strategy' => self::strategy($id)['project_id'],
+            'notation' => self::notation($id),
             default => throw new HttpError(400, 'Invalid comment target'),
         };
+    }
+
+    /** A notation entry of a project the caller belongs to. @return int its project */
+    public static function notation(int $id): int
+    {
+        $pid = Db::value('SELECT project_id FROM notations WHERE id = ?', [$id]);
+        if (!$pid) throw new HttpError(404, 'Notation entry not found');
+        self::member((int)$pid);
+        return (int)$pid;
     }
 
     /** User ids who can see a comment target (null = every project member). */

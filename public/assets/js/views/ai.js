@@ -1,4 +1,4 @@
-import { api } from '../api.js';
+import { api, expandFacts } from '../api.js';
 import { store, link, attempt, refreshCounters, toast } from '../store.js';
 import { timeAgo, fullDate } from '../util.js';
 import { Pill, Kpi, StackBar } from '../dashboard.js';
@@ -28,9 +28,9 @@ export const AiView = {
   created() { this.kinds = AI_KINDS; this.periods = CLIENT_PERIODS; this.statuses = TASK_STATUS; this.segments = TASK_SEGMENTS; },
   async mounted() {
     await this.load();
-    const [docs, qs, bib, facts, convs] = await Promise.all([attempt(() => api.get(`api/projects/${this.pid}/documents`)), attempt(() => api.get(`api/projects/${this.pid}/questions`)), attempt(() => api.get(`api/projects/${this.pid}/bib`)), attempt(() => api.get(`api/projects/${this.pid}/facts`)), attempt(() => api.get(`api/projects/${this.pid}/conversations`))]);
+    const [docs, qs, bib, facts, convs] = await Promise.all([attempt(() => api.get(`api/projects/${this.pid}/documents`)), attempt(() => api.get(`api/projects/${this.pid}/questions`)), attempt(() => api.get(`api/projects/${this.pid}/bib`)), attempt(() => api.get(`api/projects/${this.pid}/facts?compact=1`)), attempt(() => api.get(`api/projects/${this.pid}/conversations`))]);
     this.conversations = convs?.conversations || [];
-    this.facts = (facts?.facts || []).filter((f) => !f.retracted_at);
+    this.facts = expandFacts(facts).filter((f) => !f.retracted_at);
     this.references = (bib?.entries || []).filter((e) => e.has_pdf);
     this.bibData = bib?.progress || null;
     this.documents = docs?.documents || (Array.isArray(docs) ? docs : []);

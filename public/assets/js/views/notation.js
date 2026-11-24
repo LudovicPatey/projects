@@ -1,8 +1,8 @@
-import { api } from '../api.js';
+import { api, expandFacts } from '../api.js';
 import { link, attempt, toast } from '../store.js';
 import { timeAgo } from '../util.js';
 import { Kpi, StackBar } from '../dashboard.js';
-import { NOTATION_SEGMENTS, asMath, entryBody, entryError, toRewrite } from '../notation-model.js';
+import { NOTATION_SEGMENTS, asMath, entryBody, entryError, sharedDraft, splitVariants, toRewrite } from '../notation-model.js';
 
 const entryEditor = `<div class="notation-edit">
   <label class="field"><span>Symbol (LaTeX)</span><input v-model="editing.symbol"></label>
@@ -14,33 +14,39 @@ const entryEditor = `<div class="notation-edit">
 const entryView = (by, actions) => `<div class="notation-symbol"><math-text :text="asMath(e.symbol)"/></div>
   <div class="notation-body"><rich-content :html="e.meaning_html"/>
     <p v-if="e.note_text" class="notation-note"><icon name="lightbulb" :size="13"/> <math-text :text="e.note_text"/></p>
-    <ul v-if="e.variants.length" class="notation-variants"><li v-for="(v, i) in e.variants" :key="i"><math-text :text="asMath(v.symbol)"/> <span><math-text :text="v.meaning"/></span><small v-if="v.where">{{ v.where }}</small></li></ul>
+    <template v-for="g in [['instances', 'In particular settings'], ['clashes', 'Other meanings in sources']]" :key="g[0]"><div v-if="splitVariants(e.variants)[g[0]].length" class="notation-variants-group" :class="'g-' + g[0]"><small>{{ g[1] }}</small>
+      <ul class="notation-variants"><li v-for="(v, i) in splitVariants(e.variants)[g[0]]" :key="i"><math-text :text="asMath(v.symbol)"/> <span><math-text :text="v.meaning"/></span><small v-if="v.where">{{ v.where }}</small></li></ul></div></template>
+    <small v-if="e.facts?.length" class="muted">Defined locally in {{ e.facts.length }} fact{{ e.facts.length > 1 ? 's' : '' }}: <template v-for="(id, i) in e.facts.slice(0, 6)" :key="id"><a :href="link('facts', id)">{{ labels.get(id) || '#' + id }}</a>{{ i < Math.min(e.facts.length, 6) - 1 ? ', ' : '' }}</template><template v-if="e.facts.length > 6">…</template></small>
     <small class="muted">${by}<template v-if="e.definition_label"> · defined in <a :href="link('facts', e.definition_fact_id)">{{ e.definition_label }}</a></template></small></div>
-  <div class="notation-actions">${actions}</div>`;
+  <div class="notation-actions"><button class="btn sm" :class="{on: talk === e.id}" :aria-pressed="talk === e.id" :title="e.comment_count ? e.comment_count + ' comment(s)' : 'Discuss this entry'" @click="openTalk(e)"><icon name="comment" :size="13"/> {{ e.comment_count ? e.comment_count : 'Discuss' }}<b v-if="e.open_threads" class="seg-n" title="Open threads">{{ e.open_threads }}</b></button>${actions}</div>`;
 
 /** The project's notation, inside Facts: agreed meanings, proposals, and how far facts follow them. */
 export const NotationPanel = {
   components: { Kpi, StackBar },
-  props: { pid: Number, focus: Number },
+  props: { pid: Number, focus: Number, comment: Number },
   emits: ['mode'],
-  data() { return { d: null, facts: [], draft: { symbol: '', meaning: '', note: '', fact: '' }, editing: null, busy: false }; },
+  data() { return { d: null, facts: [], draft: { symbol: '', meaning: '', note: '', fact: '' }, editing: null, busy: false, talk: this.comment ? this.focus : null }; },
   computed: {
     agreed() { return (this.d?.entries || []).filter((e) => e.status === 'agreed'); },
     proposed() { return (this.d?.entries || []).filter((e) => e.status === 'proposed'); },
     rejected() { return (this.d?.entries || []).filter((e) => e.status === 'rejected'); },
+    local() { return (this.d?.entries || []).filter((e) => e.status === 'local'); },
     remaining() { return toRewrite(this.d?.progress); },
+    talkEntry() { return (this.d?.entries || []).find((e) => e.id === this.talk) || null; },
     error() { return entryError(this.draft); },
     definitions() { return this.facts.filter((f) => !f.retracted_at); },
+    labels() { return new Map(this.facts.map((f) => [f.id, f.label])); },
+    candidates() { return (this.d?.shared || []).filter((s) => !s.entry); },
   },
   created() { this.segments = NOTATION_SEGMENTS; },
   async mounted() {
     await this.load();
-    this.facts = (await attempt(() => api.get(`api/projects/${this.pid}/facts`)))?.facts || [];
+    this.facts = expandFacts(await attempt(() => api.get(`api/projects/${this.pid}/facts?compact=1`)));
     this.timer = setInterval(() => { if (!document.hidden && !this.editing) this.load(); }, 20000);
   },
   unmounted() { clearInterval(this.timer); },
   methods: {
-    timeAgo, link, asMath,
+    timeAgo, link, asMath, splitVariants,
     async load() {
       const r = await attempt(() => api.get(`api/projects/${this.pid}/notation`));
       if (!r) return;
@@ -63,7 +69,15 @@ export const NotationPanel = {
     },
     async decide(e, status) {
       if (status === 'agreed' && !confirm(`Agree that ${e.symbol} has this meaning in the whole project? Facts are rewritten in this notation when a member asks.`)) return;
-      if (await attempt(() => api.post(`api/notation/${e.id}/status`, { status }), { agreed: 'Agreed', rejected: 'Rejected', proposed: 'Reopened' }[status])) await this.load();
+      if (await attempt(() => api.post(`api/notation/${e.id}/status`, { status }), { agreed: 'Agreed', rejected: 'Rejected', proposed: 'Reopened', local: 'Kept local: rewrites unfold it or define it in the fact' }[status])) await this.load();
+    },
+    openTalk(e) {
+      this.talk = this.talk === e.id ? null : e.id;
+      if (this.talk) this.$nextTick(() => this.$el.querySelector?.('.notation-talk')?.scrollIntoView({ block: 'nearest' }));
+    },
+    fromShared(s) {
+      this.draft = sharedDraft(s);
+      this.$nextTick(() => { const box = this.$el.querySelector('#notation-propose'); box?.scrollIntoView({ block: 'center' }); });
     },
     fromDefinition(x) {
       this.draft = { symbol: '', meaning: x.statement_text, note: '', fact: x.id };
@@ -99,6 +113,16 @@ export const NotationPanel = {
             <div class="row-gap"><button class="btn primary sm" :disabled="!agreed.length || !remaining" @click="rewriteAll"><icon name="sparkles" :size="14"/> Rewrite {{ remaining }} fact{{ remaining === 1 ? '' : 's' }}</button>
               <span v-if="!agreed.length" class="muted small">Agree on at least one symbol first.</span></div>
           </section>
+          <section v-if="d.shared.length" class="panel">
+            <header class="ai-head"><h2><icon name="layers" :size="15"/> Defined in several facts</h2><small>{{ candidates.length }} without a project entry</small></header>
+            <p class="muted small">Each fact defines the symbols that are not project symbols, so that it reads alone. These symbols are defined in several facts: making them global saves repeating them.</p>
+            <article v-for="s in d.shared.slice(0, 30)" :key="s.symbol" class="notation-shared">
+              <div class="notation-symbol"><math-text :text="asMath(s.symbol)"/></div>
+              <div class="notation-body"><small class="muted">In {{ s.facts }} facts<template v-if="s.meanings.length > 1"> · <b class="warn-text">{{ s.meanings.length }} different meanings</b></template></small>
+                <ul class="notation-variants"><li v-for="(m, i) in s.meanings" :key="i"><math-text :text="m.meaning"/> <small><template v-for="(id, j) in m.facts.slice(0, 4)" :key="id"><a :href="link('facts', id)">{{ labels.get(id) || '#' + id }}</a>{{ j < Math.min(m.facts.length, 4) - 1 ? ', ' : '' }}</template><template v-if="m.facts.length > 4"> and {{ m.facts.length - 4 }} more</template></small></li></ul></div>
+              <div class="notation-actions"><span v-if="s.entry" class="pill t-neutral">{{ s.entry.status }}</span><button v-else class="btn sm" @click="fromShared(s)">Propose as global</button></div>
+            </article>
+          </section>
           <section class="panel">
             <header class="ai-head"><h2><icon name="check-circle" :size="15"/> Agreed</h2><small>{{ agreed.length }}</small></header>
             <div v-if="!agreed.length" class="d-empty">Nothing agreed yet. Agree on a proposal below.</div>
@@ -112,8 +136,11 @@ export const NotationPanel = {
             <div v-if="!proposed.length" class="d-empty">No proposal. Ask the AI to compare the facts' notations, or propose one yourself.</div>
             <article v-for="e in proposed" :key="e.id" class="notation-entry" :data-notation="e.id" :class="{flash: focus === e.id}">
               <template v-if="editing?.id === e.id">${entryEditor}</template>
-              <template v-else>${entryView('Proposed by {{ e.author_name }}<template v-if="e.author_kind === \'agent\'"> · {{ e.ai_model }}</template> {{ timeAgo(e.created_at) }}', '<button class="btn sm endorse" @click="decide(e, \'agreed\')"><icon name="check" :size="13"/> Agree</button><button class="btn sm" @click="edit(e)">Edit</button><button class="btn sm" @click="decide(e, \'rejected\')">Reject</button>')}</template>
+              <template v-else>${entryView('Proposed by {{ e.author_name }}<template v-if="e.author_kind === \'agent\'"> · {{ e.ai_model }}</template> {{ timeAgo(e.created_at) }}', '<button class="btn sm endorse" @click="decide(e, \'agreed\')"><icon name="check" :size="13"/> Agree</button><button class="btn sm" title="Too specific to be a project symbol: rewrites unfold it or define it within the fact" @click="decide(e, \'local\')">Local</button><button class="btn sm" @click="edit(e)">Edit</button><button class="btn sm" @click="decide(e, \'rejected\')">Reject</button>')}</template>
             </article>
+            <details v-if="local.length" class="ai-decided"><summary>Local, defined within facts ({{ local.length }})</summary>
+              <p class="muted small">Too specific to be project symbols. A rewrite unfolds them, or defines them within the fact that uses them.</p>
+              <div v-for="e in local" :key="e.id" class="d-row"><math-text :text="asMath(e.symbol)"/><span class="d-title">{{ e.meaning_text }}</span><button class="btn xs" @click="decide(e, 'proposed')">Reopen</button></div></details>
             <details v-if="rejected.length" class="ai-decided"><summary>Rejected ({{ rejected.length }})</summary>
               <div v-for="e in rejected" :key="e.id" class="d-row"><math-text :text="asMath(e.symbol)"/><span class="d-title">{{ e.meaning_text }}</span><button class="btn xs" @click="decide(e, 'proposed')">Reopen</button><button class="btn xs" @click="remove(e)">Delete</button></div></details>
           </section>
@@ -130,10 +157,15 @@ export const NotationPanel = {
           </section>
         </div>
         <aside class="notation-side">
+          <section v-if="talkEntry" class="panel notation-talk">
+            <header class="ai-head"><h2><icon name="comment" :size="15"/> <math-text :text="asMath(talkEntry.symbol)"/></h2><button class="icon-btn" title="Close the discussion" aria-label="Close the discussion" @click="talk = null"><icon name="x" :size="15"/></button></header>
+            <p class="muted small">Discuss which meaning the project should use. Comments are visible to every member, and an AI proposing or rewriting the notation reads them. Write @AI to ask its opinion.</p>
+            <comments-panel target-type="notation" :target-id="talkEntry.id" :active-id="comment || null" title="Discussion" @activity="load"/>
+          </section>
           <section class="panel">
-            <header class="ai-head"><h2><icon name="sparkles" :size="15"/> Compare the papers</h2></header>
-            <p class="muted small">An AI client reads every fact, finds symbols that sources use with different meanings, and proposes one notation. People decide.</p>
-            <ai-action kind="notation" label="Ask AI to propose a notation"/>
+            <header class="ai-head"><h2><icon name="sparkles" :size="15"/> Review the notation</h2></header>
+            <p class="muted small">An AI client looks at the whole picture: the notation every fact defines for itself, and the sources. It proposes making shared symbols global, one meaning per symbol, and general definitions for notions that papers state in particular settings. People decide.</p>
+            <ai-action kind="notation" label="Ask AI to review the notation"/>
           </section>
           <section class="panel" id="notation-propose">
             <header id="notation-propose-head" class="ai-head"><h2><icon name="plus" :size="15"/> Propose an entry</h2></header>

@@ -17,7 +17,7 @@ final class References
         'document', 'version', 'bib', 'suggestion', 'conversation', 'message', 'comment', 'aitask'];
     /** Their stored label is generic, and a reader without access cannot tell whether they exist. */
     public const PRIVATE = ['conversation', 'message', 'comment', 'aitask'];
-    private const COMMENT_TARGETS = ['oquestion' => 'question', 'strategy' => 'strategy', 'fact' => 'fact', 'document' => 'document', 'bib' => 'bib', 'conversation' => 'conversation'];
+    private const COMMENT_TARGETS = ['oquestion' => 'question', 'strategy' => 'strategy', 'fact' => 'fact', 'document' => 'document', 'bib' => 'bib', 'conversation' => 'conversation', 'notation' => 'notation'];
     private const MAX_RESOLVE = 200;
     private const PER_TYPE = 5;
 

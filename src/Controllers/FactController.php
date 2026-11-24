@@ -35,11 +35,87 @@ final class FactController
     private const COVERS = ['statement', 'proof', 'both'];
     private const COMMENT_ROLES = ['supports', 'disputes', 'clarifies'];
 
+    /** What the interface shows in the list and the graph. The full statement is loaded with each fact. */
+    private const COMPACT = ['id', 'label', 'title', 'kind', 'display_kind', 'status', 'chain', 'origin', 'proof_origin', 'method', 'tool', 'lean', 'labels', 'ai_model',
+        'author', 'ai_user_name', 'ai_generation_ms', 'updated_at', 'stars', 'starred', 'comment_count', 'retracted_at', 'created_by', 'current_revision', 'endorsed_by'];
+    private const EXCERPT = 160;
+
+    /**
+     * The facts and their dependencies. With ?compact=1, only what the list and the graph show, with an excerpt of each statement.
+     * The ETag changes with anything that can change the answer: a poll that sends it back gets 304 without the graph being rebuilt.
+     */
     public static function list(Request $r): never
     {
         $pid = $r->int('pid');
         Access::member($pid);
-        Response::json(self::graph($pid));
+        $compact = !empty($r->query['compact']);
+        $etag = '"' . self::listVersion($pid, $compact) . '"';
+        header('ETag: ' . $etag);
+        if (in_array($etag, array_map('trim', explode(',', (string)($_SERVER['HTTP_IF_NONE_MATCH'] ?? ''))), true)) {
+            http_response_code(304);
+            header('Cache-Control: no-cache');
+            exit;
+        }
+        $g = self::graph($pid);
+        $mine = array_flip(array_map('intval', array_column(Db::all('SELECT s.fact_id FROM fact_stars s JOIN facts f ON f.id = s.fact_id WHERE f.project_id = ? AND s.user_id = ?', [$pid, Auth::id()]), 'fact_id')));
+        foreach ($g['facts'] as &$f) {
+            $f['starred'] = isset($mine[$f['id']]);
+            if (!$compact) continue;
+            $text = (string)$f['statement_text'];
+            $short = mb_strlen($text) > self::EXCERPT;
+            $f = array_intersect_key($f, array_flip(self::COMPACT)) + ['used_by' => count($f['dependents']),
+                'statement_text' => $short ? mb_substr($text, 0, self::EXCERPT) . '…' : $text, 'statement_truncated' => $short];
+        }
+        unset($f);
+        if (!$compact) Response::json($g + ['compact' => false]);
+        // Columns, so that each field name is sent once rather than once per fact.
+        $columns = array_merge(self::COMPACT, ['used_by', 'statement_text', 'statement_truncated']);
+        Response::json(['compact' => true, 'columns' => $columns, 'rows' => array_map(fn($f) => array_map(fn($c) => $f[$c] ?? null, $columns), $g['facts']), 'edges' => $g['edges']]);
+    }
+
+    /** Changes whenever the list could: a fact, review, proof, comment, star or rewrite, for this person. */
+    private static function listVersion(int $pid, bool $compact): string
+    {
+        $parts = [
+            Db::value("SELECT COALESCE(MAX(id), 0) FROM activity WHERE project_id = ? AND item_type = 'fact'", [$pid]),
+            Db::value('SELECT COUNT(*) FROM facts WHERE project_id = ? AND deleted_at IS NULL', [$pid]),
+            Db::value('SELECT COALESCE(MAX(updated_at), \'\') FROM facts WHERE project_id = ?', [$pid]),
+            Db::value('SELECT COUNT(*) FROM fact_stars s JOIN facts f ON f.id = s.fact_id WHERE f.project_id = ?', [$pid]),
+            Db::value('SELECT COALESCE(MAX(s.created_at), \'\') FROM fact_stars s JOIN facts f ON f.id = s.fact_id WHERE f.project_id = ?', [$pid]),
+            Db::value('SELECT COUNT(*) FROM notations WHERE project_id = ?', [$pid]),
+        ];
+        return sha1(json_encode([$parts, Auth::id(), $compact]));
+    }
+
+    /** The facts whose label, title or full statement contain the words: the list searches beyond its excerpts. */
+    public static function match(Request $r): never
+    {
+        $pid = $r->int('pid');
+        Access::member($pid);
+        $words = array_slice(array_values(array_filter(preg_split('/\s+/u', mb_strtolower(trim((string)($r->query['q'] ?? '')))) ?: [], fn($w) => mb_strlen($w) >= 2)), 0, 8);
+        if (!$words) Response::json(['ids' => []]);
+        $where = []; $params = [$pid];
+        foreach ($words as $w) {
+            $where[] = '(LOWER(f.label) LIKE ? OR LOWER(f.title) LIKE ? OR LOWER(r.statement_html) LIKE ?)';
+            $like = '%' . htmlspecialchars($w, ENT_QUOTES | ENT_HTML5, 'UTF-8') . '%'; // the stored text is HTML; a % or _ typed only widens the search
+            array_push($params, $like, $like, $like);
+        }
+        $ids = Db::all('SELECT f.id FROM facts f JOIN fact_revisions r ON r.fact_id = f.id AND r.revision_no = f.current_revision
+                        WHERE f.project_id = ? AND f.deleted_at IS NULL AND ' . implode(' AND ', $where) . ' LIMIT 5000', $params);
+        Response::json(['ids' => array_map('intval', array_column($ids, 'id'))]);
+    }
+
+    /** A member marks a fact as interesting, or takes the star back. People only. */
+    public static function star(Request $r): never
+    {
+        if (Auth::isAi()) throw new HttpError(403, 'Only a person can star a fact.');
+        $f = Access::fact($r->int('id'));
+        if ($r->method === 'DELETE') Db::run('DELETE FROM fact_stars WHERE fact_id = ? AND user_id = ?', [$f['id'], Auth::id()]);
+        elseif (!Db::value('SELECT 1 FROM fact_stars WHERE fact_id = ? AND user_id = ?', [$f['id'], Auth::id()])) {
+            try { Db::insert('fact_stars', ['fact_id' => $f['id'], 'user_id' => Auth::id(), 'created_at' => Db::now()]); } catch (\PDOException) { /* starred meanwhile */ }
+        }
+        $n = (int)Db::value('SELECT COUNT(*) FROM fact_stars WHERE fact_id = ?', [$f['id']]);
+        Response::json(['id' => (int)$f['id'], 'stars' => $n, 'starred' => $r->method !== 'DELETE']);
     }
 
     /** @return array{facts:list<array>, edges:list<array{0:int,1:int}>} edges are [fact, depends_on] */
@@ -73,6 +149,7 @@ final class FactController
                           JOIN facts f ON f.id = p.fact_id AND p.revision_no = f.current_revision WHERE f.project_id = ?', [$pid]) as $v) {
             $proofs[(int)$v['fact_id']][(int)$v['proof_id']]['reviews'][] = $v;
         }
+        $stars = array_map('intval', array_column(Db::all('SELECT s.fact_id, COUNT(*) AS n FROM fact_stars s JOIN facts f ON f.id = s.fact_id WHERE f.project_id = ? GROUP BY s.fact_id', [$pid]), 'n', 'fact_id'));
         $lean = [];
         foreach (Db::all('SELECT l.fact_id, l.incomplete, l.check_status FROM fact_lean l
                           JOIN facts f ON f.id = l.fact_id AND l.revision_no = f.current_revision WHERE f.project_id = ?', [$pid]) as $l) {
@@ -89,6 +166,7 @@ final class FactController
             $f['comment_count'] = (int)$f['comment_count'];
             $f['status'] = self::status($f, $reviews[$id] ?? [], array_values($proofs[$id] ?? []));
             $f['proof_count'] = 1 + count($proofs[$id] ?? []);
+            $f['stars'] = $stars[$id] ?? 0;
             $f['review_counts'] = array_count_values(array_column($reviews[$id] ?? [], 'verdict'));
             $f['lean'] = self::leanState($lean[$id] ?? []);
             $f['labels'] = json_decode((string)$f['labels_json'], true) ?: [];
@@ -1208,6 +1286,10 @@ final class FactController
         }, Db::all('SELECT p.*, u.name AS author_name, au.name AS ai_user_name FROM fact_proofs p JOIN users u ON u.id = p.author_id LEFT JOIN users au ON au.id = p.ai_user_id
                     WHERE p.fact_id = ? ORDER BY p.revision_no DESC, p.id', [$id]));
         $out['rephrasings'] = NotationController::forFact($id, $pid, (int)$f['current_revision']);
+        $out['starred_by'] = Db::all('SELECT u.id, u.name FROM fact_stars s JOIN users u ON u.id = s.user_id WHERE s.fact_id = ? ORDER BY s.created_at', [$id]);
+        foreach ($out['starred_by'] as &$u) $u['id'] = (int)$u['id'];
+        unset($u);
+        $out['starred'] = in_array(Auth::id(), array_column($out['starred_by'], 'id'), true);
         $out['lean_proofs'] = Db::all(
             'SELECT l.*, u.name AS created_by_name, c.name AS checked_by_name, au.name AS ai_user_name, cu.name AS check_user_name FROM fact_lean l
              JOIN users u ON u.id = l.created_by LEFT JOIN users c ON c.id = l.checked_by

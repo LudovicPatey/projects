@@ -779,6 +779,7 @@ final class AiTaskController
     {
         if ($reply && $reply['type'] === 'message') return ['view' => 'conversations', 'id' => $reply['conversation_id']];
         if ($reply && $reply['type'] === 'comment') {
+            if ($reply['target_type'] === 'notation') return ['view' => 'facts', 'query' => ['mode' => 'notation', 'notation' => $reply['target_id'], 'comment' => $reply['root']]];
             $view = ['oquestion' => 'questions', 'conversation' => 'conversations', 'document' => 'files', 'bib' => 'bib', 'fact' => 'facts'][$reply['target_type']] ?? null;
             if ($view) return ['view' => $view, 'id' => $reply['target_id'], 'comment' => $reply['root']];
         }
@@ -798,9 +799,10 @@ final class AiTaskController
         ];
         $type = $t['source_type']; $id = (int)$t['source_id'];
         // Every AI writing mathematics for the project follows the agreed notation. Proposals are only shown when proposing.
-        if (in_array($t['kind'], ['extract', 'notation', 'derive', 'ask'], true)) $ctx['notation'] = NotationController::forTask($pid, !($t['kind'] === 'notation' && $type === null));
+        if (in_array($t['kind'], ['extract', 'notation', 'derive', 'ask'], true)) $ctx['notation'] = NotationController::forTask($pid, !($t['kind'] === 'notation' && $type === null), $t['kind'] === 'notation');
         if ($t['kind'] === 'notation' && $type === null) {
-            // Proposing a notation: every fact, with the meaning its source gives to its symbols.
+            // Reviewing the notation: the symbols that facts define for themselves, and every fact with its source.
+            $ctx['local_notation'] = NotationController::shared($pid, 1, 300);
             $ctx['fact_texts'] = array_map(fn($f) => ['id' => (int)$f['id'], 'label' => $f['label'], 'kind' => $f['kind'], 'title' => $f['title'],
                 'statement' => mb_substr(Sanitizer::toText((string)$f['statement_html']), 0, 1500), 'glossary' => json_decode((string)$f['glossary_json'], true) ?: null,
                 'source' => Db::value("SELECT COALESCE(b.cite_key, d.title) FROM fact_sources s LEFT JOIN bib_entries b ON s.source_type = 'bib' AND b.id = s.source_id LEFT JOIN documents d ON s.source_type = 'document' AND d.id = s.source_id WHERE s.fact_id = ? AND s.revision_no = ? AND s.covers <> 'context' LIMIT 1", [$f['id'], $f['current_revision']])],

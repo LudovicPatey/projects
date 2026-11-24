@@ -42,7 +42,11 @@ print(json.dumps({"is_error": False, "result": "", "structured_output": {"summar
 `, { mode: 0o755 });
 });
 // A client process may still be writing its files when the tests end: retry the removal.
-after(() => { app?.stop(); if (tmp) fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); });
+after(() => {
+  app?.stop();
+  // Cleanup only: a temporary folder left behind by a slow client process must not fail the tests.
+  try { if (tmp) fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }); } catch (e) { console.warn(`Could not remove ${tmp}: ${e.message}`); }
+});
 beforeEach(async () => {
   for (const project of [main, side]) {
     const { tasks } = (await app.call(ann, 'GET', `/api/projects/${project}/ai`)).data;

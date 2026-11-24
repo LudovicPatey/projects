@@ -203,6 +203,10 @@ final class ProjectController
                     continue;
                 }
                 if ($c['target_type'] === 'oquestion' && !Db::value('SELECT 1 FROM open_questions WHERE id = ? AND deleted_at IS NULL', [$c['target_id']])) continue;
+                if ($c['target_type'] === 'notation') {
+                    $out[] = ['kind' => 'comment', 'label' => 'Comment on a notation entry', 'link' => ['view' => 'facts', 'query' => ['mode' => 'notation', 'notation' => (int)$c['target_id']]], 'at' => $c['created_at']];
+                    continue;
+                }
                 $view = ['conversation' => 'conversations', 'document' => 'files', 'bib' => 'bib', 'fact' => 'facts', 'oquestion' => 'questions'][$c['target_type']];
                 $names = ['oquestion' => 'question'];
                 $out[] = ['kind' => 'comment', 'label' => 'Comment on ' . ($names[$c['target_type']] ?? $c['target_type']), 'link' => ['view' => $view, 'id' => (int)$c['target_id']], 'at' => $c['created_at']];

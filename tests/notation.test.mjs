@@ -154,7 +154,7 @@ test('a fact is rewritten in the agreed notation without touching its reviewed t
 test('the client proposes entries, rewrites a fact, and sends definitions to the notation', async () => {
   await clear();
   await app.call(ann, 'POST', `/api/projects/${pid}/ai/tasks`, { kind: 'notation' });
-  fakeClaude(`{"summary": "Compared.", "entries": [{"symbol": "\\\\mathrm{IP}(X)", "meaning": "The IP set of $X$.", "note": None, "variants": [], "definition_fact_id": None}, {"symbol": "\\\\mathrm{NS}(X)", "meaning": "$\\\\mathrm{FS}(X) \\\\setminus \\\\{0\\\\}$.", "note": None, "variants": [], "definition_fact_id": None}]} if "agree on one notation" in prompt else None`);
+  fakeClaude(`{"summary": "Compared.", "entries": [{"symbol": "\\\\mathrm{IP}(X)", "meaning": "The IP set of $X$.", "note": None, "variants": [], "definition_fact_id": None}, {"symbol": "\\\\mathrm{NS}(X)", "meaning": "$\\\\mathrm{FS}(X) \\\\setminus \\\\{0\\\\}$.", "note": None, "variants": [], "definition_fact_id": None}]} if "review the notation of the whole project" in prompt else None`);
   let r = runClient('notation');
   assert.equal(r.status, 0, r.stderr);
   const ip = (await notation()).entries.find((x) => x.symbol === '\\mathrm{IP}(X)');
@@ -184,4 +184,79 @@ test('the client proposes entries, rewrites a fact, and sends definitions to the
   assert.equal(after_.entries.some((x) => x.symbol === '\\mathrm{Bad}'), false, 'an unquoted definition is set aside');
   const graph = (await app.call(ann, 'GET', `/api/projects/${pid}/facts`)).data.facts;
   assert.equal(graph.some((f) => f.title === 'FS' && f.kind === 'definition'), false, 'no definition fact is created');
+});
+
+test('members discuss a notation entry, and the AI reads the discussion', async () => {
+  const e = (await propose({ symbol: '\\mathrm{IP}^*(X)', meaning_text: 'The dual of the IP sets.' })).data;
+  const outsider = await app.signIn('0000-0002-9079-593X');
+  assert.equal((await app.call(outsider, 'POST', '/api/comments', { target_type: 'notation', target_id: e.id, body_text: 'x' })).status, 403);
+  const c = await app.call(bob, 'POST', '/api/comments', { target_type: 'notation', target_id: e.id, body_text: 'Most papers write $\\mathrm{IP}^\\star$ here.' });
+  assert.equal(c.status, 201);
+  const listed = (await app.call(ann, 'GET', `/api/comments?type=notation&id=${e.id}`)).data;
+  assert.equal((listed.threads || listed.comments || listed).length, 1);
+  const entry = (await notation()).entries.find((x) => x.id === e.id);
+  assert.equal(entry.comment_count, 1); assert.equal(entry.open_threads, 1);
+  await clear();
+  await app.call(ann, 'POST', `/api/projects/${pid}/ai/tasks`, { kind: 'notation' });
+  const t = await claim();
+  assert.match(t.context.notation.find((x) => x.id === e.id).comments[0].text, /Most papers/);
+  await app.call(key, 'POST', `/api/ai/tasks/${t.id}/complete`, { lease: t.lease, ai_model: 'claude-opus-5-5', summary: 'ok' });
+  assert.equal((await app.call(ann, 'DELETE', `/api/notation/${e.id}`)).status, 200);
+  assert.equal((await app.call(ann, 'GET', `/api/comments?type=notation&id=${e.id}`)).status, 404);
+});
+
+test('a local notation is unfolded by rewrites, and a general notion lists its settings', async () => {
+  const before_ = (await notation()).hash;
+  const local = (await propose({ symbol: 'B \\oplus C', meaning_text: '$B \\cup C$ where $\\max B < \\min C$.' })).data;
+  assert.equal((await decide(local.id, 'local', key)).status, 403);
+  assert.equal((await decide(local.id, 'local')).status, 200);
+  const after_ = await notation();
+  assert.notEqual(after_.hash, before_, 'rewrites made before must be redone');
+  assert.equal(after_.progress.local, 1);
+  const ip = await app.call(key, 'POST', `/api/projects/${pid}/notation`, { symbol: '\\mathrm{IP}\\text{-set}', meaning_text: 'A set containing $\\mathrm{FP}(x_n)$ for some sequence, in any semigroup.', ai_model: 'claude-opus-5-5',
+    variants: [{ symbol: '\\mathrm{IP}', meaning: 'Contains $\\mathrm{FS}(X)$ for an infinite $X \\subseteq \\mathbb{N}$.', where: '$(\\mathbb{N}, +)$, Hindman', relation: 'instance' }, { symbol: '\\mathrm{IP}', meaning: 'Something else.', where: 'x', relation: 'weird' }] });
+  assert.deepEqual(ip.data.variants.map((v) => v.relation), ['instance', 'clash']);
+  const merged = await app.call(key, 'POST', `/api/projects/${pid}/notation`, { symbol: '\\mathrm{IP}\\text{-set}', meaning_text: 'Contains $\\mathrm{FU}(B_n)$ for a block sequence.', where: '$(\\mathrm{FIN}, \\cup)$', relation: 'instance', ai_model: 'claude-opus-5-5' });
+  assert.equal(merged.data.variants.at(-1).relation, 'instance');
+  const { b } = await facts([{ ref: 'b', title: 'Uses local', kind: 'lemma', labels: ['conclusion'], method: 'deduced', statement_text: 'B ⊕ C is a block.', proof_text: 'P.' }]);
+  await clear();
+  await app.call(ann, 'POST', `/api/projects/${pid}/ai/tasks`, { kind: 'notation', source_type: 'fact', source_id: b });
+  const t = await claim();
+  assert.ok(t.context.notation.some((x) => x.status === 'local'), 'a rewrite knows what to unfold');
+  await app.call(key, 'POST', `/api/ai/tasks/${t.id}/release`, { lease: t.lease });
+  await clear();
+});
+
+test('each fact keeps its own notation, and symbols defined in several facts are offered to make global', async () => {
+  const mk = (ref, meaning) => ({ ref, title: `Uses ${ref}`, kind: 'lemma', labels: ['conclusion'], method: 'deduced', statement_text: 'A block sequence works.', proof_text: 'P.', glossary: { '\\mathrm{FU}(B)': meaning } });
+  const made = await facts([mk('u1', 'Finite unions of the blocks.'), mk('u2', 'Finite unions of the blocks'), mk('u3', 'Something else.')]);
+  let shared = (await notation()).shared.find((s) => s.symbol === '\\mathrm{FU}(B)');
+  assert.equal(shared.facts, 3); assert.equal(shared.meanings.length, 2); assert.deepEqual(shared.meanings[0].facts.sort(), [made.u1, made.u2].sort()); assert.equal(shared.entry, null);
+  const e = (await propose({ symbol: '\\mathrm{FU}(B)', meaning_text: 'Finite unions of the blocks.', facts: [made.u1, made.u2, 999999] })).data;
+  assert.deepEqual(e.facts.sort(), [made.u1, made.u2].sort(), 'only facts of the project');
+  shared = (await notation()).shared.find((s) => s.symbol === '\\mathrm{FU}(B)');
+  assert.equal(shared.entry.id, e.id);
+  // A rewrite carries its own local notation, which then replaces the original glossary.
+  await decide(e.id, 'agreed');
+  await app.call(key, 'POST', `/api/facts/${made.u3}/rephrasings`, { ai_model: 'claude-opus-5-5', statement_text: 'A block sequence works.', proof_text: 'P.', local_notation: [{ symbol: '\\mathrm{FU}^*(B)', meaning: 'Something else.' }] });
+  const f = (await app.call(ann, 'GET', `/api/facts/${made.u3}`)).data;
+  assert.deepEqual(f.rephrasings[0].local, { '\\mathrm{FU}^*(B)': 'Something else.' });
+  shared = (await notation()).shared.find((s) => s.symbol === '\\mathrm{FU}(B)');
+  assert.ok(!shared || shared.meanings.every((m) => !m.facts.includes(made.u3)), 'the rewritten fact no longer defines the clashing symbol');
+  await clear();
+  await app.call(ann, 'POST', `/api/projects/${pid}/ai/tasks`, { kind: 'notation' });
+  const t = await claim();
+  assert.ok(t.context.local_notation.some((s) => s.symbol === '\\mathrm{FU}(B)'), 'the review sees every fact\'s own notation');
+  await app.call(key, 'POST', `/api/ai/tasks/${t.id}/release`, { lease: t.lease });
+  await clear();
+  // The client turns a model's local notation into the fact's glossary.
+  const out = spawnSync('python3', ['-c', `
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("oq", sys.argv[1]); oq = importlib.util.module_from_spec(spec); spec.loader.exec_module(oq)
+task = {"id": 1, "kind": "derive", "context": {"facts": []}}
+answer = {"facts": [{"ref": "a", "title": "T", "kind": "lemma", "statement": "S.", "proof": "P.", "quote": None, "page": None, "covers": None, "depends_on": [], "local_notation": [{"symbol": "x \\\\oplus y", "meaning": "a sum"}, {"symbol": "", "meaning": "no"}]}]}
+items, dropped = oq.fact_items(task, answer, None)
+print(json.dumps(items[0].get("glossary")))
+`, CLIENT], { encoding: 'utf8' });
+  assert.deepEqual(JSON.parse(out.stdout), { 'x \\oplus y': 'a sum' }, out.stderr);
 });
