@@ -52,7 +52,7 @@ import webbrowser
 import zipfile
 import zlib
 
-VERSION = "1.10.1"
+VERSION = "1.10.2"
 API_LEVEL = 2  # raise with the server's AiTaskController::API_LEVEL when a client needs new server features
 GITHUB_REPO = "LudovicPatey/projects"
 KINDS = ["extract", "ask", "bib", "derive", "review", "lean", "notation"]
@@ -788,7 +788,12 @@ for a union where $\max B < \min C$, is not a project symbol: leave it out, it s
 Some notions are defined differently in different settings but are one general notion: an IP set or a full-match makes sense in any semigroup,
 and papers define it in $(\mathbb{N}, +)$ for Hindman's theorem or in $(\mathrm{FIN}, \cup)$ for the finite union theorem. Propose its general
 definition, for an arbitrary semigroup or structure, and list each setting in "variants" with "relation": "instance".
-Use "relation": "clash" only for a variant that gives the symbol a genuinely different meaning. "notation" lists the entries already
+Use "relation": "clash" only for a variant that gives the symbol a genuinely different meaning.
+Some terms are parametric: unambiguous once their setting is known, but with a different meaning in each setting. "homogeneous" differs for a
+coloring of pairs, of triples, or of an IP set; "full-match" and "half-match" differ for Hindman's theorem and for the finite union theorem.
+Give each setting its own entry, with the setting in parentheses in the "symbol" itself, for example "full-match (HT)" and "full-match (FUT)",
+or "homogeneous (pairs)". Keep a plain "full-match" entry only for a general definition, valid in any semigroup. Explain the abbreviation
+of the setting in "meaning". "notation" lists the entries already
 proposed or agreed, with the members' "comments" on each: do not propose those symbols again, but use the comments to see what the team prefers. Propose at most 30 entries. People decide which entries the project adopts.""",
     "notation_rephrase": """TASK: write the fact in "fact" in task.json again in the project's agreed notation, listed in "notation".
 The fact comes from a source with its own conventions: its "glossary" and the quotations in "sources" tell what its symbols mean there.
@@ -796,6 +801,9 @@ For each symbol, decide what it means in this fact. Rewrite it when the agreed n
 with another symbol. The members' "comments" on an entry explain its use: follow them. An entry with "status": "local" is not a project symbol:
 unfold it, or define it within the statement, for example "where $B \oplus C$ denotes $B \cup C$ with $\max B < \min C$".
 An entry whose "variants" are instances is one general notion: a fact working in one of these settings keeps using it, without renaming it.
+An entry whose name ends with a setting in parentheses, such as "full-match (HT)", is the meaning of the term in that setting. Use the entry of
+the fact's setting. Write the qualified name, or the bare term when the fact stays in that one setting, and then say in "local_notation" which
+entry the bare term stands for, for example "full-match" meaning "full-match (HT)".
 The mathematical content must stay exactly the same: do not correct, strengthen or weaken anything, and do not add or
 remove hypotheses or steps. If nothing has to change, set "unchanged" to true and copy the text. The fact must be readable alone: in "local_notation", define every symbol
 of the rewritten fact that is not a project symbol, including the local entries you defined. In "uses", list each symbol whose meaning matters:
@@ -1440,7 +1448,10 @@ def danus_notation(entries):
         return ""
     lines = ["## Notation", "Use exactly this notation in every fact. Papers may give these symbols other meanings: translate them.", ""]
     for e in entries:
-        lines.append(f"- ${e['symbol']}$: {e['meaning']}" + (f" ({e['note']})" if e.get("note") else ""))
+        name = str(e["symbol"])
+        # Words such as "full-match (HT)" stay words; symbols are LaTeX.
+        shown = name if not re.search(r"[\\^_{}]", name) and re.search(r"[A-Za-z]{3,}", name) else f"${name}$"
+        lines.append(f"- {shown}: {e['meaning']}" + (f" ({e['note']})" if e.get("note") else ""))
     return "\n".join(lines)
 
 

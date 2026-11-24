@@ -1,7 +1,7 @@
 {
  "min_version": "1.0.0",
- "client_version": "1.10.1",
- "fingerprint": "0746e3f8385376076567d0aa31ec93921e1fdba3a718faa49bb3d053d6038f8f",
+ "client_version": "1.10.2",
+ "fingerprint": "dc4c24f1caf9c71b5572d46905965585257647d126a0c4a71a783075040afd80",
  "routes": [
   "GET /api/bib/{id}/pdf BibController::pdf",
   "GET /api/client/info AiTaskController::clientInfo",
@@ -125,12 +125,12 @@
   "Auth::aiUserId": "8ccc17db5d9e61b71f04fbc1e4ddcb61403400857412b1df1adabba8150d1acc",
   "Auth::bearer": "8e5808595e8fdb035321e31eb4c5f2d8453f2c72727802fb1b43614871bb25f0",
   "Auth::checkClientRoute": "999b1aca03d3f4d2a14d289c5ac0a942363cdd2a781ae7d1443216aa1bbbecb6",
-  "Auth::id": "22c6b10952a48ef61f52e15f28afb6cde509ebd47a977835cba04516dd5d77f8",
+  "Auth::id": "0b889aee386a8d1b60f53c3422f3c79e599f6c65724172d20b400f4aa15e56fd",
   "Auth::isAgent": "ac0cc84ff93ac77fa408c356094666ff9b8400cf10ea7ac136f4dac0da414076",
   "Auth::isAi": "f524dba20dfe423359dffd4b5af3fab9d1b3311ecce969781b8516eb732f0bf7",
   "Auth::isClient": "7a78425b2b7c7cc4eddd94b9feb2cbfe0cc9a7b9e42c14e4174c23d12e61b4f5",
   "Auth::require": "ed3fa54dcf372e94ec9c3ca8466c5fc05d33ce9302a134e876db5c64caf93ef6",
-  "Auth::user": "a3cae29a268c0e10d98f1f28968a27198a30722f5b73148a96b31b4f26bb2394",
+  "Auth::user": "24fc35662cce9b06d09d792e457b5ed2d31c93e834a83890f83191fcf4d15b00",
   "BibController::pdf": "9c71ea26e73f8068e3c696f6c89a3202ef3365afc200dcc40c6d7e3bfe665775",
   "BibController::present": "8f241ad73f1f7a281984335159e1a515868d1fbf3ad366717c203c283604fa82",
   "BibTex::write": "d07328e9666c316cde25e1a8ca9a34be144f9f1099debd19b404232b3aa1d1e7",
@@ -476,6 +476,17 @@
     "NotationController::rephrase",
     "+NotationController::localNotation",
     "+NotationController::shared"
+   ]
+  },
+  {
+   "date": "2026-11-24",
+   "decision": "compatible",
+   "client_version": "1.10.2",
+   "min_version": "1.0.0",
+   "note": "Auth recognises audit keys (oqa_), which sign nobody in. Personal keys and sessions behave as before, so AI clients are unaffected.",
+   "changed": [
+    "Auth::id",
+    "Auth::user"
    ]
   }
  ]

@@ -8,7 +8,7 @@ import { ADMIN_ACTIONS, ADMIN_OPTIONS, confirmed, describeChanges, hasChanges } 
 export const AdminView = {
   components: { Kpi, StackBar },
   props: { pid: Number },
-  data() { return { d: null, options: {}, open: null, typed: '', preview: null, busy: false, last: null }; },
+  data() { return { d: null, options: {}, open: null, typed: '', preview: null, busy: false, last: null, keys: [], keyForm: { label: '', days: 7 }, newKey: null }; },
   computed: {
     owner() { return store.project?.my_role === 'owner'; },
     title() { return store.project?.title || ''; },
@@ -20,10 +20,24 @@ export const AdminView = {
     canRun() { return this.open && this.preview && hasChanges(this.preview.changes) && (!this.open.destructive || confirmed(this.typed, this.title)); },
   },
   created() { this.optionLabels = ADMIN_OPTIONS; this.segments = TASK_SEGMENTS; },
-  async mounted() { if (this.owner) await this.load(); },
+  async mounted() { if (this.owner) { await this.load(); await this.loadKeys(); } },
   methods: {
     link, describeChanges, hasChanges,
     async load() { const r = await attempt(() => api.get(`api/projects/${this.pid}/admin`)); if (r) this.d = r; },
+    async loadKeys() { const r = await attempt(() => api.get(`api/projects/${this.pid}/audit-keys`)); if (r) this.keys = r.keys; },
+    async createKey() {
+      const r = await attempt(() => api.post(`api/projects/${this.pid}/audit-keys`, { label: this.keyForm.label, days: +this.keyForm.days }));
+      if (!r) return;
+      this.keys = r.keys; this.keyForm.label = '';
+      this.newKey = { token: r.token, site: location.origin + location.pathname.replace(/[^/]*$/, '').replace(/\/$/, '') };
+    },
+    async revokeKey(k) {
+      if (!confirm(`Revoke the audit key "${k.label}"? Anyone using it loses access at once.`)) return;
+      const r = await attempt(() => api.del(`api/projects/${this.pid}/audit-keys/${k.id}`), 'Audit key revoked');
+      if (r) this.keys = r.keys;
+    },
+    async copy(text) { try { await navigator.clipboard.writeText(text); toast('Copied', 'success'); } catch { toast('Select the text and copy it', 'error'); } },
+    when(s) { return s ? new Date(s.replace(' ', 'T') + 'Z').toLocaleDateString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : ''; },
     opts(key) { return this.options[key] || (this.options[key] = {}); },
     query(key) { return Object.entries(this.opts(key)).filter(([, v]) => v).map(([k]) => (k === 'all' ? 'mode=all' : `${k}=1`)).join('&'); },
     async start(item) {
@@ -72,6 +86,26 @@ export const AdminView = {
               <small class="muted">Now: {{ describeChanges(a.preview?.changes) }}<template v-if="a.preview?.destructive"> · a verified backup is made first</template></small></div>
             <button class="btn sm" :class="{danger: a.preview?.destructive}" @click="start(a)">{{ a.preview?.destructive ? 'Review…' : 'Run…' }}</button>
           </article>
+        </section>
+        <section class="panel audit-panel">
+          <header class="ai-head"><h2><icon name="key" :size="15"/> Audit access</h2></header>
+          <p class="muted small">An audit key lets an auditor, a person or an AI, read this project's facts, notation and reviews through the audit API. It is read-only, works only for this project, expires, and can be revoked at any time. Private conversations stay hidden, and no email or ORCID iD is shared.</p>
+          <div class="audit-form"><input v-model="keyForm.label" placeholder="Who it is for, e.g. Claude audit" aria-label="Label of the audit key" maxlength="120">
+            <select v-model.number="keyForm.days" aria-label="How long it lasts"><option :value="1">1 day</option><option :value="7">7 days</option><option :value="30">30 days</option></select>
+            <button class="btn primary sm" @click="createKey"><icon name="plus" :size="13"/> Create a key</button></div>
+          <div v-if="newKey" class="audit-new" role="status">
+            <b>Copy this key now: it is shown only once.</b>
+            <div class="audit-token"><code>{{ newKey.token }}</code><button class="btn sm" @click="copy(newKey.token)"><icon name="copy" :size="13"/> Copy</button></div>
+            <p class="muted small">To download everything for an audit, from a computer set up for this project:</p>
+            <pre class="audit-cmd">OQ_AUDIT_URL={{ newKey.site }} OQ_AUDIT_KEY=&lt;the key&gt; npm run audit:fetch</pre>
+            <button class="link-btn" @click="newKey = null">Done</button>
+          </div>
+          <div v-for="k in keys" :key="k.id" class="audit-key" :class="{off: !k.active}">
+            <div class="audit-key-main"><b>{{ k.label }}</b> <code>{{ k.prefix }}…</code>
+              <small class="muted">by {{ k.created_by }} · {{ k.revoked_at ? 'revoked ' + when(k.revoked_at) : (k.active ? 'expires ' + when(k.expires_at) : 'expired') }} · {{ k.uses ? k.uses + ' request' + (k.uses > 1 ? 's' : '') + ', last ' + when(k.last_used_at) : 'never used' }}</small></div>
+            <button v-if="k.active" class="btn sm danger" @click="revokeKey(k)">Revoke</button>
+          </div>
+          <div v-if="!keys.length" class="d-empty">No audit key yet.</div>
         </section>
         <section class="panel">
           <header class="ai-head"><h2><icon name="settings" :size="15"/> Project</h2></header>

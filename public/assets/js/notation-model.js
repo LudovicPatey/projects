@@ -6,8 +6,20 @@ export const NOTATION_SEGMENTS = [['current', 'In project notation', '#0d9488'],
 /** Facts that a click on "Rewrite" sends to the AI queue. */
 export const toRewrite = (p) => Math.max(0, (p?.stale || 0) + (p?.unfaithful || 0) + (p?.none || 0) - (p?.queued || 0));
 
-/** A symbol as LaTeX between dollars, whatever the person typed. */
-export const asMath = (symbol) => `$${String(symbol || '').trim().replace(/^\$+|\$+$/g, '')}$`;
+const looksMath = (s) => /[\\^_{}]/.test(s) || !/[A-Za-z]{3,}/.test(s);
+const piece = (s) => (looksMath(s) ? `$${s}$` : s);
+
+/**
+ * A notation name for display: LaTeX for symbols, plain text for words such as "full-match",
+ * and a setting in parentheses after a space, such as "full-match (HT)", kept as text.
+ */
+export function asMath(symbol) {
+  const s = String(symbol || '').trim().replace(/^\$+|\$+$/g, '');
+  if (s.includes('$')) return s; // the person wrote the dollars
+  const m = s.match(/^(.*\S)\s+\(([^()]*[A-Za-z][^()]*)\)$/);
+  if (m && !/[\\^_{}]/.test(m[2])) return `${piece(m[1])} (${m[2]})`;
+  return piece(s);
+}
 
 /** Instances of one general notion, and genuinely different meanings that sources give the symbol. */
 export function splitVariants(variants) {

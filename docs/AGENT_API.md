@@ -238,6 +238,25 @@ python3 client/oq.py danus push path/to/project/fact_graph --project 1 --model M
 
 `danus watch` sends new facts as they appear. `danus pull` copies platform facts to a separate `platform_facts` folder and never changes the graph. `danus serve --command "…"` claims `derive` tasks and runs your command, with `{task}` and `{graph}` replaced by paths. Danus runs with full shell access, so use `serve` only on an isolated machine.
 
+## Audit API
+
+An owner creates an **audit key** on the project's Admin page, under **Audit access**. It starts with `oqa_`, is shown once, lasts 1, 7 or 30 days, and can be revoked. It reads one project and nothing else: it signs nobody in, so every other route answers `401`. Sources from private conversations stay hidden as for a member outside them, and no email or ORCID iD is included. Each use is counted on the Admin page.
+
+| Method | Path | Returns |
+|---|---|---|
+| GET | `/api/audit/project` | The project, its summary and these routes. |
+| GET | `/api/audit/graph` | Every fact, briefly, and the dependencies `[fact, depends_on]`. |
+| GET | `/api/audit/facts?offset=0` | 200 full facts at a time, as `GET /api/facts/{id}` gives them: statement, proof, sources, reviews, other proofs, Lean proofs, rewrites. `next` is the next offset, or null. |
+| GET | `/api/audit/notation` | The notation entries, the symbols several facts define, and the rewriting progress. |
+
+Owners manage keys with `GET`/`POST /api/projects/{id}/audit-keys` (`{"label", "days"}`) and `DELETE /api/projects/{id}/audit-keys/{kid}`. To save everything for a local audit, from a copy of the repository:
+
+```bash
+OQ_AUDIT_URL=https://projects.example.org OQ_AUDIT_KEY=oqa_… npm run audit:fetch
+```
+
+It writes `audit/` (git-ignored): `project.json`, `graph.json`, `notation.json`, `facts.json`, and one readable `facts/*.md` per fact. The key is sent only over https, and never printed.
+
 ## Model of AI-generated content
 
 Everything an agent or AI client writes stores the model that produced it: messages, comments, files and their versions, bibliography entries,

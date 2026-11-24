@@ -260,3 +260,20 @@ print(json.dumps(items[0].get("glossary")))
 `, CLIENT], { encoding: 'utf8' });
   assert.deepEqual(JSON.parse(out.stdout), { 'x \\oplus y': 'a sum' }, out.stderr);
 });
+
+test('a parametric term has one entry per setting, named with the setting in parentheses', async () => {
+  assert.equal(asMath('full-match (HT)'), 'full-match (HT)'); assert.equal(asMath('homogeneous (pairs)'), 'homogeneous (pairs)');
+  assert.equal(asMath('\\mathrm{FU}(B_n) (FUT)'), '$\\mathrm{FU}(B_n)$ (FUT)'); assert.equal(asMath('B \\oplus C'), '$B \\oplus C$');
+  const ht = (await propose({ symbol: 'full-match (HT)', meaning_text: 'For Hindman\'s theorem (HT): …' })).data;
+  const fut = (await propose({ symbol: 'full-match (FUT)', meaning_text: 'For the finite union theorem (FUT): …' })).data;
+  const general = (await propose({ symbol: 'full-match', meaning_text: 'In any semigroup: …' })).data;
+  for (const e of [ht, fut, general]) assert.equal((await decide(e.id, 'agreed')).status, 200, e.symbol);
+  const agreed = (await notation()).entries.filter((e) => e.status === 'agreed' && e.symbol.startsWith('full-match')).map((e) => e.symbol).sort();
+  assert.deepEqual(agreed, ['full-match', 'full-match (FUT)', 'full-match (HT)']);
+  const out = spawnSync('python3', ['-c', `
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("oq", sys.argv[1]); oq = importlib.util.module_from_spec(spec); spec.loader.exec_module(oq)
+print(oq.danus_notation([{"symbol": "full-match (HT)", "meaning": "m"}, {"symbol": "\\\\mathrm{NS}(X)", "meaning": "n"}]))
+`, CLIENT], { encoding: 'utf8' });
+  assert.match(out.stdout, /^- full-match \(HT\): m$/m); assert.match(out.stdout, /^- \$\\mathrm\{NS\}\(X\)\$: n$/m);
+});

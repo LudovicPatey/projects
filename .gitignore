@@ -13,3 +13,6 @@ node_modules/
 .DS_Store
 __pycache__/
 *.pyc
+
+# Local audits of a project, downloaded with npm run audit:fetch
+audit/

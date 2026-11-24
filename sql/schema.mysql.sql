@@ -440,6 +440,24 @@ CREATE TABLE IF NOT EXISTS fact_sources (
   FOREIGN KEY (fact_id) REFERENCES facts(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- Audit keys: an owner lets an auditor read one project's facts, read-only, for a limited time.
+CREATE TABLE IF NOT EXISTS audit_keys (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  project_id INT UNSIGNED NOT NULL,
+  label VARCHAR(120) NOT NULL,
+  token_hash CHAR(64) NOT NULL UNIQUE,
+  token_prefix VARCHAR(16) NOT NULL,
+  created_by INT UNSIGNED NOT NULL,
+  created_at DATETIME NOT NULL,
+  expires_at DATETIME NOT NULL,
+  revoked_at DATETIME NULL,
+  last_used_at DATETIME NULL,
+  uses INT UNSIGNED NOT NULL DEFAULT 0,
+  KEY idx_audit_key_project (project_id),
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+  FOREIGN KEY (created_by) REFERENCES users(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- Personal API keys: a user's AI client reads what the user can read and submits facts.
 CREATE TABLE IF NOT EXISTS user_api_keys (
   id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,

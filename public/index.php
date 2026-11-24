@@ -5,7 +5,7 @@ require __DIR__ . '/../src/bootstrap.php';
 
 use App\{Auth, Config, HttpError, Request, Response};
 use App\Controllers\{AgentController, AiTaskController, AuthController, BibController, CommentController, ConversationController, DashboardController,
-    DocumentController, ExportController, FactController, FeedbackController, HelpController, KeyController, AdminController, NotationController, NotificationController, ProjectController, QuestionController, ReferenceController, SearchController};
+    DocumentController, ExportController, FactController, FeedbackController, HelpController, KeyController, AdminController, AuditController, NotationController, NotificationController, ProjectController, QuestionController, ReferenceController, SearchController};
 
 $routes = [
     // auth
@@ -122,6 +122,13 @@ $routes = [
     ['DELETE', '/api/facts/{id}/reviews/{rid}',           [FactController::class, 'deleteReview']],
     ['POST',   '/api/facts/{id}/proofs',                  [FactController::class, 'proposeProof']],
     ['GET',    '/api/projects/{id}/admin',                [AdminController::class, 'show']],
+    ['GET',    '/api/projects/{id}/audit-keys',           [AuditController::class, 'keys']],
+    ['POST',   '/api/projects/{id}/audit-keys',           [AuditController::class, 'create']],
+    ['DELETE', '/api/projects/{id}/audit-keys/{kid}',     [AuditController::class, 'revoke']],
+    ['GET',    '/api/audit/project',                      [AuditController::class, 'project'], false],
+    ['GET',    '/api/audit/graph',                        [AuditController::class, 'graph'], false],
+    ['GET',    '/api/audit/facts',                        [AuditController::class, 'facts'], false],
+    ['GET',    '/api/audit/notation',                     [AuditController::class, 'notation'], false],
     ['GET',    '/api/projects/{id}/admin/preview',        [AdminController::class, 'preview']],
     ['POST',   '/api/projects/{id}/admin',                [AdminController::class, 'run']],
     ['GET',    '/api/projects/{id}/notation',             [NotationController::class, 'list']],

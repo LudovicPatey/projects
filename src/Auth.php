@@ -10,6 +10,8 @@ final class Auth
     private static ?array $token = null;
     /** True when the request comes from a user's AI client, through a personal API key. */
     private static bool $client = false;
+    /** Set when the request carries a valid audit key: it signs nobody in, and only the audit routes accept it. */
+    private static ?array $audit = null;
     /** The only writes a personal key can make: everything else would look human-written. */
     private const CLIENT_WRITES = [
         'POST /api/projects/{pid}/facts', 'POST /api/projects/{pid}/facts/batch', 'PATCH /api/facts/{id}',
@@ -60,6 +62,10 @@ final class Auth
     {
         if (self::$user !== null) return self::$user;
         $tok = self::bearer();
+        if ($tok !== null && str_starts_with($tok, 'oqa_')) {
+            self::$audit ??= Db::one('SELECT id, project_id, label FROM audit_keys WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?', [hash('sha256', $tok), Db::now()]) ?: null;
+            return null; // never a user: every route that needs one answers 401
+        }
         if ($tok !== null && str_starts_with($tok, 'ouk_')) {
             $row = Db::one(
                 "SELECT k.id AS key_id, u.id, u.orcid, u.name, u.email, u.affiliation, u.kind, u.ai_model
@@ -119,7 +125,19 @@ final class Auth
         return $u;
     }
 
-    public static function id(): int { return (int)self::require()['id']; }
+    public static function id(): int
+    {
+        self::user();
+        if (self::$audit) return 0; // an auditor is nobody: private conversations stay hidden, nothing is starred
+        return (int)self::require()['id'];
+    }
+
+    /** The audit key of this request, or null. @return ?array{id: int, project_id: int, label: string} */
+    public static function audit(): ?array
+    {
+        self::user();
+        return self::$audit;
+    }
 
     /** Finds or creates a user by ORCID iD and logs them in. */
     public static function loginOrcid(string $orcid, string $name): void

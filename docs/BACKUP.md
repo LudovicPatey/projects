@@ -1,7 +1,7 @@
 # Backup and restoration
 
 A backup is one `.zip` archive containing **all platform data**: every application table (projects, users,
-conversations, comments, facts, reviews, other proofs of facts and their reviews, the project notation and facts rewritten in it, questions, strategies, feedback reports, API key hashes, read state…) and every uploaded file.
+conversations, comments, facts, reviews, other proofs of facts and their reviews, the project notation and facts rewritten in it, audit keys (hashes only), questions, strategies, feedback reports, API key hashes, read state…) and every uploaded file.
 Each table and file is checked by SHA-256, and each new archive is fully verified before it is kept.
 
 An archive does **not** contain `config/config.php`, which holds your database password and ORCID secret.
