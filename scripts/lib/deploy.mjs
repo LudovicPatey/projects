@@ -21,6 +21,7 @@ const SINGLE_FILES = [
   ['bin/migrate-facts-preview.php', 'bin/migrate-facts-preview.php'],
   ['bin/migrate-facts-apply.php', 'bin/migrate-facts-apply.php'],
   ['bin/migrate-facts-undo.php', 'bin/migrate-facts-undo.php'],
+  ['bin/admin.php', 'bin/admin.php'],
   ['client/.htaccess', 'client/.htaccess'],
   ['client/releases/.htaccess', 'client/releases/.htaccess'],
   ['client/oq.py', 'client/oq.py'],             // served by /api/client/oq.py

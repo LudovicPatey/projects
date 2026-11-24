@@ -28,8 +28,10 @@ test('every step points at an element that exists in the interface', () => {
 });
 
 test('every menu area is presented by the project tour', () => {
-  const targets = buildSteps('project').map((s) => s.target);
+  // Owners see every menu area. Members do not have the Admin page, and their tour does not mention it.
+  const targets = buildSteps('project', { role: 'owner' }).map((s) => s.target);
   for (const v of navViews) assert.ok(targets.includes(`nav-${v}`), `the tour does not present ${v}`);
+  assert.equal(buildSteps('project', { role: 'member' }).some((s) => s.target === 'nav-admin'), false);
 });
 
 test('the project tour adapts to the project and the role', () => {

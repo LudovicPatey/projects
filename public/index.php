@@ -5,7 +5,7 @@ require __DIR__ . '/../src/bootstrap.php';
 
 use App\{Auth, Config, HttpError, Request, Response};
 use App\Controllers\{AgentController, AiTaskController, AuthController, BibController, CommentController, ConversationController, DashboardController,
-    DocumentController, ExportController, FactController, FeedbackController, HelpController, KeyController, NotificationController, ProjectController, QuestionController, ReferenceController, SearchController};
+    DocumentController, ExportController, FactController, FeedbackController, HelpController, KeyController, AdminController, NotationController, NotificationController, ProjectController, QuestionController, ReferenceController, SearchController};
 
 $routes = [
     // auth
@@ -118,6 +118,17 @@ $routes = [
     ['POST',   '/api/facts/{id}/comment-links',           [FactController::class, 'linkComment']],
     ['DELETE', '/api/facts/{id}/reviews/{rid}',           [FactController::class, 'deleteReview']],
     ['POST',   '/api/facts/{id}/proofs',                  [FactController::class, 'proposeProof']],
+    ['GET',    '/api/projects/{id}/admin',                [AdminController::class, 'show']],
+    ['GET',    '/api/projects/{id}/admin/preview',        [AdminController::class, 'preview']],
+    ['POST',   '/api/projects/{id}/admin',                [AdminController::class, 'run']],
+    ['GET',    '/api/projects/{id}/notation',             [NotationController::class, 'list']],
+    ['POST',   '/api/projects/{id}/notation',             [NotationController::class, 'create']],
+    ['POST',   '/api/projects/{id}/notation/rephrase-all', [NotationController::class, 'rephraseAll']],
+    ['PATCH',  '/api/notation/{nid}',                     [NotationController::class, 'update']],
+    ['POST',   '/api/notation/{nid}/status',              [NotationController::class, 'decide']],
+    ['DELETE', '/api/notation/{nid}',                     [NotationController::class, 'delete']],
+    ['POST',   '/api/facts/{id}/rephrasings',             [NotationController::class, 'rephrase']],
+    ['POST',   '/api/fact-rephrasings/{rid}/check',       [NotationController::class, 'check']],
     ['PATCH',  '/api/fact-proofs/{proof}',                [FactController::class, 'updateProof']],
     ['DELETE', '/api/fact-proofs/{proof}',                [FactController::class, 'deleteProof']],
     ['POST',   '/api/fact-proofs/{proof}/reviews',        [FactController::class, 'reviewProof']],

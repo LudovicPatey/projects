@@ -5,6 +5,7 @@ export const STATUS = {
   ai_checked: { label: 'AI-checked', color: '#7c3aed', bg: '#f3edff' },
   human_checked: { label: 'Human-checked', color: '#0f766e', bg: '#e6f6f3' },
   double_checked: { label: 'Human + AI checked', color: '#15803d', bg: '#dcfce7' },
+  definition: { label: 'Definition', color: '#475467', bg: '#eef0f3' },
   proof_disputed: { label: 'Proof disputed', color: '#a16207', bg: '#fef9c3' },
   disputed: { label: 'Disputed', color: '#b45309', bg: '#fff6e6' },
   retracted: { label: 'Retracted', color: '#b42318', bg: '#fdecea' },

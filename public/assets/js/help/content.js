@@ -239,6 +239,28 @@ export const ARTICLES = [
     related: ['open-questions', 'answers', 'comments'],
   },
   {
+    slug: 'administration', category: 'project', title: 'Administer a project', summary: 'Maintenance for owners: empty the facts, reset extraction, clean the AI queue.',
+    keywords: 'admin administration owner maintenance reset empty delete facts database extraction status start over clean base queue cancel retry failed notation backup restore command ssh',
+    blocks: [
+      p('The **Admin** page appears only for the owners of a project. It shows what the project holds and runs maintenance actions. Each action first says exactly what it will change.'),
+      live((c) => [line('Open the administration of this project (owners only).', [{ label: 'Open Admin', to: { view: 'admin' } }])]),
+      table(['Action', 'What it does'],
+        ['**Cancel the waiting AI tasks**', 'Tasks no client has taken are cancelled. Running ones finish'],
+        ['**Try the failed AI tasks again**', 'Failed tasks wait again, with their attempts reset'],
+        ['**Extract what is not extracted yet**', 'Queues each file and reference PDF with no extraction waiting or finished'],
+        ['**Reset the extraction status**', 'Every file and reference PDF shows as not extracted. Facts stay. Optionally extracts everything again'],
+        ['**Clear the project notation**', 'Deletes the proposals nobody agreed on, or everything, including the rewritten facts'],
+        ['**Empty the facts database**', 'Deletes every fact with its reviews, proofs, Lean proofs, comments and rewrites, and the answers they support. Extraction starts over']),
+      warn('The last three actions delete data. A **verified backup of the whole platform** is made first, and you must type the title of the project. Only the administrator can restore that backup. The bibliography and its PDFs, the files, conversations, questions and members are never changed.'),
+      h('Start again with a clean base'),
+      steps('Open **Admin** and click **Review…** on **Empty the facts database**.', 'Tick **Then extract every file and reference PDF again** if you want the AI clients to start at once. Tick **Also delete the project notation** to start that over too.', 'Read what will be deleted, type the title of the project, and confirm.'),
+      p('Ratified answers backed by a deleted fact are deleted. Their questions keep their status, so check them afterwards.'),
+      h('From the server'),
+      p('The administrator can run the same actions with `php bin/admin.php --project ID ACTION` on the server, or `npm run admin -- --project ID ACTION` over SSH. Without `--apply`, or before you type `APPLY`, it only shows what would change.'),
+    ],
+    related: ['people', 'backups', 'ai-work', 'notation'],
+  },
+  {
     slug: 'people', category: 'project', title: 'Researchers and roles', summary: 'Add colleagues, change roles, or leave a project.',
     keywords: 'members people researchers invite add remove owner member role leave orcid team',
     blocks: [
@@ -320,7 +342,7 @@ export const ARTICLES = [
       p('In any message, comment, statement, strategy or answer, type `@` and a few letters to cite **any object** of the project. It appears as a colored chip with a live title and status.'),
       table(['You can cite', 'Filter'],
         ['Question', '`q:`'], ['Strategy', '`s:`'], ['Strategy version', '`rev:`'], ['Answer', '`a:`'],
-        ['Fact', '`fact:`'], ['Fact review', '`review:`'], ['Other proof of a fact', '`proof:`'], ['Lean proof', '`lean:`'],
+        ['Fact', '`fact:`'], ['Fact review', '`review:`'], ['Other proof of a fact', '`proof:`'], ['Notation entry', '`notation:`'], ['Lean proof', '`lean:`'],
         ['File', '`file:`'], ['File version', '`version:`'], ['Reference', '`bib:`'],
         ['Suggested reference', '`suggestion:`'], ['Conversation', '`conv:`'], ['Message', '`msg:`'], ['Comment', '`comment:`'], ['AI task', '`task:`'],
         ['Person', '`who:`'], ['Project', '`project:`']),
@@ -464,6 +486,23 @@ export const ARTICLES = [
     related: ['reviews', 'ai-labels'],
   },
   {
+    slug: 'notation', category: 'facts', title: 'Project notation', summary: 'One meaning per symbol, and facts rewritten in it.',
+    keywords: 'notation symbol definition definitions glossary convention clash meaning FS NS finite sums rewrite rephrase same symbol different meaning variant agree',
+    blocks: [
+      p('Papers often write the same symbol for different things. For Hindman\'s theorem, some write $\\mathrm{FS}(X)$ for the non-empty finite sums of $X$, and others include $0$ and write $\\mathrm{NS}(X)$ for the sums without it. The project agrees on **one meaning per symbol**, and facts are shown in that notation.'),
+      live(() => [line('Open the notation of this project.', [{ label: 'Open the notation', to: { view: 'facts', query: { mode: 'notation' } } }])]),
+      h('Agree on the notation'),
+      steps('In [Facts](app:facts), click **Notation**.', 'Click **Ask AI to propose a notation**: an AI client compares the facts and their sources, and proposes an entry for each symbol whose meaning differs or matters. You can also propose an entry yourself.', 'For each proposal, click **Agree**, **Edit** or **Reject**. Only a person can agree, and a symbol has one agreed meaning at a time.'),
+      list('An entry gives the symbol in LaTeX, its meaning, how sources differ, and the other meanings found, with where they appear.', 'Editing the symbol or meaning of an agreed entry makes it a proposal again.', 'Cite an entry with `@notation:`.'),
+      h('Definitions'),
+      p('A definition is a convention, not a result. Definitions are no longer listed among the facts, have no review status, and never flag the facts that use them as unchecked. They appear on the Notation page, under **Definitions from the facts**: click **Make an entry** to give one its agreed symbol. New extractions no longer create definition facts. A definition found in a paper becomes a notation proposal, and a symbol the project already has with another meaning is recorded on that entry as a clash.'),
+      h('Rewrite the facts'),
+      steps('Click **Rewrite N facts** on the Notation page, or **Project notation** on one fact.', 'An AI client writes the fact again in the agreed notation, using what its source means by each symbol.', 'The fact shows this version, with **Project notation** and **As written** to switch, and lists what each symbol meant in its source.'),
+      list('The reviewed text never changes, so endorsements and reviews stay valid.', 'Click **Same meaning** or **Not the same** to check a rewrite. One reported as not the same is hidden, and the original is shown.', 'When the agreed notation changes, facts show that their rewrite is out of date, and can be rewritten again.', 'New extractions already write statements and proofs in the agreed notation. Only their quotations keep the paper\'s own notation.'),
+    ],
+    related: ['facts-overview', 'reviews', 'ai-work'],
+  },
+  {
     slug: 'lean', category: 'facts', title: 'Lean proofs', summary: 'Attach formal proofs and report whether they compile.',
     keywords: 'lean formal proof compile sorry axiom mathlib verification check',
     blocks: [
@@ -517,6 +556,7 @@ export const ARTICLES = [
       shot('ai-page.webp', 'The AI work page with a status banner, figures, the queue and the new request form', 'The AI work page.'),
       h('What the AI does'),
       table(['Work', 'How it starts', 'What you get'],
+        ['**Agree on notation**', 'A request on the Notation page, or on one fact', 'Proposed notation entries that a person agrees on, or a fact rewritten in the agreed notation'],
         ['**Extract facts**', 'Automatically for an uploaded file or new version. On request for a reference or a [conversation](help:conversations)', 'Facts with an exact quotation. A quotation not found in the source is refused'],
         ['**Answer a question**', 'Write `@AI` in a message or a comment', 'A reply in the same thread, labelled with its model'],
         ['**Find references**', 'A request on the AI work page or the bibliography', 'Suggestions that a person must accept'],
@@ -688,6 +728,7 @@ export const ARTICLES = [
     blocks: [
       live((c) => (c.facts.danus.length ? [line('Facts imported from Danus in this project:', c.facts.danus.map(toFact))] : [line('No fact has been imported from Danus in this project.')])),
       p('**Prove new facts** lets a team of AI agents search for new proofs on your computer. It is powered by [Danus](https://github.com/frenzymath/Danus), an open-source multi-agent system that builds a graph of AI-verified mathematical facts. You do not need to know or configure Danus: the client handles it.'),
+      p('A proof search receives the project\'s [agreed notation](help:notation), and a fact to start from in that notation, so that its new facts use the same meaning for each symbol. `oq.py danus pull` also writes facts in the project notation, with the notation in `NOTATION.md`.'),
       h('Set it up once'),
       steps('Open the [AI client](help:ai-app), then the **Prove new facts** page.', 'On a Mac, choose the **AI engine**: ChatGPT or Claude.', 'With ChatGPT, choose where it runs. Then click **Set up proving**, and the client installs Danus there.', 'With ChatGPT, sign in when the page shows a code. Claude uses the sign-in already on your Mac.'),
       h('Choose the AI engine'),
@@ -810,12 +851,12 @@ export const ARTICLES = [
 ];
 
 /** The article explaining each area of the application. */
-export const VIEW_HELP = { overview: 'question', questions: 'open-questions', conversations: 'conversations', facts: 'facts-overview', files: 'files', bib: 'bibliography', ai: 'ai-work', members: 'people', help: 'welcome' };
+export const VIEW_HELP = { overview: 'question', questions: 'open-questions', conversations: 'conversations', facts: 'facts-overview', files: 'files', bib: 'bibliography', ai: 'ai-work', members: 'people', admin: 'administration', help: 'welcome' };
 
 /** The article covering each server feature. Adding a controller without help makes the tests fail. */
 export const CONTROLLER_HELP = {
   AuthController: 'account', FeedbackController: 'feedback', ProjectController: 'question', DashboardController: 'question', ReferenceController: 'references', QuestionController: 'open-questions', AgentController: 'project-agents', KeyController: 'ai-client', AiTaskController: 'ai-work', BibController: 'bibliography',
-  DocumentController: 'files', FactController: 'facts-overview', ConversationController: 'conversations', CommentController: 'comments',
+  DocumentController: 'files', FactController: 'facts-overview', NotationController: 'notation', AdminController: 'administration', ConversationController: 'conversations', CommentController: 'comments',
   NotificationController: 'notifications', ExportController: 'download-project', SearchController: 'search', HelpController: 'welcome',
 };
 

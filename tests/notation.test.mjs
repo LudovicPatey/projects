@@ -1,0 +1,187 @@
+// The project's notation: one meaning per symbol, facts rewritten in it, and definitions kept out of the results.
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { after, before, test } from 'node:test';
+import { startApp } from './harness.mjs';
+import { asMath, entryBody, entryError, rephrasingState, shownRephrasing, toRewrite } from '../public/assets/js/notation-model.js';
+import { AI_KINDS, requestBody } from '../public/assets/js/ai-model.js';
+
+const ANN = '0000-0002-1825-0097'; const BOB = '0000-0001-5109-3700';
+const CLIENT = path.resolve('client/oq.py');
+const FEATURES = ['extract_bib', 'extract_comments', 'extract_conversation', 'review', 'lean', 'notation'];
+let app; let ann; let bob; let key; let pid; let tmp; let bin; let n = 0;
+
+const facts = async (list) => {
+  const r = await app.call(key, 'POST', `/api/projects/${pid}/facts/batch`, { format: 'native', ai_model: 'claude-opus-5-5', facts: list });
+  assert.ok(r.status < 300, JSON.stringify(r.data));
+  return Object.fromEntries(r.data.created.map((x) => [x.ref, x.id]));
+};
+const propose = (body, who = ann) => app.call(who, 'POST', `/api/projects/${pid}/notation`, body);
+const decide = (id, status, who = ann) => app.call(who, 'POST', `/api/notation/${id}/status`, { status });
+const notation = async () => (await app.call(ann, 'GET', `/api/projects/${pid}/notation`)).data;
+const claim = async (features = FEATURES) => (await app.call(key, 'POST', '/api/ai/tasks/claim', { client_name: 'c', ai_model: 'claude-opus-5-5', kinds: ['notation'], project_id: pid, features })).data.task;
+const clear = async () => { for (const t of (await app.call(ann, 'GET', `/api/projects/${pid}/ai`)).data.tasks) if (['pending', 'running'].includes(t.status)) await app.call(ann, 'POST', `/api/ai/tasks/${t.id}/cancel`, {}); };
+const fakeClaude = (output) => fs.writeFileSync(path.join(bin, 'claude'), `#!/usr/bin/env python3
+import json, sys
+a = sys.argv[1:]
+if a == ["--version"]: print("1.0 (Claude Code)"); sys.exit()
+if a[:2] == ["auth", "status"]: print("{}"); sys.exit()
+prompt = sys.stdin.read()
+task = json.load(open("task.json"))
+out = ${output}
+print(json.dumps({"is_error": False, "result": "", "structured_output": out, "modelUsage": {"claude-opus-5-5": {"inputTokens": 1, "outputTokens": 1}}}))
+`, { mode: 0o755 });
+const runClient = (only) => {
+  n += 1;
+  const dir = path.join(tmp, `run${n}`); fs.mkdirSync(dir, { recursive: true });
+  return spawnSync('python3', [CLIENT, 'run', '--once', '--provider', 'claude', '--only', only, '--project', String(pid)], { env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, HOME: dir, OQ_CONFIG_DIR: path.join(dir, 'c'), OQ_URL: app.base, OQ_KEY: key.token }, encoding: 'utf8', timeout: 60000 });
+};
+
+before(async () => {
+  app = await startApp(); ann = await app.signIn(ANN); bob = await app.signIn(BOB);
+  pid = (await app.call(ann, 'POST', '/api/projects', { title: 'Hindman', question_html: '<p>Q</p>' })).data.id;
+  await app.call(ann, 'POST', `/api/projects/${pid}/members`, { orcid: BOB });
+  key = { token: (await app.call(ann, 'POST', '/api/me/keys', { name: 'k' })).data.token };
+  tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'oq-notation-')); bin = path.join(tmp, 'bin'); fs.mkdirSync(bin);
+  fs.writeFileSync(path.join(bin, 'pdftotext'), '#!/bin/sh\nprintf "Definition. FS(X) is the set of non-empty finite sums of X. Theorem 2. Every coloring has a monochromatic FS(X)." > "$3"\n', { mode: 0o755 });
+});
+after(() => { app?.stop(); if (tmp) fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); });
+
+test('the interface helpers', () => {
+  assert.equal(asMath('$\\mathrm{FS}(X)$'), '$\\mathrm{FS}(X)$'); assert.equal(asMath('NS(X)'), '$NS(X)$');
+  assert.ok(entryError({ symbol: '', meaning: 'x' })); assert.ok(entryError({ symbol: 'x', meaning: ' ' })); assert.equal(entryError({ symbol: 'x', meaning: 'y' }), null);
+  assert.deepEqual(entryBody({ symbol: ' FS ', meaning: ' m ', note: '', fact: '4' }), { symbol: 'FS', meaning_text: 'm', note_text: '', definition_fact_id: 4 });
+  assert.equal(toRewrite({ none: 3, stale: 2, unfaithful: 1, queued: 2 }), 4);
+  const fact = { current_revision: 1, rephrasings: [{ current: true, unchanged: false, check_verdict: null, revision_no: 1 }] };
+  assert.ok(shownRephrasing(fact, true)); assert.equal(shownRephrasing(fact, false), null);
+  assert.equal(shownRephrasing({ rephrasings: [{ current: true, check_verdict: 'unfaithful' }] }, true), null);
+  assert.equal(rephrasingState({ current_revision: 1, rephrasings: [{ current: false, revision_no: 1 }] }).tone, 'warn');
+  assert.deepEqual(requestBody({ kind: 'notation', prompt: '' }), { kind: 'notation' }); assert.equal(AI_KINDS.notation.needs, null);
+});
+
+test('people agree on one meaning per symbol, and only people', async () => {
+  const fs1 = (await propose({ symbol: '$\\mathrm{FS}(X)$', meaning_text: 'The finite sums of $X$, including $0$.', note_text: 'Hindman excludes 0.' })).data;
+  assert.equal(fs1.symbol, '\\mathrm{FS}(X)'); assert.equal(fs1.status, 'proposed');
+  assert.equal((await decide(fs1.id, 'agreed', key)).status, 403);
+  assert.equal((await decide(fs1.id, 'agreed')).status, 200);
+  const other = (await propose({ symbol: '\\mathrm{FS} (X)', meaning_text: 'The non-empty finite sums.' }, bob)).data;
+  assert.equal((await decide(other.id, 'agreed', bob)).status, 409); // one agreed meaning per symbol
+  assert.equal((await app.call(ann, 'DELETE', `/api/notation/${fs1.id}`)).status, 409);
+  assert.equal((await app.call(ann, 'DELETE', `/api/notation/${other.id}`)).status, 200); // owner
+  const edited = (await app.call(ann, 'PATCH', `/api/notation/${fs1.id}`, { meaning_text: 'The sums of finitely many elements of $X$, with the empty sum $0$.' })).data;
+  assert.equal(edited.status, 'proposed'); // a changed meaning must be agreed again
+  await decide(fs1.id, 'agreed');
+  assert.equal((await propose({ symbol: 'x', meaning_text: '' })).status, 422);
+});
+
+test('an AI meeting a known symbol with another meaning records a clash, not a duplicate', async () => {
+  const merged = await app.call(key, 'POST', `/api/projects/${pid}/notation`, { symbol: '\\mathrm{FS}(X)', meaning_text: 'The non-empty finite sums of $X$.', where: 'Hindman 1974, p. 2', ai_model: 'claude-opus-5-5' });
+  assert.equal(merged.status, 200); assert.equal(merged.data.merged, true);
+  assert.deepEqual(merged.data.variants.map((v) => v.where), ['Hindman 1974, p. 2']);
+  assert.equal((await app.call(key, 'POST', `/api/projects/${pid}/notation`, { symbol: '\\mathrm{FS}(X)', meaning_text: 'The non-empty finite sums of $X$', ai_model: 'claude-opus-5-5' })).status, 409);
+  const ns = await app.call(key, 'POST', `/api/projects/${pid}/notation`, { symbol: '\\mathrm{NS}(X)', meaning_text: '$\\mathrm{FS}(X) \\setminus \\{0\\}$.', ai_model: 'claude-opus-5-5' });
+  assert.equal(ns.status, 201); assert.equal(ns.data.author_kind, 'agent'); assert.equal(ns.data.ai_model, 'claude-opus-5-5');
+  await decide(ns.data.id, 'agreed');
+});
+
+test('definitions leave the results: no status to check, no warning on facts using them', async () => {
+  const ids = await facts([
+    { ref: 'd', title: 'Finite sums', kind: 'definition', labels: ['conclusion'], method: 'deduced', statement_text: 'FS(X) is the set of non-empty finite sums of X.' },
+    { ref: 't', title: 'Hindman', kind: 'theorem', labels: ['conclusion'], method: 'deduced', statement_text: 'Every finite coloring has a monochromatic FS(X).', proof_text: 'By ultrafilters.', depends_on: ['d'] },
+  ]);
+  const graph = (await app.call(ann, 'GET', `/api/projects/${pid}/facts`)).data.facts;
+  assert.equal(graph.find((f) => f.id === ids.d).status, 'definition');
+  assert.equal(graph.find((f) => f.id === ids.t).chain, 'ok');
+  const dash = (await app.call(ann, 'GET', `/api/projects/${pid}/dashboard`)).data;
+  assert.equal(dash.facts.by_status.definition, undefined);
+  let defs = (await notation()).definitions;
+  assert.equal(defs.find((x) => x.id === ids.d).entry, null); assert.equal(defs.find((x) => x.id === ids.d).used_by, 1);
+  const e = (await propose({ symbol: '\\mathrm{FS}^+(X)', meaning_text: 'The non-empty finite sums.', definition_fact_id: ids.d })).data;
+  defs = (await notation()).definitions;
+  assert.equal(defs.find((x) => x.id === ids.d).entry.id, e.id);
+  const refs = (await app.call(ann, 'GET', `/api/projects/${pid}/refs/resolve?keys=${encodeURIComponent(`notation:${e.id}`)}`)).data.refs;
+  assert.equal(refs[`notation:${e.id}`].link.query.notation, e.id);
+});
+
+test('notation tasks go only to clients that handle them, with the right context', async () => {
+  await clear();
+  const q = (await app.call(ann, 'POST', `/api/projects/${pid}/questions`, { title: 'A question' })).data;
+  assert.equal((await app.call(ann, 'POST', `/api/projects/${pid}/ai/tasks`, { kind: 'notation', source_type: 'question', source_id: q.id ?? q.question?.id })).status, 422);
+  const t = await app.call(ann, 'POST', `/api/projects/${pid}/ai/tasks`, { kind: 'notation' });
+  assert.equal(t.status, 201);
+  assert.equal(await claim(['review']), null);
+  const got = await claim();
+  assert.ok(got.context.fact_texts.length >= 2);
+  assert.ok(got.context.notation.some((x) => x.status === 'proposed')); // proposals are visible when proposing
+  await app.call(key, 'POST', `/api/ai/tasks/${got.id}/complete`, { lease: got.lease, ai_model: 'claude-opus-5-5', summary: 'ok' });
+});
+
+test('a fact is rewritten in the agreed notation without touching its reviewed text', async () => {
+  await clear();
+  const { a } = await facts([{ ref: 'a', title: 'Sums', kind: 'lemma', labels: ['conclusion'], method: 'deduced', statement_text: 'Every FS(X) is infinite.', proof_text: 'Take sums.' }]);
+  await app.call(ann, 'POST', `/api/facts/${a}/reviews`, { verdict: 'correct' });
+  assert.equal((await app.call(ann, 'POST', `/api/facts/${a}/rephrasings`, { statement_text: 'x' })).status, 403);
+  const p0 = (await notation()).progress;
+  assert.ok(p0.none >= 1);
+  const q = await app.call(ann, 'POST', `/api/projects/${pid}/notation/rephrase-all`, {});
+  assert.ok(q.data.queued >= 1);
+  assert.equal((await app.call(ann, 'POST', `/api/projects/${pid}/notation/rephrase-all`, {})).data.queued, 0); // not twice
+  const task = await claim();
+  assert.equal(task.source_type, 'fact');
+  assert.ok(task.context.notation.every((x) => x.status === 'agreed')); // a rewrite follows only what was agreed
+  const target = task.source_id;
+  const r = await app.call(key, 'POST', `/api/facts/${target}/rephrasings`, { ai_model: 'claude-opus-5-5', statement_text: 'Every $\\mathrm{NS}(X)$ is infinite.', proof_text: 'Take sums.', uses: [{ symbol: 'FS(X)', meaning_here: 'non-empty sums', project_symbol: '\\mathrm{NS}(X)' }] });
+  assert.equal(r.status, 201);
+  let f = (await app.call(ann, 'GET', `/api/facts/${target}`)).data;
+  const x = f.rephrasings[0];
+  assert.equal(x.current, true); assert.equal(x.uses[0].project_symbol, '\\mathrm{NS}(X)');
+  if (target === a) { assert.equal(f.status, 'human_checked'); assert.match(f.statement_html, /Every FS\(X\) is infinite/); }
+  assert.equal((await app.call(ann, 'POST', `/api/fact-rephrasings/${x.id}/check`, { verdict: 'unfaithful' })).status, 422);
+  f = (await app.call(ann, 'POST', `/api/fact-rephrasings/${x.id}/check`, { verdict: 'faithful' })).data;
+  assert.equal(f.rephrasings[0].check_verdict, 'faithful');
+  // A new agreed entry makes every rewrite out of date.
+  const e = (await propose({ symbol: '\\omega', meaning_text: 'The natural numbers.' })).data;
+  await decide(e.id, 'agreed');
+  f = (await app.call(ann, 'GET', `/api/facts/${target}`)).data;
+  assert.equal(f.rephrasings[0].current, false);
+  assert.ok((await notation()).progress.stale >= 1);
+  await clear();
+});
+
+test('the client proposes entries, rewrites a fact, and sends definitions to the notation', async () => {
+  await clear();
+  await app.call(ann, 'POST', `/api/projects/${pid}/ai/tasks`, { kind: 'notation' });
+  fakeClaude(`{"summary": "Compared.", "entries": [{"symbol": "\\\\mathrm{IP}(X)", "meaning": "The IP set of $X$.", "note": None, "variants": [], "definition_fact_id": None}, {"symbol": "\\\\mathrm{NS}(X)", "meaning": "$\\\\mathrm{FS}(X) \\\\setminus \\\\{0\\\\}$.", "note": None, "variants": [], "definition_fact_id": None}]} if "agree on one notation" in prompt else None`);
+  let r = runClient('notation');
+  assert.equal(r.status, 0, r.stderr);
+  const ip = (await notation()).entries.find((x) => x.symbol === '\\mathrm{IP}(X)');
+  assert.ok(ip); assert.equal(ip.status, 'proposed');
+  const done = (await app.call(ann, 'GET', `/api/projects/${pid}/ai`)).data.tasks.find((t) => t.kind === 'notation' && t.status === 'done' && /proposed/.test(t.summary_text || ''));
+  assert.ok(done, 'the task reports what it proposed');
+
+  const { b } = await facts([{ ref: 'b', title: 'Rewrite me', kind: 'lemma', labels: ['conclusion'], method: 'deduced', statement_text: 'FS(X) avoids 0.', proof_text: 'Non-empty sums.' }]);
+  await app.call(ann, 'POST', `/api/projects/${pid}/ai/tasks`, { kind: 'notation', source_type: 'fact', source_id: b });
+  fakeClaude(`{"summary": "Done.", "unchanged": False, "statement": "$\\\\mathrm{NS}(X)$ avoids 0.", "proof": "Non-empty sums.", "uses": [{"symbol": "FS(X)", "meaning_here": "non-empty sums", "project_symbol": "\\\\mathrm{NS}(X)"}]} if task["fact"]["id"] == ${b} and "again in the project" in prompt else None`);
+  r = runClient('notation');
+  assert.equal(r.status, 0, r.stderr);
+  const fb = (await app.call(ann, 'GET', `/api/facts/${b}`)).data;
+  assert.match(fb.rephrasings[0].statement_html, /NS/); assert.match(fb.statement_html, /FS\(X\) avoids 0/);
+
+  const ref = (await app.call(ann, 'POST', `/api/projects/${pid}/bib`, { bibtex: '@article{h74, title={Finite sums}, author={Hindman, N.}, year={1974}}' })).data.created[0];
+  const form = new FormData(); form.set('pdf', new Blob([Buffer.from('%PDF-1.4\n%%EOF\n')], { type: 'application/pdf' }), 'p.pdf');
+  await fetch(`${app.base}/api/bib/${ref}/pdf`, { method: 'POST', headers: { Cookie: ann.cookie, 'X-CSRF-Token': ann.csrf }, body: form });
+  await clear();
+  await app.call(ann, 'POST', `/api/projects/${pid}/ai/tasks`, { kind: 'extract', source_type: 'bib', source_id: ref });
+  fakeClaude(`{"summary": "Read.", "facts": [{"ref": "def", "title": "FS", "kind": "definition", "statement": "FS(X) is the set of non-empty finite sums.", "proof": None, "quote": "FS(X) is the set of non-empty finite sums of X", "page": 1, "covers": "statement", "depends_on": [], "message_id": None, "comments": []}], "definitions": [{"symbol": "\\\\mathrm{FS}(X)", "meaning": "Sums of finitely many, at least one, elements of $X$.", "quote": "FS(X) is the set of non-empty finite sums of X", "page": 1}, {"symbol": "\\\\mathrm{Bad}", "meaning": "Invented.", "quote": "a sentence that is not in the paper", "page": 1}], "existing_facts": []} if "notation" in task else None`);
+  r = runClient('extract');
+  assert.equal(r.status, 0, r.stderr);
+  const after_ = await notation();
+  const fsEntry = after_.entries.find((x) => x.symbol === '\\mathrm{FS}(X)' && x.status === 'agreed');
+  assert.ok(fsEntry.variants.some((v) => v.where.startsWith('h74')), 'the paper\'s meaning is recorded as a clash');
+  assert.equal(after_.entries.some((x) => x.symbol === '\\mathrm{Bad}'), false, 'an unquoted definition is set aside');
+  const graph = (await app.call(ann, 'GET', `/api/projects/${pid}/facts`)).data.facts;
+  assert.equal(graph.some((f) => f.title === 'FS' && f.kind === 'definition'), false, 'no definition fact is created');
+});

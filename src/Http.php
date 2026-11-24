@@ -45,6 +45,13 @@ final class Request
         return $this->json[$key] ?? $default;
     }
 
+    /** Whether the body sends this field, even empty. */
+    public function has(string $key): bool
+    {
+        $this->input();
+        return array_key_exists($key, $this->json);
+    }
+
     public function str(string $key, string $default = ''): string
     {
         $v = $this->input($key, $default);

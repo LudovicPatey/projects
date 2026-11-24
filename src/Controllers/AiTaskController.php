@@ -11,7 +11,7 @@ use App\{Access, Activity, Auth, BibTex, ClientProtocol, Db, HttpError, ModelOrd
  */
 final class AiTaskController
 {
-    public const KINDS = ['extract', 'ask', 'bib', 'derive', 'review', 'lean'];
+    public const KINDS = ['extract', 'ask', 'bib', 'derive', 'review', 'lean', 'notation'];
     private const LEASE_SECONDS = 900;
     private const MAX_ATTEMPTS = 3;
     private const MAX_REQUESTS_PER_DAY = 40;
@@ -21,7 +21,7 @@ final class AiTaskController
     private const MAX_CONVERSATION_MESSAGES = 1000;
     private const MAX_CONVERSATION_CHARS = 600000;
     /** Raise it when a client release needs new server features: older platforms are then not offered that release. */
-    public const API_LEVEL = 1;
+    public const API_LEVEL = 2;
 
     // ----- created by the platform -----
 
@@ -30,6 +30,18 @@ final class AiTaskController
     {
         if (Auth::isAi()) return;
         self::insertTask($pid, 'extract', 'document', $documentId, $versionId, null, null, "extract:$versionId");
+    }
+
+    /** An extraction queued by an owner or an administrator, for a file version or a reference PDF. */
+    public static function queueExtraction(int $pid, string $type, int $id, ?int $versionId, ?int $blobId): bool
+    {
+        return self::insertTask($pid, 'extract', $type, $id, $versionId, null, null, null, $blobId) > 0;
+    }
+
+    /** A fact to write again in the agreed notation. One task per revision and notation. */
+    public static function queueNotation(int $pid, int $factId, int $revision, string $hash): void
+    {
+        self::insertTask($pid, 'notation', 'fact', $factId, null, null, null, 'nota:' . $factId . ':' . $revision . ':' . substr($hash, 0, 12));
     }
 
     /** "@AI" in a message or a comment asks for the opinion of whichever AI client runs next. */
@@ -107,6 +119,8 @@ final class AiTaskController
         if ($sourceType !== null && self::sourceProject($sourceType, $sourceId) !== $pid) throw new HttpError(404, 'This subject is not in the project.');
         if ($kind === 'extract' && !in_array($sourceType, ['document', 'bib', 'conversation'], true)) throw new HttpError(422, 'Choose the file, reference or conversation to extract facts from.');
         if (in_array($sourceType, ['bib', 'conversation'], true) && $kind !== 'extract') throw new HttpError(422, 'Invalid subject.');
+        if ($kind === 'notation' && $sourceType !== null && $sourceType !== 'fact') throw new HttpError(422, 'Ask for a notation for the whole project, or for one fact.');
+        if ($kind === 'notation' && $sourceType === 'fact' && NotationController::hash($pid) === sha1('')) throw new HttpError(422, 'Agree on at least one notation entry first.');
         if (in_array($kind, ['review', 'lean'], true)) {
             if ($sourceType !== 'fact') throw new HttpError(422, 'Choose the fact to check.');
             if (Db::value('SELECT retracted_at FROM facts WHERE id = ?', [$sourceId])) throw new HttpError(422, 'This fact is retracted.');
@@ -513,7 +527,7 @@ final class AiTaskController
         // A client from before this feature would fail these tasks and use up their attempts.
         if (!in_array('extract_bib', (array)$r->input('features', []), true)) $where .= " AND (t.kind <> 'extract' OR t.source_type IS NULL OR t.source_type <> 'bib')";
         if (!in_array('extract_conversation', (array)$r->input('features', []), true)) $where .= " AND (t.kind <> 'extract' OR t.source_type IS NULL OR t.source_type <> 'conversation')";
-        foreach (['review', 'lean'] as $newKind) if (!in_array($newKind, (array)$r->input('features', []), true)) $where .= " AND t.kind <> '$newKind'";
+        foreach (['review', 'lean', 'notation'] as $newKind) if (!in_array($newKind, (array)$r->input('features', []), true)) $where .= " AND t.kind <> '$newKind'";
         $perKind = is_array($r->input('models')) ? $r->input('models') : [];
         // Tasks this model must leave to a stronger one are skipped, so they cannot hide the work behind them.
         for ($offset = 0; ; $offset += 100) {
@@ -783,6 +797,15 @@ final class AiTaskController
             'bibliography' => Db::all('SELECT id, cite_key, title, authors, year, doi FROM bib_entries WHERE project_id = ? ORDER BY id LIMIT 500', [$pid]),
         ];
         $type = $t['source_type']; $id = (int)$t['source_id'];
+        // Every AI writing mathematics for the project follows the agreed notation. Proposals are only shown when proposing.
+        if (in_array($t['kind'], ['extract', 'notation', 'derive', 'ask'], true)) $ctx['notation'] = NotationController::forTask($pid, !($t['kind'] === 'notation' && $type === null));
+        if ($t['kind'] === 'notation' && $type === null) {
+            // Proposing a notation: every fact, with the meaning its source gives to its symbols.
+            $ctx['fact_texts'] = array_map(fn($f) => ['id' => (int)$f['id'], 'label' => $f['label'], 'kind' => $f['kind'], 'title' => $f['title'],
+                'statement' => mb_substr(Sanitizer::toText((string)$f['statement_html']), 0, 1500), 'glossary' => json_decode((string)$f['glossary_json'], true) ?: null,
+                'source' => Db::value("SELECT COALESCE(b.cite_key, d.title) FROM fact_sources s LEFT JOIN bib_entries b ON s.source_type = 'bib' AND b.id = s.source_id LEFT JOIN documents d ON s.source_type = 'document' AND d.id = s.source_id WHERE s.fact_id = ? AND s.revision_no = ? AND s.covers <> 'context' LIMIT 1", [$f['id'], $f['current_revision']])],
+                Db::all('SELECT f.id, f.label, f.kind, f.title, f.current_revision, r.statement_html, r.glossary_json FROM facts f JOIN fact_revisions r ON r.fact_id = f.id AND r.revision_no = f.current_revision WHERE f.project_id = ? AND f.deleted_at IS NULL AND f.retracted_at IS NULL ORDER BY f.id LIMIT 400', [$pid]));
+        }
         if ($t['kind'] === 'extract') {
             $ctx['comments'] = array_slice(array_map(function ($c) {
                 $a = json_decode((string)$c['anchor_json'], true);
@@ -831,6 +854,19 @@ final class AiTaskController
             $rev = Db::one('SELECT statement_html, proof_html FROM fact_revisions WHERE fact_id = ? AND revision_no = ?', [$id, $ctx['fact']['current_revision']]);
             $ctx['fact']['statement'] = Sanitizer::toText((string)($rev['statement_html'] ?? ''));
             $ctx['fact']['proof'] = Sanitizer::toText((string)($rev['proof_html'] ?? ''));
+            // The fact as the project writes it, when an AI rewrote it in the agreed notation and nobody found it unfaithful.
+            if (in_array($t['kind'], ['derive', 'ask'], true)) {
+                $x = array_values(array_filter(NotationController::forFact($id, $pid, (int)$ctx['fact']['current_revision']), fn($r) => $r['current'] && !$r['unchanged'] && $r['check_verdict'] !== 'unfaithful'))[0] ?? null;
+                if ($x) {
+                    $ctx['fact']['statement_in_project_notation'] = Sanitizer::toText((string)$x['statement_html']);
+                    if ($x['proof_html']) $ctx['fact']['proof_in_project_notation'] = Sanitizer::toText((string)$x['proof_html']);
+                }
+            }
+            if ($t['kind'] === 'notation') {
+                $g = Db::value('SELECT glossary_json FROM fact_revisions WHERE fact_id = ? AND revision_no = ?', [$id, $ctx['fact']['current_revision']]);
+                $ctx['fact']['glossary'] = json_decode((string)$g, true) ?: null;
+                $ctx['fact']['sources'] = array_map(fn($s) => ['label' => $s['label'] ?? $s['type'], 'quote' => $s['quote']], array_filter(FactController::presentSources($id, (int)$ctx['fact']['current_revision']), fn($s) => !$s['hidden'] && $s['covers'] !== 'context'));
+            }
             if (in_array($t['kind'], ['review', 'lean'], true)) {
                 $ctx['fact']['external_refs'] = json_decode((string)Db::value('SELECT external_refs_json FROM fact_revisions WHERE fact_id = ? AND revision_no = ?', [$id, $ctx['fact']['current_revision']]), true);
                 $ctx['dependencies'] = array_map(fn($d) => ['label' => $d['label'], 'title' => $d['title'], 'statement' => Sanitizer::toText((string)$d['statement_html'])], Db::all(

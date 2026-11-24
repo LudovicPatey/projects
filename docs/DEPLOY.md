@@ -83,6 +83,26 @@ Settings are read from `cache/deploy.json` (git-ignored):
 server tools of `bin/`, and `config/config.example.php`. Never `config/config.php`, `storage/`, `cache/`, tests, documentation or the
 development router.
 
+## Administer a project
+
+Owners have an **Admin** page in each project. Administrators can run the same actions on the server:
+
+```bash
+php bin/admin.php --project 3
+php bin/admin.php --project 3 reset_facts --requeue
+php bin/admin.php --project 3 reset_facts --requeue --apply
+```
+
+The first command lists what the project holds and the actions. Without `--apply`, an action only shows what it would change. Actions: `cancel_waiting`, `retry_failed`, `requeue_extraction`, `reset_extraction` (`--requeue`), `clear_notation` (`--all`), `reset_facts` (`--requeue`, `--notation`). The last three delete data and make a verified backup first. The bibliography, its PDFs, files, conversations, questions and members are never changed.
+
+From your computer, over SSH, with the settings of `cache/deploy.json`:
+
+```bash
+npm run admin -- --project 3 reset_facts --requeue
+```
+
+It shows the preview, then runs the action after you type `APPLY`.
+
 ## First installation (once)
 
 1. **Domain.** In the OVH Control Panel, under Web Cloud → Hosting → Multisite, attach `projects.ludovicpatey.com` to the root folder

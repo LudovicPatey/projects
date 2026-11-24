@@ -104,6 +104,8 @@ final class FactController
             $f['denied_by'] = $people(array_filter($reviews[$id] ?? [], [self::class, 'doubtsStatement']));
             $f['statement_text'] = Sanitizer::toText($f['statement_html']);
             $f['display_kind'] = FactKind::of((string)$f['kind'], $f['tool'], $f['statement_text']);
+            // A definition is a convention, not a claim: it belongs to the project notation, and nothing in it needs a check.
+            if ($f['display_kind'] === 'definition' && !in_array($f['status'], ['retracted', 'disputed'], true)) $f['status'] = 'definition';
             unset($f['statement_html']);
             $f['deps'] = [];
             $f['dependents'] = [];
@@ -1205,6 +1207,7 @@ final class FactController
             return $p;
         }, Db::all('SELECT p.*, u.name AS author_name, au.name AS ai_user_name FROM fact_proofs p JOIN users u ON u.id = p.author_id LEFT JOIN users au ON au.id = p.ai_user_id
                     WHERE p.fact_id = ? ORDER BY p.revision_no DESC, p.id', [$id]));
+        $out['rephrasings'] = NotationController::forFact($id, $pid, (int)$f['current_revision']);
         $out['lean_proofs'] = Db::all(
             'SELECT l.*, u.name AS created_by_name, c.name AS checked_by_name, au.name AS ai_user_name, cu.name AS check_user_name FROM fact_lean l
              JOIN users u ON u.id = l.created_by LEFT JOIN users c ON c.id = l.checked_by

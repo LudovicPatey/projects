@@ -8,7 +8,7 @@ const FEATURES = [
   {
     kicker: 'Fact database', title: 'See what is known, and what it rests on',
     text: 'Results become facts with a statement, a proof and an intuition, linked by their dependencies. Browse them as a list or as an interactive graph.',
-    points: ['Labels such as conclusion, counterexample, dead end or plan', 'Accept a result while disputing its proof, and propose another proof', 'Retracting a fact flags everything built on it', 'Import fact graphs from the Danus prover'],
+    points: ['Labels such as conclusion, counterexample, dead end or plan', 'Accept a result while disputing its proof, and propose another proof', 'One agreed notation, with each paper\'s facts rewritten in it', 'Retracting a fact flags everything built on it', 'Import fact graphs from the Danus prover'],
     img: 'facts-graph.webp', w: 1600, h: 978, alt: 'Dependency graph of facts next to a selected theorem with its statement, proof and intuition',
   },
   {
@@ -47,7 +47,7 @@ const FEATURES = [
 // tests/landing.test.mjs fails when a menu area is missing or points to a section that no longer exists.
 export const FRONT_PAGE_COVERAGE = {
   overview: 'One workspace per open problem', questions: false, conversations: 'Conversations', facts: 'Fact database',
-  files: 'Files and bibliography', bib: 'Files and bibliography', ai: 'Decentralized AI computing', members: false,
+  files: 'Files and bibliography', bib: 'Files and bibliography', ai: 'Decentralized AI computing', members: false, admin: false,
 };
 
 export const LandingPage = {

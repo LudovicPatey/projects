@@ -70,7 +70,7 @@ final class HelpController
         $reviewed = array_flip(array_map('intval', array_column(Db::all(
             "SELECT v.fact_id FROM fact_reviews v JOIN facts f ON f.id = v.fact_id AND v.revision_no = f.current_revision
              WHERE f.project_id = ? AND v.reviewer_id = ? AND v.reviewer_kind = 'human'", [$pid, $me]), 'fact_id')));
-        $open = array_values(array_filter($all, fn($f) => !isset($reviewed[$f['id']]) && !in_array($f['status'], ['retracted'], true)));
+        $open = array_values(array_filter($all, fn($f) => !isset($reviewed[$f['id']]) && !in_array($f['status'], ['retracted', 'definition'], true)));
         usort($open, fn($a, $b) => (int)($b['status'] === 'unchecked') <=> (int)($a['status'] === 'unchecked') ?: count($b['dependents']) <=> count($a['dependents']) ?: $a['id'] <=> $b['id']);
         $labels = [];
         foreach ($all as $f) foreach ($f['labels'] as $l) $labels[$l] = ($labels[$l] ?? 0) + 1;

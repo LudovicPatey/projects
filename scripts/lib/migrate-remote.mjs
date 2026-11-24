@@ -14,6 +14,18 @@ export function remoteCommand(dir, action) {
   return `cd ${quote(dir)} || exit 1; ${check}; ${find}; exec "$P" bin/migrate-facts.php${flags ? ` ${flags}` : ''}`;
 }
 
+export const ADMIN_ACTIONS = ['cancel_waiting', 'retry_failed', 'requeue_extraction', 'reset_extraction', 'clear_notation', 'reset_facts'];
+const ADMIN_FLAGS = ['--requeue', '--notation', '--all', '--apply'];
+
+/** The SSH command of bin/admin.php. Only a project number, a known action and known flags pass. */
+export function adminCommand(dir, project, action, flags = []) {
+  if (!/^[1-9]\d{0,9}$/.test(String(project))) throw new Error('Give the project number: --project ID.');
+  if (action !== null && !ADMIN_ACTIONS.includes(action)) throw new Error(`Unknown action ${action}. Actions: ${ADMIN_ACTIONS.join(', ')}.`);
+  for (const f of flags) if (!ADMIN_FLAGS.includes(f)) throw new Error(`Unknown option ${f}.`);
+  const base = remoteCommand(dir, 'preview').replace(/bin\/migrate-facts\.php$/, 'bin/admin.php').replace('[ -f bin/migrate-facts.php ]', '[ -f bin/admin.php ]').replace('The migration is not on the server yet', 'The admin command is not on the server yet');
+  return `${base} --project ${project}${action ? ` ${action}` : ''}${flags.length ? ` ${flags.join(' ')}` : ''}`;
+}
+
 /** True when a preview reports at least one change. */
 export function hasChanges(report) {
   const m = String(report).match(/To update: (\d+) kind\(s\), (\d+) title\(s\), (\d+) revision\(s\)/);

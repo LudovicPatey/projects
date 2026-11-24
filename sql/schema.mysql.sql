@@ -313,6 +313,55 @@ CREATE TABLE IF NOT EXISTS fact_proofs (
   FOREIGN KEY (author_id) REFERENCES users(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- The project's notation: one agreed meaning per symbol, so that facts from different papers do not clash.
+CREATE TABLE IF NOT EXISTS notations (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  project_id INT UNSIGNED NOT NULL,
+  symbol VARCHAR(160) NOT NULL,           -- LaTeX without dollars, e.g. \mathrm{FS}(X)
+  symbol_key VARCHAR(160) NOT NULL,       -- compared without spaces or case
+  meaning_html MEDIUMTEXT NOT NULL,
+  note_html MEDIUMTEXT NULL,              -- how sources differ, e.g. which papers include 0
+  variants_json TEXT NULL,                -- [{symbol, meaning, where}] the same notion written otherwise
+  definition_fact_id INT UNSIGNED NULL,
+  status VARCHAR(10) NOT NULL DEFAULT 'proposed', -- proposed, agreed, rejected
+  author_id INT UNSIGNED NOT NULL,
+  author_kind VARCHAR(10) NOT NULL,       -- human or agent
+  ai_model VARCHAR(120) NULL,
+  ai_user_id INT UNSIGNED NULL,
+  ai_generation_ms INT UNSIGNED NULL,
+  decided_by INT UNSIGNED NULL,
+  decided_at DATETIME NULL,
+  created_at DATETIME NOT NULL,
+  updated_at DATETIME NOT NULL,
+  KEY idx_notation (project_id, status),
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+  FOREIGN KEY (author_id) REFERENCES users(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- A fact's statement and proof written in the project's notation. The reviewed text never changes.
+CREATE TABLE IF NOT EXISTS fact_rephrasings (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  fact_id INT UNSIGNED NOT NULL,
+  revision_no INT UNSIGNED NOT NULL,
+  notation_hash CHAR(40) NOT NULL,        -- the agreed notation it follows
+  unchanged TINYINT(1) NOT NULL DEFAULT 0, -- already in the project's notation
+  statement_html MEDIUMTEXT NOT NULL,
+  proof_html MEDIUMTEXT NULL,
+  uses_json TEXT NULL,                    -- [{symbol, meaning_here, project_symbol}] how the original reads
+  author_id INT UNSIGNED NOT NULL,
+  ai_model VARCHAR(120) NULL,
+  ai_user_id INT UNSIGNED NULL,
+  ai_generation_ms INT UNSIGNED NULL,
+  check_verdict VARCHAR(12) NULL,         -- faithful, unfaithful
+  check_note TEXT NULL,
+  checked_by INT UNSIGNED NULL,
+  checked_at DATETIME NULL,
+  created_at DATETIME NOT NULL,
+  KEY idx_fact_rephrasing (fact_id, revision_no),
+  FOREIGN KEY (fact_id) REFERENCES facts(id) ON DELETE CASCADE,
+  FOREIGN KEY (author_id) REFERENCES users(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS fact_proof_reviews (
   id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   proof_id INT UNSIGNED NOT NULL,

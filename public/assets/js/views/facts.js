@@ -4,6 +4,8 @@ import { timeAgo, fullDate } from '../util.js';
 import { FactGraph, STATUS, PROOF_LABEL } from '../factgraph.js';
 import { factTitle, formatFactHtml, kindCounts, kindLabel, kindOf, parseExternalRefs, texLine } from '../fact-format.js';
 import { PROOF_STATE, proofTally, resultOnlyBody, stance } from '../fact-proofs.js';
+import { asMath, rephrasingState, shownRephrasing } from '../notation-model.js';
+import { NotationPanel } from './notation.js';
 
 const VERDICTS = {
   correct: { label: 'Correct', cls: 'green' },
@@ -50,25 +52,31 @@ const ByLine = {
 };
 
 const readView = () => { try { return localStorage.getItem('oq-fact-view') !== 'original'; } catch { return true; } };
+const notationView = () => { try { return localStorage.getItem('oq-fact-notation') !== 'source'; } catch { return true; } };
 
 export const FactsView = {
-  components: { FactGraph, StatusTag, ByLine, LabelChips, ProofTag },
+  components: { FactGraph, StatusTag, ByLine, LabelChips, ProofTag, NotationPanel },
   props: { pid: Number, id: Number, query: Object },
   data() {
     return {
       facts: [], edges: [], loaded: false, search: '', fStatus: 'all', fOrigin: 'all', fLabel: 'all', fLean: 'all', sort: 'recent', lineage: false, showFilters: false,
       fact: null, factError: null, tab: 'content', activeThread: null, backlinks: [],
       readable: readView(), fKind: 'all', outline: [], reviewVerdict: 'correct', checkForm: null, trace: null, retracting: null, revView: null, denying: null,
-      reviewStatement: 'true', resultOnly: null, proposing: null, proofCheck: null,
+      reviewStatement: 'true', resultOnly: null, proposing: null, proofCheck: null, projectNotation: notationView(), unfaithful: null,
     };
   },
   computed: {
-    mode() { return this.query?.mode === 'graph' ? 'graph' : 'list'; },
+    mode() { return ['graph', 'notation'].includes(this.query?.mode) ? this.query.mode : 'list'; },
+    rephrasing() { return this.shownRevision ? null : shownRephrasing(this.fact, this.projectNotation); },
+    currentRephrasing() { return (this.fact?.rephrasings || []).find((r) => r.current && !r.unchanged) || null; },
+    notationState() { return this.fact ? rephrasingState(this.fact) : null; },
+    statementHtml() { return this.rephrasing ? this.rephrasing.statement_html : this.content.statement_html; },
+    proofHtml() { return this.rephrasing && this.rephrasing.proof_html ? this.rephrasing.proof_html : this.content.proof_html; },
     me() { return store.user.id; },
     isOwner() { return store.project.my_role === 'owner'; },
     filtered() {
       const q = this.search.toLowerCase();
-      let list = this.facts.filter((f) => (this.fKind === 'all' || kindOf(f) === this.fKind)
+      let list = this.results.filter((f) => (this.fKind === 'all' || kindOf(f) === this.fKind)
         && (this.fStatus === 'all' || f.status === this.fStatus)
         && (this.fOrigin === 'all' || f.proof_origin === this.fOrigin)
         && (this.fLabel === 'all' || f.labels.includes(this.fLabel))
@@ -87,7 +95,10 @@ export const FactsView = {
       return this.edges.filter(([a, b]) => ids.has(a) && ids.has(b));
     },
     activeFilters() { return [this.fStatus, this.fOrigin, this.fLabel, this.fLean].filter((v) => v !== 'all').length; },
-    kinds() { return kindCounts(this.facts); },
+    // Definitions are conventions: they live in the project notation, not among the results.
+    results() { return this.facts.filter((f) => f.status !== 'definition'); },
+    definitionCount() { return this.facts.length - this.results.length; },
+    kinds() { return kindCounts(this.results); },
     unreadFacts() { return store.counters.unread?.fact || {}; },
     labelCounts() {
       const c = {};
@@ -112,8 +123,8 @@ export const FactsView = {
       return { head: 'From AI-written material.', rest: entered };
     },
     counts() {
-      const c = { all: this.facts.length };
-      for (const f of this.facts) c[f.status] = (c[f.status] || 0) + 1;
+      const c = { all: this.results.length };
+      for (const f of this.results) c[f.status] = (c[f.status] || 0) + 1;
       return c;
     },
     canWriteReview() { return this.fact && !this.fact.retracted_at; },
@@ -127,6 +138,7 @@ export const FactsView = {
     externalRefs() { return parseExternalRefs(this.fact?.external_refs); },
     headTitle() { return this.fact ? texLine(factTitle(this.fact.title, this.fact.statement_html, true)) : ''; },
     gridClass() {
+      if (this.mode === 'notation') return 'facts-notation';
       if (this.mode === 'list') return 'cols3';
       return this.fact || this.factError ? 'facts-graph has-detail' : 'facts-graph';
     },
@@ -134,6 +146,7 @@ export const FactsView = {
   watch: {
     fact() { this.refreshOutline(); },
     revView() { this.refreshOutline(); },
+    projectNotation() { this.refreshOutline(); },
     tab() { this.refreshOutline(); }, id: { immediate: true, handler() { this.onRoute(); } }, 'query.tab'(t) { if (t) { this.tab = t; if (t === 'trace') this.loadTrace(); } } },
   mounted() {
     this.loadList();
@@ -141,9 +154,10 @@ export const FactsView = {
   },
   unmounted() { clearInterval(this.timer); },
   template: `<div :class="gridClass">
+  <notation-panel v-if="mode === 'notation'" :pid="pid" :focus="+(query?.notation || 0)" @mode="setMode"/>
   <section v-if="mode === 'graph'" class="col fg-col">
-    <header class="col-head"><h2>Facts <span class="count">{{ filtered.length }}<template v-if="filtered.length !== facts.length"> / {{ facts.length }}</template></span></h2>
-      <div class="row-gap"><div class="seg small mode-seg"><button @click="setMode('list')"><icon name="list" :size="13"/> List</button><button class="on"><icon name="graph" :size="13"/> Graph</button></div><mark-all-read type="fact"/></div></header>
+    <header class="col-head"><h2>Facts <span class="count">{{ filtered.length }}<template v-if="filtered.length !== results.length"> / {{ results.length }}</template></span></h2>
+      <div class="row-gap"><div class="seg small mode-seg"><button @click="setMode('list')"><icon name="list" :size="13"/> List</button><button class="on"><icon name="graph" :size="13"/> Graph</button><button @click="setMode('notation')"><icon name="book" :size="13"/> Notation</button></div><mark-all-read type="fact"/></div></header>
     <div class="fg-filters">
       <div class="search"><icon name="search" :size="15"/><input v-model="search" placeholder="Search facts…"></div>
       <select v-model="fKind" aria-label="Filter by mathematical type"><option value="all">All types</option><option v-for="k in kinds" :key="k.key" :value="k.key">{{ k.label }} ({{ k.n }})</option></select>
@@ -164,10 +178,11 @@ export const FactsView = {
 
   <section v-if="mode === 'list'" class="col col-list">
     <header class="col-head"><h2>Facts</h2>
-      <div class="row-gap"><div class="seg small mode-seg"><button class="on"><icon name="list" :size="13"/> List</button><button @click="setMode('graph')"><icon name="graph" :size="13"/> Graph</button></div><mark-all-read type="fact"/></div></header>
+      <div class="row-gap"><div class="seg small mode-seg"><button class="on"><icon name="list" :size="13"/> List</button><button @click="setMode('graph')"><icon name="graph" :size="13"/> Graph</button><button @click="setMode('notation')" title="The project's notation"><icon name="book" :size="13"/> Notation</button></div><mark-all-read type="fact"/></div></header>
     <div class="col-tools">
       <div class="search"><icon name="search" :size="15"/><input v-model="search" placeholder="Search label, statement, model…"></div>
-      <div v-if="kinds.length > 1" class="kind-filter" role="group" aria-label="Filter by mathematical type"><button :class="{on: fKind === 'all'}" :aria-pressed="fKind === 'all'" @click="fKind = 'all'">All <b>{{ facts.length }}</b></button><button v-for="k in kinds" :key="k.key" :class="['k-' + k.key, {on: fKind === k.key}]" :aria-pressed="fKind === k.key" @click="fKind = k.key">{{ k.label }} <b>{{ k.n }}</b></button></div>
+      <button v-if="definitionCount" class="link-btn small definitions-link" @click="setMode('notation')"><icon name="book" :size="13"/> {{ definitionCount }} definition{{ definitionCount > 1 ? 's are' : ' is' }} in the project notation</button>
+      <div v-if="kinds.length > 1" class="kind-filter" role="group" aria-label="Filter by mathematical type"><button :class="{on: fKind === 'all'}" :aria-pressed="fKind === 'all'" @click="fKind = 'all'">All <b>{{ results.length }}</b></button><button v-for="k in kinds" :key="k.key" :class="['k-' + k.key, {on: fKind === k.key}]" :aria-pressed="fKind === k.key" @click="fKind = k.key">{{ k.label }} <b>{{ k.n }}</b></button></div>
       <div class="filter-bar">
         <button class="btn xs" :class="{on: showFilters}" :aria-expanded="showFilters" @click="showFilters = !showFilters"><icon name="filter" :size="13"/> Filters<b v-if="activeFilters" class="seg-n">{{ activeFilters }}</b></button>
         <button v-if="activeFilters" class="link-btn" @click="clearFilters">Clear</button>
@@ -204,7 +219,7 @@ export const FactsView = {
     </div>
   </section>
 
-  <section v-if="mode === 'list' || fact || factError" class="col col-main">
+  <section v-if="mode !== 'notation' && (mode === 'list' || fact || factError)" class="col col-main">
     <template v-if="fact">
       <div class="doc-banner" :class="fact.origin"><icon :name="fact.origin === 'ai' ? 'bot' : 'user'" :size="16"/>
         <span><b>{{ banner.head }}</b> {{ banner.rest }}</span></div>
@@ -216,6 +231,7 @@ export const FactsView = {
           <h2 :title="fact.title"><math-text :text="headTitle"/></h2>
           <div class="fact-chips"><label-chips :labels="fact.labels"/><status-tag :status="fact.status"/><proof-tag :origin="fact.proof_origin"/><span class="lean-tag" :class="fact.lean" v-if="fact.lean !== 'none'">{{ leanLabels[fact.lean] }}</span></div>
           <div class="fact-byline"><ai-meta :model="fact.ai_model" :user="fact.ai_user_name" :ms="fact.ai_generation_ms"/><span class="muted small">added by {{ fact.author }} · updated {{ timeAgo(fact.updated_at) }}</span></div>
+          <div v-if="fact.status === 'definition'" class="notation-banner t-info"><icon name="book" :size="14"/><span>A definition: it belongs to the project notation, and it is not checked like a result.</span><button class="btn xs" @click="setMode('notation')">Open the notation</button></div>
           <div v-if="fact.endorsed_by.length" class="endorsers"><icon name="check-circle" :size="14"/> Endorsed by
             <a v-for="(e, i) in fact.endorsed_by" :key="e.id" :href="link('members', null, {user: e.id})">{{ e.name }}{{ i < fact.endorsed_by.length - 1 ? ', ' : '' }}</a></div>
           <div v-if="fact.result_endorsed_by?.length" class="endorsers result-only"><icon name="check" :size="14"/> Result accepted, proof disputed, by
@@ -231,6 +247,7 @@ export const FactsView = {
           <ai-action v-if="!fact.retracted_at" kind="review" source-type="fact" :source-id="fact.id" label="AI review"/>
           <ai-action v-if="!fact.retracted_at" kind="lean" source-type="fact" :source-id="fact.id" label="Lean proof"/>
           <ai-action v-if="!fact.retracted_at" kind="ask" source-type="fact" :source-id="fact.id" label="Ask AI"/>
+          <ai-action v-if="!fact.retracted_at && !currentRephrasing && !notationState" kind="notation" source-type="fact" :source-id="fact.id" label="Project notation" title="Write this fact again in the notation agreed by the project"/>
           <ai-action v-if="!fact.retracted_at" kind="derive" source-type="fact" :source-id="fact.id" label="Prove from this"/>
           <button v-if="!fact.retracted_at" class="btn sm warn" @click="retracting = {reason: ''}">Retract</button>
           <button v-else class="btn sm" @click="reinstate">Reinstate</button>
@@ -255,6 +272,10 @@ export const FactsView = {
         <rich-editor ref="proofEd" :min-height="220" :initial-html="proposing.proof?.body_html || ''" placeholder="Write the proof. $…$ for LaTeX, @ to cite facts and references."/>
         <template #footer><button class="btn ghost" @click="proposing = null">Cancel</button><button class="btn primary" @click="submitProof">{{ proposing.proof ? 'Save the proof' : 'Propose the proof' }}</button></template>
       </modal>
+      <modal v-if="unfaithful" title="The meaning changed" @close="unfaithful = null">
+        <label class="field"><span>What does the version in project notation say differently?</span><textarea v-model="unfaithful.note" rows="4" autofocus></textarea></label>
+        <template #footer><button class="btn ghost" @click="unfaithful = null">Cancel</button><button class="btn primary" :disabled="!unfaithful.note.trim()" @click="checkRephrasing('unfaithful', unfaithful.note)">Report</button></template>
+      </modal>
       <modal v-if="proofCheck" :title="proofCheck.verdict === 'gap' ? 'A gap in this proof' : 'An error in this proof'" @close="proofCheck = null">
         <label class="field"><span>Point to the exact step.</span><textarea v-model="proofCheck.reason" rows="4" autofocus></textarea></label>
         <template #footer><button class="btn ghost" @click="proofCheck = null">Cancel</button><button class="btn primary" :disabled="!proofCheck.reason.trim()" @click="submitProofCheck">Save the review</button></template>
@@ -270,9 +291,15 @@ export const FactsView = {
       <div v-if="tab==='content'" class="pad scroll fact-body">
         <div v-if="shownRevision" class="fact-alert amber">Viewing revision {{ revView }}. <button class="link-btn" @click="revView = null">Back to current</button></div>
         <nav v-if="readable && outline.length > 1" class="fact-outline" aria-label="In this fact"><button v-for="(x, i) in outline" :key="i" :class="'k-' + x.type" @click="jump(x)">{{ x.title }}</button></nav>
-        <div class="fact-view-switch"><div class="seg small" role="group" aria-label="How the text is shown"><button :class="{on: readable}" :aria-pressed="readable" title="Same content, with headings, lists and formulas typeset in LaTeX" @click="setReadable(true)">Readable</button><button :class="{on: !readable}" :aria-pressed="!readable" title="The text exactly as stored" @click="setReadable(false)">Original</button></div></div>
-        <section class="fact-sec statement"><h4>Statement</h4><rich-content :html="shown(content.statement_html)"/></section>
-        <section class="fact-sec" v-if="content.proof_html"><h4>Proof<span v-if="!shownRevision && mainFlawed" class="tag amber">Disputed</span><span v-if="!shownRevision && proofs.length" class="tag">1 of {{ proofs.length + 1 }}</span></h4><rich-content :html="shown(content.proof_html)"/></section>
+        <div class="fact-view-switch"><div class="seg small" role="group" aria-label="How the text is shown"><button :class="{on: readable}" :aria-pressed="readable" title="Same content, with headings, lists and formulas typeset in LaTeX" @click="setReadable(true)">Readable</button><button :class="{on: !readable}" :aria-pressed="!readable" title="The text exactly as stored" @click="setReadable(false)">Original</button></div>
+          <div v-if="currentRephrasing && !shownRevision" class="seg small" role="group" aria-label="Notation"><button :class="{on: projectNotation}" :aria-pressed="projectNotation" title="Written again in the notation agreed by the project" @click="setNotation(true)">Project notation</button><button :class="{on: !projectNotation}" :aria-pressed="!projectNotation" title="The notation of its source, as it was reviewed" @click="setNotation(false)">As written</button></div></div>
+        <div v-if="notationState && !shownRevision" class="notation-banner" :class="'t-' + notationState.tone"><icon name="book" :size="14"/><span>{{ notationState.text }}<template v-if="currentRephrasing?.check_verdict"> {{ currentRephrasing.check_verdict === 'faithful' ? 'Confirmed' : 'Reported' }} by {{ currentRephrasing.checked_by_name }}.</template></span>
+          <template v-if="currentRephrasing && !currentRephrasing.check_verdict"><button class="btn xs endorse" @click="checkRephrasing('faithful')"><icon name="check" :size="12"/> Same meaning</button><button class="btn xs deny" @click="unfaithful = {note: ''}">Not the same</button></template>
+          <button v-else-if="currentRephrasing" class="btn xs" @click="checkRephrasing('')">Undo</button>
+          <ai-action v-if="notationState.tone === 'warn' || notationState.tone === 'bad'" kind="notation" source-type="fact" :source-id="fact.id" label="Rewrite again"/></div>
+        <div v-if="rephrasing?.uses?.length" class="notation-uses"><span class="muted small">In its source:</span><span v-for="(u, i) in rephrasing.uses" :key="i" class="notation-use"><math-text :text="asMath(u.symbol)"/> <small><math-text :text="u.meaning_here"/></small><template v-if="u.project_symbol && u.project_symbol !== u.symbol"> → <math-text :text="asMath(u.project_symbol)"/></template></span></div>
+        <section class="fact-sec statement"><h4>Statement</h4><rich-content :html="shown(statementHtml)"/></section>
+        <section class="fact-sec" v-if="content.proof_html"><h4>Proof<span v-if="!shownRevision && mainFlawed" class="tag amber">Disputed</span><span v-if="!shownRevision && proofs.length" class="tag">1 of {{ proofs.length + 1 }}</span></h4><rich-content :html="shown(proofHtml)"/></section>
         <section v-if="!shownRevision && !fact.retracted_at" class="fact-sec other-proofs" id="other-proofs">
           <h4>Other proofs<span v-if="proofs.length" class="count">{{ proofs.length }}</span><span class="grow"></span><button class="btn sm" @click="proposing = {proof: null}"><icon name="plus" :size="13"/> Propose another proof</button></h4>
           <p v-if="!proofs.length" class="muted small">{{ mainFlawed || fact.status === 'proof_disputed' ? 'The proof above is disputed. A correct proof here is enough for the fact to count as checked.' : 'A different argument can be proposed here, by a person or an AI client, and reviewed on its own.' }}</p>
@@ -432,7 +459,7 @@ export const FactsView = {
     <section-home v-else kind="facts"/>
   </section>
 
-  <section v-if="mode === 'list' || fact" class="col col-comments">
+  <section v-if="mode !== 'notation' && (mode === 'list' || fact)" class="col col-comments">
     <comments-panel v-if="fact" target-type="fact" :target-id="fact.id" v-model:active-id="activeThread" @created="loadList" @activity="onActivity"/>
     <section-activity v-else kind="facts"/>
   </section>
@@ -460,7 +487,12 @@ export const FactsView = {
 </div>`,
   created() { this.proofStates = PROOF_STATE; this.basis = BASIS; this.covers = COVERS; this.statuses = STATUS; this.verdicts = VERDICTS; this.leanLabels = LEAN; this.chainLabels = CHAIN; },
   methods: {
-    factTitle, texLine, kindOf, kindLabel, stance,
+    factTitle, texLine, kindOf, kindLabel, stance, asMath,
+    setNotation(on) { this.projectNotation = on; this.refreshOutline(); try { localStorage.setItem('oq-fact-notation', on ? 'project' : 'source'); } catch { /* the choice lasts for this page only */ } },
+    async checkRephrasing(verdict, note = '') {
+      const f = await attempt(() => api.post(`api/fact-rephrasings/${this.currentRephrasing.id}/check`, { verdict, note }), verdict ? 'Thank you' : 'Undone');
+      if (f) { this.unfaithful = null; await this.refresh(f); }
+    },
     shown(html) { return this.readable ? formatFactHtml(html) : html; },
     setReadable(on) { this.readable = on; this.refreshOutline(); try { localStorage.setItem('oq-fact-view', on ? 'readable' : 'original'); } catch { /* the choice lasts for this page only */ } },
     timeAgo, fullDate, link, markItemUnread,
@@ -468,7 +500,7 @@ export const FactsView = {
     onActivity() { this.loadList(); if (!this.checkForm && !this.retracting) this.loadFact(); },
     sourceIcon(t) { return { document: 'files', bib: 'book', message: 'mail', comment: 'comment' }[t] || 'link'; },
     factLink(id) { return link('facts', id, this.mode === 'graph' ? { mode: 'graph' } : null); },
-    setMode(m) { go(`/p/${this.pid}/facts` + (this.id ? `/${this.id}` : '') + (m === 'graph' ? '?mode=graph' : '')); },
+    setMode(m) { go(`/p/${this.pid}/facts` + (this.id && m !== 'notation' ? `/${this.id}` : '') + (m === 'list' ? '' : `?mode=${m}`)); },
     selectNode(id) { if (id) location.hash = this.factLink(id); else if (this.id) this.closeFact(); },
     closeFact() { this.lineage = false; location.hash = link('facts', null, this.mode === 'graph' ? { mode: 'graph' } : null); },
     lineageOf(id) {

@@ -20,6 +20,7 @@ import { ArchitectureDiagram, ClientCard, ClientView } from './views/client.js';
 import { SectionActivity, SectionHome } from './dashboard.js';
 import { VIEW_HELP } from './help/content.js';
 import { ProjectsView, OverviewView, MembersView, ProfileView, NotificationsDrawer } from './views/misc.js';
+import { AdminView } from './views/admin.js';
 
 const App = {
   data() { return { ready: false, showNotifs: false, projectError: null }; },
@@ -37,6 +38,7 @@ const App = {
         { view: 'bib', icon: 'book', label: 'Biblio', badge: t.bib },
         { view: 'ai', icon: 'sparkles', label: 'AI', badge: store.counters.ai_suggestions },
         { view: 'members', icon: 'users', label: 'People', badge: t.member },
+        ...(store.project?.my_role === 'owner' ? [{ view: 'admin', icon: 'settings', label: 'Admin' }] : []),
       ];
     },
     isHelp() { return store.route.name === 'help' || store.route.view === 'help'; },
@@ -135,6 +137,7 @@ const App = {
           <bib-view v-else-if="route.view === 'bib'" :pid="route.pid" :id="route.id" :query="route.query"/>
           <ai-view v-else-if="route.view === 'ai'" :key="route.pid" :pid="route.pid" :id="route.id" :query="route.query"/>
           <members-view v-else-if="route.view === 'members'" :query="route.query"/>
+          <admin-view v-else-if="route.view === 'admin'" :key="route.pid" :pid="route.pid"/>
         </template>
         <div v-else class="placeholder">Loading project…</div>
       </template>
@@ -186,6 +189,7 @@ app.component('section-activity', SectionActivity);
 app.component('projects-view', ProjectsView);
 app.component('overview-view', OverviewView);
 app.component('members-view', MembersView);
+app.component('admin-view', AdminView);
 app.component('profile-view', ProfileView);
 app.component('notifications-drawer', NotificationsDrawer);
 app.mount('#app');

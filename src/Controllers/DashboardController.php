@@ -79,6 +79,7 @@ final class DashboardController
 
     private static function facts(array $all): array
     {
+        $all = array_values(array_filter($all, fn($f) => $f['status'] !== 'definition')); // they are in the project notation
         $proofs = array_count_values(array_column($all, 'proof_origin'));
         return ['total' => count($all), 'by_status' => (object)array_count_values(array_column($all, 'status')),
             'by_kind' => (object)array_count_values(array_column($all, 'kind')), 'by_proof' => (object)$proofs,

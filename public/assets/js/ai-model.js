@@ -6,6 +6,7 @@ export const AI_KINDS = {
   bib: { label: 'Find references', short: 'References', icon: 'book', hint: 'Search the literature. A person validates each suggestion.', needs: null },
   derive: { label: 'Prove new facts', short: 'Proof search', icon: 'graph', hint: 'Waits until a member starts a proof search from their AI client, with their own time and usage limits. Results arrive unchecked.', needs: null },
   review: { label: 'Independent review', short: 'Review', icon: 'check-circle', hint: 'A model independent of the author checks the proof and records a verdict.', needs: 'fact' },
+  notation: { label: 'Agree on notation', short: 'Notation', icon: 'book', hint: 'Compares the notation of the facts, finds symbols that papers use with different meanings, and proposes one meaning per symbol. People decide.', needs: null },
   lean: { label: 'Lean proof', short: 'Lean', icon: 'code', hint: 'Writes a Lean proof, kept only if it compiles. A person must still compare the Lean statement with the fact.', needs: 'fact' },
 };
 
