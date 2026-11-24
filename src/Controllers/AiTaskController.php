@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 namespace App\Controllers;
 
-use App\{Access, Activity, Auth, BibTex, Db, HttpError, ModelOrder, Notify, Provenance, Request, Response, Sanitizer};
+use App\{Access, Activity, Auth, BibTex, ClientProtocol, Db, HttpError, ModelOrder, Notify, Provenance, Request, Response, Sanitizer};
 
 /**
  * The AI work queue. The platform stores requests and results and never runs a model:
@@ -666,7 +666,7 @@ final class AiTaskController
             $list[] = ['system' => $system, 'file' => $file, 'size' => filesize($dir . $file), 'version' => preg_match('/^\d+\.\d+\.\d+$/', $own) ? $own : null,
                 'sha256' => is_string($hash) && preg_match('/^[0-9a-f]{64}$/', $hash) ? $hash : null];
         }
-        Response::json(['api_level' => self::API_LEVEL, 'version' => $m[1] ?? null, 'script' => 'api/client/oq.py', 'script_sha256' => hash_file('sha256', __DIR__ . '/../../client/oq.py'), 'installers' => $list]);
+        Response::json(['api_level' => self::API_LEVEL, 'min_version' => ClientProtocol::MIN_VERSION, 'version' => $m[1] ?? null, 'script' => 'api/client/oq.py', 'script_sha256' => hash_file('sha256', __DIR__ . '/../../client/oq.py'), 'installers' => $list]);
     }
 
     public static function clientDownload(Request $r): never
@@ -955,7 +955,7 @@ final class AiTaskController
     private static function seen(int $uid, string $name, ?string $model): void
     {
         $now = Db::now();
-        $version = preg_match('#^open-questions-client/(\d+\.\d+\.\d+)\b#', (string)($_SERVER['HTTP_USER_AGENT'] ?? ''), $m) ? $m[1] : null;
+        $version = ClientProtocol::clientVersion();
         if (Db::value('SELECT 1 FROM ai_clients WHERE user_id = ? AND name = ?', [$uid, $name])) {
             Db::update('ai_clients', ['ai_model' => $model, 'last_seen_at' => $now] + ($version ? ['version' => $version] : []), 'user_id = :u AND name = :n', ['u' => $uid, 'n' => $name]);
             return;

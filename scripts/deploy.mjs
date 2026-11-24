@@ -20,6 +20,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { changedFiles, curlConfig, deployFiles, installerFiles, sftpBatch, updatedManifest } from './lib/deploy.mjs';
+import { compareProtocol, currentProtocol, readRecord, serverMinimum, unreviewedMessage } from './lib/protocol.mjs';
 
 const SITE = 'https://projects.ludovicpatey.com';
 process.chdir(path.resolve(import.meta.dirname, '..'));
@@ -54,6 +55,18 @@ try {
   const dirty = execFileSync('git', ['status', '--porcelain', '--', 'src', 'public', 'sql', 'bin', 'deploy', 'config/config.example.php'], { encoding: 'utf8' }).trim();
   if (dirty) console.warn(`! uncommitted changes (the live site will differ from GitHub):\n${dirty.split('\n').map((l) => '    ' + l).join('\n')}`);
 } catch { /* not a git checkout */ }
+
+// The AI clients must know whether this release still accepts them (npm run protocol).
+{
+  const record = readRecord();
+  const diff = compareProtocol(record, currentProtocol('.'));
+  if (!diff.same) fail(`${unreviewedMessage(diff)}\nNothing uploaded.`);
+  if (serverMinimum('.') !== record.min_version) fail('src/ClientProtocol.php and protocol/client-protocol.json disagree on the minimum client version. Nothing uploaded.');
+  const last = record.history.at(-1);
+  if (last?.decision === 'breaking' && !flags.has('--installers')) {
+    console.warn(`! This release refuses AI clients older than ${record.min_version}. Publish the new client so that they can update: add --installers, and publish a GitHub release.`);
+  }
+}
 
 const files = deployFiles('.');
 if (flags.has('--installers')) {

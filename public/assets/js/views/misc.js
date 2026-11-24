@@ -185,10 +185,10 @@ export const MembersView = {
         <header><avatar :name="m.name" :id="m.id" :size="46"/><div><h3>{{ m.name }}<small v-if="m.id === me"> you</small></h3><p>{{ m.affiliation || 'No affiliation given' }}</p>
           <a :href="'https://orcid.org/' + m.orcid" target="_blank" rel="noopener" class="orcid-link">{{ m.orcid }}</a></div></header>
         <dl class="contrib"><div><dd>{{ c(m).questions }}</dd><dt>Questions</dt></div><div><dd>{{ c(m).strategies }}</dd><dt>Strategies</dt></div><div><dd>{{ c(m).facts }}</dd><dt>Facts</dt></div><div><dd>{{ c(m).reviews }}</dd><dt>Reviews</dt></div><div><dd>{{ c(m).files }}</dd><dt>Files</dt></div></dl>
-        <footer><select v-if="isOwner" :value="m.role" :aria-label="'Role of ' + m.name" @change="setRole(m, $event.target.value)"><option value="member">Member</option><option value="owner">Owner</option></select>
+        <footer><select v-if="isOwner" class="sm" :value="m.role" :aria-label="'Role of ' + m.name" @change="setRole(m, $event.target.value)"><option value="member">Member</option><option value="owner">Owner</option></select>
           <span v-else class="pill" :class="m.role === 'owner' ? 't-info' : 't-neutral'">{{ m.role === 'owner' ? 'Owner' : 'Member' }}</span>
           <span class="muted small">{{ m.has_logged_in ? 'joined ' + timeAgo(m.joined_at) : 'has not signed in yet' }}</span><span class="grow"></span>
-          <button v-if="isOwner && m.id !== me" class="btn xs" @click="removeM(m)">Remove</button><button v-if="m.id === me" class="btn xs" @click="removeM(m)">Leave</button></footer>
+          <button v-if="isOwner && m.id !== me" class="btn sm" @click="removeM(m)">Remove</button><button v-if="m.id === me" class="btn sm" @click="removeM(m)">Leave</button></footer>
       </article>
     </div>
 

@@ -26,6 +26,18 @@ The hashes of uploaded files are kept in `cache/deploy-manifest.json`, and `--al
 Nothing is ever deleted on the server, so files removed from the repository stay there, unused. A failed upload stops the transfer and
 leaves the manifest unchanged, so the next deployment sends those files again.
 
+`npm run deploy` refuses to upload when the client protocol changed without a recorded decision (see below).
+
+### AI clients and protocol changes
+
+The AI clients run on members' computers and are updated by them, so a deployment must not silently break the clients already installed.
+`npm run protocol` compares what the client relies on (the routes it calls and all the server code they reach) with the last decision in `protocol/client-protocol.json`.
+
+- If older clients still work, record it: `npm run protocol -- --compatible "reason"`.
+- If they would break, release a new client first: raise `VERSION` in `client/oq.py` and `client/desktop/package.json`, then run `npm run protocol -- --breaking "reason"`. This sets the minimum client version in `src/ClientProtocol.php`. Deploy with `--installers` and publish a GitHub release, so that members can update.
+
+The platform answers an older official client with HTTP 426. The client stops working and shows **Update required**, and nothing is lost: waiting tasks stay in the queue. Programs other than the official client, with another `User-Agent`, are not affected.
+
 The database schema updates itself on the first request after a deployment that changes it, so no SSH command is needed.
 Before a deployment that changes `sql/schema.mysql.sql`, make a backup (see [BACKUP.md](BACKUP.md)).
 

@@ -593,6 +593,7 @@ export const ARTICLES = [
       p('The client looks for the latest release on [GitHub](https://github.com/LudovicPatey/projects/releases), and on your platform, when it starts and every few hours. Its menu shows your version, and **Check for updates** checks at once. A release that needs a newer platform is not offered.'),
       list('**Command-line version:** click **Update now**, or run `python3 oq.py update`. The file is verified with a checksum before it replaces the old one, and the client restarts.', '**Installed app:** when a new app is released, a **Download** button appears. Install it over the old one.'),
       p('An update never starts while work is running, and your settings and limits are kept.'),
+      warn('When the platform changes in a way that an old client cannot follow, it refuses that client. The client then stops and shows **Update required**. Nothing is lost: the waiting work stays in the queue until an up-to-date client takes it.'),
       h('From the command line'),
       cmd('python3 oq.py update --check', 'Check for a new version'),
       cmd('python3 oq.py app', 'Open the graphic interface'),

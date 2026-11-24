@@ -51,7 +51,7 @@ import webbrowser
 import zipfile
 import zlib
 
-VERSION = "1.9.1"
+VERSION = "1.9.2"
 API_LEVEL = 1  # raise with the server's AiTaskController::API_LEVEL when a client needs new server features
 GITHUB_REPO = "LudovicPatey/projects"
 KINDS = ["extract", "ask", "bib", "derive", "review", "lean"]
@@ -77,6 +77,12 @@ class ApiError(Exception):
     def __init__(self, status, message, data=None):
         super().__init__(message)
         self.status, self.data = status, data or {}
+
+
+class UpdateRequired(Stop, ApiError):
+    """The platform refuses this version of the client: it must be updated before any work."""
+    def __init__(self, message, data=None):
+        ApiError.__init__(self, 426, message, data)
 
 
 # ----- configuration -----
@@ -139,6 +145,10 @@ class Api:
                 parsed = json.loads(text)
             except ValueError:
                 parsed = {}
+            if e.code == 426:
+                remember_required(parsed.get("min_version"))
+                raise UpdateRequired(f"Update required: {parsed.get('error') or 'this client is too old for the platform.'} "
+                                     "Run: python3 oq.py update, or download the new app from the platform.", parsed)
             raise ApiError(e.code, parsed.get("error") or f"HTTP {e.code}", parsed)
         except urllib.error.URLError as e:
             raise ApiError(0, f"Cannot reach the platform: {e.reason}")
@@ -1175,6 +1185,8 @@ def run_loop(api, opts, name, stop=None, service=None):
                 if opts.limit and done >= opts.limit:
                     break
                 continue
+        except UpdateRequired:
+            raise  # retrying cannot help: the platform refuses this version
         except ApiError as e:
             say(f"{time.strftime('%H:%M:%S')}  {e}. Trying again shortly.")
             if opts.once:
@@ -3844,7 +3856,9 @@ def read_update():
     if d.get("current") != VERSION:  # a check made by an older version says nothing about this one
         d = {}
     url = (load_config().get("url") or "").rstrip("/")
-    return {"current": VERSION, "available": bool(d.get("available")), "latest": d.get("latest"), "mode": d.get("mode"), "checked_at": d.get("checked_at"),
+    minimum = d.get("min_version") if version_tuple(d.get("min_version")) else None
+    return {"current": VERSION, "required": bool(minimum and is_newer(minimum, VERSION)), "min_version": minimum,
+            "available": bool(d.get("available")), "latest": d.get("latest"), "mode": d.get("mode"), "checked_at": d.get("checked_at"),
             "error": d.get("error"), "source": d.get("source"), "download_url": d.get("asset_url") or (f"{url}/#/client" if url else None), "packaged": is_packaged()}
 
 
@@ -3868,9 +3882,27 @@ def check_update(force=False):
             print(f"Update check failed: {failure}", file=sys.stderr) if not SINKS else say("The update check failed.")
     else:
         result.update(evaluate_update(VERSION, info, is_packaged(), installer_system(), release))
+    result["min_version"] = (info or {}).get("min_version") or state.get("min_version")
     data_dir().mkdir(parents=True, exist_ok=True)
     update_path().write_text(json.dumps(result), encoding="utf-8")
     return read_update()
+
+
+def remember_required(minimum):
+    """Keeps the platform's minimum version, so that the interface can say that an update is required."""
+    try:
+        path = update_path()
+        try:
+            d = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            d = {"current": VERSION}
+        if d.get("current") != VERSION:
+            d = {"current": VERSION}
+        d["min_version"] = minimum if version_tuple(minimum) else "999.0.0"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(d), encoding="utf-8")
+    except OSError:
+        pass
 
 
 def verify_client_file(data, info, current):
@@ -3951,7 +3983,9 @@ def update_notice():
     """A short reminder at the start of a command. It never blocks or fails the command."""
     try:
         state = check_update()
-        if state["available"]:
+        if state["required"]:
+            print(f"Update required: the platform needs version {state['min_version']} or later. You have {VERSION}. Update with: python3 oq.py update", flush=True)
+        elif state["available"]:
             print(f"Version {state['latest']} is available. Update with: python3 oq.py update", flush=True)
     except Exception:
         pass
@@ -4426,7 +4460,7 @@ button.btn{border:1px solid var(--line);background:var(--panel);color:var(--text
 .meter{margin:10px 0}.meter header{display:flex;justify-content:space-between;gap:8px;font-size:13px}.meter small{color:var(--muted)}.bar{position:relative;height:8px;margin-top:5px;border-radius:5px;background:var(--line)}.bar i{display:block;height:100%;border-radius:5px;background:var(--accent)}.bar i.high{background:var(--bad)}.bar u{position:absolute;top:-3px;width:2px;height:14px;background:var(--text)}
 .row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px solid var(--line)}.row:first-of-type{border-top:0}.row>div{min-width:0}.row small{display:block;color:var(--muted)}.pill{flex:none;padding:2px 9px;border-radius:99px;background:var(--soft);color:var(--accent);font-size:12px;font-weight:700}.pill.good{background:var(--goodbg);color:var(--good)}.pill.warn{background:var(--warnbg);color:var(--warn)}
 .log{max-height:240px;overflow:auto;font:12px/1.6 ui-monospace,Menlo,monospace;white-space:pre-wrap;overflow-wrap:anywhere}.log span{color:var(--muted);margin-right:8px}.empty{color:var(--muted);padding:6px 0}
-label.f{display:grid;gap:4px;margin-bottom:12px;font-weight:650;font-size:13px}label.f small{font-weight:400;color:var(--muted)}input[type=text],input[type=password],input[type=number],select{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--text);font:inherit}input[type=range]{width:100%;accent-color:var(--accent)}.check{display:flex;gap:8px;align-items:center;padding:4px 0;font-weight:500}.ver{margin-top:auto;display:grid;gap:2px;padding:10px 11px 2px;color:#c7c9f0}.ver small{font-size:11.5px}.ver button{all:unset;cursor:pointer;margin-top:3px;font-size:11.5px;font-weight:700;color:#fff;text-decoration:underline}.ver a{margin-top:3px;font-size:11.5px;color:#c7c9f0}.ver button:focus-visible{outline:2px solid #fff;outline-offset:2px}.update{display:flex;align-items:center;justify-content:space-between;gap:12px;background:var(--soft);border-color:transparent}.update div{display:grid;min-width:0}.update span{color:var(--muted);font-size:13px}.update a.btn{border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:8px;padding:8px 13px;font-weight:650;text-decoration:none}.run-form h3{font-size:13px;margin:0 0 8px}.run-form textarea{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--text);font:inherit;resize:vertical}.run-btn{width:100%;padding:12px;font-size:15px}.pill.bad{background:var(--badbg);color:var(--bad)}.err{padding:9px 11px;border-radius:8px;background:var(--badbg);color:var(--bad);margin-bottom:12px;overflow-wrap:anywhere}.note{padding:9px 11px;border-radius:8px;background:var(--soft);font-size:13px;margin:10px 0}.code{font:700 20px ui-monospace,Menlo,monospace;letter-spacing:.06em}.steps{display:grid;gap:6px;margin:0 0 12px;padding:0;list-style:none}.steps li{display:flex;gap:8px;align-items:center}.steps i{width:20px;height:20px;border-radius:50%;display:grid;place-items:center;background:var(--line);font-style:normal;font-size:11px;font-weight:800}.steps li.ok i{background:var(--good);color:#fff}
+label.f{display:grid;gap:4px;margin-bottom:12px;font-weight:650;font-size:13px}label.f small{font-weight:400;color:var(--muted)}input[type=text],input[type=password],input[type=number],select{width:100%;padding:8px 30px 8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23667085' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") no-repeat right 10px center/12px 12px;color:var(--text);font:inherit;-webkit-appearance:none;appearance:none;text-overflow:ellipsis;cursor:pointer}input[type=range]{width:100%;accent-color:var(--accent)}.check{display:flex;gap:8px;align-items:center;padding:4px 0;font-weight:500}.ver{margin-top:auto;display:grid;gap:2px;padding:10px 11px 2px;color:#c7c9f0}.ver small{font-size:11.5px}.ver button{all:unset;cursor:pointer;margin-top:3px;font-size:11.5px;font-weight:700;color:#fff;text-decoration:underline}.ver a{margin-top:3px;font-size:11.5px;color:#c7c9f0}.ver button:focus-visible{outline:2px solid #fff;outline-offset:2px}.update{display:flex;align-items:center;justify-content:space-between;gap:12px;background:var(--soft);border-color:transparent}.update div{display:grid;min-width:0}.update span{color:var(--muted);font-size:13px}.update a.btn{border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:8px;padding:8px 13px;font-weight:650;text-decoration:none}.run-form h3{font-size:13px;margin:0 0 8px}.run-form textarea{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--text);font:inherit;resize:vertical}.run-btn{width:100%;padding:12px;font-size:15px}.pill.bad{background:var(--badbg);color:var(--bad)}.err{padding:9px 11px;border-radius:8px;background:var(--badbg);color:var(--bad);margin-bottom:12px;overflow-wrap:anywhere}.note{padding:9px 11px;border-radius:8px;background:var(--soft);font-size:13px;margin:10px 0}.code{font:700 20px ui-monospace,Menlo,monospace;letter-spacing:.06em}.steps{display:grid;gap:6px;margin:0 0 12px;padding:0;list-style:none}.steps li{display:flex;gap:8px;align-items:center}.steps i{width:20px;height:20px;border-radius:50%;display:grid;place-items:center;background:var(--line);font-style:normal;font-size:11px;font-weight:800}.steps li.ok i{background:var(--good);color:#fff}
 .mode-pick{display:grid;gap:6px;margin:0 0 12px}.mode-pick .check{align-items:flex-start;padding:9px 10px;border:1px solid var(--line);border-radius:8px}.actions{display:flex;flex-wrap:wrap;gap:8px}.toggle{all:unset;flex:none;display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-size:12.5px;font-weight:700;color:var(--muted);min-width:86px;justify-content:flex-end}.toggle i{position:relative;width:34px;height:20px;border-radius:99px;background:var(--line);transition:background .15s}.toggle i:after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 1px 2px #0005;transition:left .15s}.toggle[aria-checked=true]{color:var(--good)}.toggle[aria-checked=true] i{background:var(--good)}.toggle[aria-checked=true] i:after{left:16px}.toggle:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:6px}.row.off b{color:var(--muted)}
 @media(max-width:680px){.app{display:block}nav{flex-direction:row;overflow-x:auto;padding:8px}.brand{display:none}nav button{flex:none}.ver{margin:0 0 0 auto;flex:none;display:flex;align-items:center;gap:8px;padding:0 6px}.ver small:first-child,.ver a{display:none}.update{flex-wrap:wrap}main{padding:16px}.grid{grid-template-columns:minmax(0,1fr)}.hero{flex-wrap:wrap}.hero .btn{width:100%}}
 </style></head><body><div class="app"><nav aria-label="Sections"><div class="brand">Open Questions AI</div><button data-v="home">Home</button><button data-v="limits">Usage limits</button><button data-v="danus">Prove new facts</button><button data-v="backup">Backups</button><button data-v="account">Accounts</button><div class=ver id=ver></div></nav><main id="m">Loading…</main></div>
@@ -4446,7 +4480,7 @@ const usage=()=>{const l=S.limits,d=S.day;let h='<section class=panel><h2>Usage 
  if(S.windows)for(const w of S.windows){const cap=w.name==='weekly'?l.max_weekly_percent:l.max_session_percent;h+=meter(`ChatGPT ${w.name} limit`,w.used,100,`${w.used}% used, stops at ${cap}%${w.resets_at?' · resets '+when(w.resets_at):''}`,cap)}
  else if(S.provider==='claude')h+='<div class=note>Claude does not report its percentage to unattended tools. The caps below apply, and work also stops if Claude reports a limit. Keep usage credits off in your Claude settings to avoid extra charges.</div>';
  h+=meter('Tasks',d.tasks,l.tasks_per_day,`${d.tasks} of ${l.tasks_per_day||'∞'}`)+meter('Computing time',d.seconds/60,l.minutes_per_day,`${Math.round(d.seconds/60)} of ${l.minutes_per_day||'∞'} min`)+meter('Tokens',d.tokens,l.tokens_per_day,`${d.tokens.toLocaleString()} of ${l.tokens_per_day?l.tokens_per_day.toLocaleString():'∞'}`);return h+'</section>'};
-const updateBanner=()=>{const u=S.update;if(!u?.available)return'';return`<section class="panel update"><div><b>Version ${e(u.latest)} is available</b><span>You have version ${e(u.current)}.${u.mode==='installer'?' Download the new app.':S.running||S.danus_run?.active?' Stop the current work to update.':''}</span></div>${u.mode==='installer'?(u.download_url?`<a class="btn primary" href="${e(u.download_url)}" target=_blank rel="noopener noreferrer">Download</a>`:''):`<button class="btn primary" data-a=updateapply ${S.running||S.danus_run?.active||updating?'disabled':''}>${updating?'Updating…':'Update now'}</button>`}</section>`};
+const updateBanner=()=>{const u=S.update;if(!u?.available&&!u?.required)return'';if(!u.available)return`<section class="panel update" role=alert><div><b>Update required</b><span>The platform needs version ${e(u.min_version)} or later. You have version ${e(u.current)}. No work is done until you update.</span></div>${u.download_url?`<a class="btn primary" href="${e(u.download_url)}" target=_blank rel="noopener noreferrer">Get the update</a>`:''}</section>`;return`<section class="panel update"${u.required?' role=alert':''}><div><b>${u.required?'Update required: ':''}Version ${e(u.latest)} is available</b><span>You have version ${e(u.current)}.${u.required?' The platform no longer accepts it.':''}${u.mode==='installer'?' Download the new app.':S.running||S.danus_run?.active?' Stop the current work to update.':''}</span></div>${u.mode==='installer'?(u.download_url?`<a class="btn primary" href="${e(u.download_url)}" target=_blank rel="noopener noreferrer">Download</a>`:''):`<button class="btn primary" data-a=updateapply ${S.running||S.danus_run?.active||updating?'disabled':''}>${updating?'Updating…':'Update now'}</button>`}</section>`};
 const versionBox=()=>{const u=S.update||{};const label=u.available?`Version ${u.latest} available`:u.error?'Check failed':u.checked_at?'Up to date':'Not checked yet';return`<small>Version ${e(S.version)}</small><small>${e(label)}</small><button data-a=updatecheck ${checking?'disabled':''}>${checking?'Checking…':'Check for updates'}</button><a href="https://github.com/LudovicPatey/projects" target=_blank rel="noopener noreferrer">Source code (AGPL-3.0)</a>`};
 const home=()=>`<h1>Home</h1><p class=sub>Your computer helps your research projects, within the limits you set.</p>${updateBanner()}${hero()}<div class=grid>${usage()}<section class=panel><h2>Your projects</h2>${S.projects.map(p=>`<div class="row ${p.paused?'off':''}"><div><b>${e(p.title)}</b><small>${p.unavailable?'Could not read its work queue':p.waiting+' waiting'}${p.review?' · '+p.review+' reference(s) to validate':''}</small></div><button class=toggle role=switch aria-checked=${!p.paused} aria-label="${e(p.title)}: ${p.paused?'paused':'active'}" data-pswitch=${p.id}>${p.paused?'Paused':'Active'}<i></i></button></div>`).join('')||'<div class=empty>No project yet.</div>'}</section></div><section class=panel style="margin-top:14px"><h2>Activity</h2><div class=log tabindex=0>${S.log.slice().reverse().map(x=>`<div><span>${e(x.at)}</span>${e(x.text)}</div>`).join('')||'<div class=empty>Nothing yet.</div>'}</div></section>`;
 const num=(k,l,h,min,max,unit)=>`<label class=f>${e(l)}<small>${e(h)}</small><input type=number data-l=${k} min=${min} max=${max} value="${e(draft[k])}"></label>`;

@@ -36,8 +36,16 @@ a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
 button, input, select, textarea { font: inherit; color: inherit; }
 input, select, textarea {
-  border: 1px solid var(--line); border-radius: 6px; padding: 7px 10px; background: #fff; outline: none; min-width: 0;
+  border: 1px solid var(--line); border-radius: 6px; padding: 7px 10px; background: #fff; outline: none; min-width: 0; line-height: 1.3;
 }
+/* One look for every dropdown: the browser's own arrow is replaced, so text never runs under it. */
+select {
+  -webkit-appearance: none; appearance: none; padding-right: 30px; cursor: pointer; text-overflow: ellipsis; white-space: nowrap;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23667085' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 10px center; background-size: 12px 12px;
+}
+select:hover:not(:disabled) { border-color: #cfd4dc; }
+select:disabled { cursor: default; opacity: .6; }
+select.sm { padding: 5px 26px 5px 9px; font-size: 13px; background-position: right 8px center; background-size: 11px 11px; }
 input:focus, select:focus, textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-2); }
 textarea { resize: vertical; }
 code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; }
@@ -60,7 +68,7 @@ h1 { font-size: 24px; } h2 { font-size: 16px; } h3 { font-size: 15px; } h4 { fon
 
 /* ----- buttons ----- */
 .btn {
-  display: inline-flex; align-items: center; gap: 6px; padding: 7px 13px; border-radius: 6px;
+  display: inline-flex; align-items: center; gap: 6px; padding: 7px 13px; border-radius: 6px; line-height: 1.3;
   border: 1px solid var(--line); background: #fff; cursor: pointer; font-weight: 550; white-space: nowrap; color: var(--text);
 }
 .btn:hover { background: var(--panel-2); text-decoration: none; border-color: #cfd4dc; }
@@ -228,7 +236,7 @@ h1 { font-size: 24px; } h2 { font-size: 16px; } h3 { font-size: 15px; } h4 { fon
 .doc-title h2 { font-size: 18px; }
 .doc-desc { margin: 4px 0 0; color: #475467; }
 .doc-actions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-.version-select { padding: 5px 8px; font-size: 13px; }
+.version-select { padding: 5px 26px 5px 8px; font-size: 13px; background-position: right 8px center; }
 .old-version-note { background: var(--warn-bg); color: var(--warn); padding: 7px 20px; font-size: 13px; border-bottom: 1px solid #f5d49c; }
 .bib-authors { color: #344054; }
 .tabs { display: flex; gap: 2px; padding: 0 16px; overflow-x: auto; scrollbar-width: none; border-bottom: 1px solid var(--line); background: var(--panel-2); }
@@ -430,7 +438,7 @@ h4.mt { margin-top: 18px; }
 .fact-li.o-human { border-left-color: #99d5cb; }
 .li-meta.wrap { flex-wrap: wrap; gap: 5px 8px; }
 .fact-filters { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
-.fact-filters select { padding: 4px 6px; font-size: 12px; }
+.fact-filters select { padding: 4px 24px 4px 7px; font-size: 12px; background-position: right 7px center; background-size: 10px 10px; }
 .mode-seg button { white-space: nowrap; }
 .lean-tag { display: inline-flex !important; font-size: 10.5px; font-weight: 700; padding: 1px 6px; border-radius: 4px; background: var(--line-2); color: var(--muted); white-space: nowrap; }
 .lean-tag.compiled { background: #1e40af; color: #fff; }
@@ -463,7 +471,7 @@ h4.mt { margin-top: 18px; }
 .fg-col { min-height: 0; }
 .fg-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--line); }
 .fg-filters .search { flex: 1; min-width: 150px; }
-.fg-filters select { padding: 5px 7px; font-size: 12.5px; }
+.fg-filters select { padding: 5px 25px 5px 8px; font-size: 12.5px; background-position: right 8px center; background-size: 11px 11px; }
 .fg { flex: 1; min-height: 0; position: relative; overflow: hidden; background: var(--bg); background-image: radial-gradient(#d8dce4 1px, transparent 1px); background-size: 20px 20px; }
 .fg canvas { position: absolute; inset: 0; touch-action: none; cursor: grab; }
 .fg-tools { position: absolute; top: 10px; right: 10px; display: flex; align-items: center; gap: 2px; background: #fff; border: 1px solid var(--line); border-radius: 7px; padding: 2px 5px; box-shadow: var(--shadow); }
@@ -629,8 +637,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: non
 .ai-meta.compact b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
 .ai-meta .icon { flex: none; }
 .filter-bar { display: flex; align-items: center; gap: 6px; min-height: 28px; }
-.filter-bar select { padding: 3px 6px; font-size: 12px; border-color: transparent; background: transparent; color: var(--muted); font-weight: 600; cursor: pointer; }
-.filter-bar select:hover { background: var(--line-2); }
+.filter-bar select { padding: 3px 22px 3px 6px; font-size: 12px; border-color: transparent; background-color: transparent; background-position: right 6px center; background-size: 10px 10px; color: var(--muted); font-weight: 600; cursor: pointer; }
+.filter-bar select:hover { background-color: var(--line-2); }
 .filter-bar .seg-n { margin-left: 2px; }
 .bib-li .li-meta { flex-wrap: wrap; align-content: flex-start; height: 20px; overflow: hidden; } /* a venue without room moves to the hidden second line */
 .bib-li .li-meta .muted { display: block; flex: 1 1 90px; min-width: 0; text-align: right; }
@@ -915,7 +923,9 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: non
 .q-path { margin-bottom: 8px; color: var(--muted); font-size: 12.5px; line-height: 1.45; }
 .q-path a { color: var(--muted); }
 .q-path span[aria-hidden] { margin: 0 6px; }
-.q-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.q-head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.q-head > :first-child { flex: 1 1 240px; min-width: 0; }
+.q-head .q-actions { flex-wrap: wrap; }
 .q-head h1 { margin: 0; font-size: 22px; line-height: 1.25; letter-spacing: -.01em; overflow-wrap: anywhere; }
 .q-actions { flex: none; }
 .q-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin: 12px 0; }

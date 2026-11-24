@@ -170,7 +170,7 @@ try {
         if (!preg_match($regex, $req->path, $m)) continue;
         if ($method !== $req->method) { $allowedOther = true; continue; }
         $req->params = array_filter($m, 'is_string', ARRAY_FILTER_USE_KEY);
-        if ($needsAuth) { Auth::require(); Auth::checkCsrf($req); Auth::checkClientRoute($method, $pattern); }
+        if ($needsAuth) { Auth::require(); App\ClientProtocol::check(); Auth::checkCsrf($req); Auth::checkClientRoute($method, $pattern); }
         $handler($req);
     }
     if ($isApi) throw new HttpError(isset($allowedOther) ? 405 : 404, 'Not found');

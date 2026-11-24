@@ -41,7 +41,8 @@ sys.stdin.read()
 print(json.dumps({"is_error": False, "result": "", "structured_output": {"summary": "Answered.", "reply": "An answer."}, "modelUsage": {"test-model": {"inputTokens": 10, "outputTokens": 5}}}))
 `, { mode: 0o755 });
 });
-after(() => { app?.stop(); if (tmp) fs.rmSync(tmp, { recursive: true, force: true }); });
+// A client process may still be writing its files when the tests end: retry the removal.
+after(() => { app?.stop(); if (tmp) fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); });
 beforeEach(async () => {
   for (const project of [main, side]) {
     const { tasks } = (await app.call(ann, 'GET', `/api/projects/${project}/ai`)).data;
