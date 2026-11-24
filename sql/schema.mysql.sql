@@ -649,7 +649,7 @@ CREATE TABLE IF NOT EXISTS feedback_reports (
 CREATE TABLE IF NOT EXISTS ai_tasks (
   id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   project_id INT UNSIGNED NOT NULL,
-  kind VARCHAR(10) NOT NULL,              -- extract, ask, bib, derive, review, lean
+  kind VARCHAR(40) NOT NULL,              -- extract, ask, bib, derive, review, lean, notation, consolidate, or a procedure (Procedures.php)
   status VARCHAR(10) NOT NULL DEFAULT 'pending',  -- pending, running, done, failed, cancelled
   source_type VARCHAR(12) NULL,           -- document, bib, message, comment, question, strategy, fact
   source_id INT UNSIGNED NULL,

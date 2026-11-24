@@ -141,7 +141,7 @@ export const AiView = {
             <stack-bar :counts="d.counts" :segments="segments" label="Tasks by status"/>
             <div class="ai-list">
               <a v-for="t in tasks" :key="t.id" class="ai-row" :class="{active: t.id === id}" :href="t.id === id ? link('ai') : link('ai', t.id)">
-                <span class="action-icon t-info"><icon :name="kinds[t.kind].icon" :size="14"/></span>
+                <span class="action-icon t-info"><icon :name="kinds[t.kind]?.icon || 'sparkles'" :size="14"/></span>
                 <span class="ai-row-main"><b><math-text :text="taskTitle(t)"/></b><small>{{ t.requested_by_name || 'Platform' }} · {{ timeAgo(t.created_at) }}<template v-if="t.ai_model"> · {{ t.ai_model }}</template><template v-if="t.already_done_by?.length"> · waits for a model not weaker than {{ t.already_done_by.join(', ') }}</template></small></span>
                 <span class="pill" :class="'t-' + statuses[t.status].tone">{{ statuses[t.status].short }}</span>
               </a>

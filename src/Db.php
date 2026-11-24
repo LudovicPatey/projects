@@ -171,9 +171,12 @@ final class Db
         $migrations[] = 'ALTER TABLE notations ADD COLUMN facts_json TEXT NULL';
         $migrations[] = 'ALTER TABLE facts ADD COLUMN merged_into INT UNSIGNED NULL';
         $migrations[] = 'ALTER TABLE facts ADD COLUMN topics_json TEXT NULL';
+        // MySQL cut kinds longer than 10 characters, such as "consolidate": room for procedure names, and the cut rows repaired.
+        if (!self::isSqlite()) $migrations[] = 'ALTER TABLE ai_tasks MODIFY kind VARCHAR(40) NOT NULL';
         foreach ($migrations as $m) {
             try { self::pdo()->exec($m); } catch (\PDOException) { /* already applied */ }
         }
+        self::pdo()->exec("UPDATE ai_tasks SET kind = 'consolidate' WHERE kind = 'consolidat'");
         // Existing AI content gets its author's model, or an explicit "unspecified".
         $agentModel = fn(string $col) => "COALESCE((SELECT u.ai_model FROM users u WHERE u.id = $col), 'unspecified')";
         $agents = "(SELECT id FROM users WHERE kind = 'agent')";

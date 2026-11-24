@@ -148,3 +148,20 @@ test('oq.py procedures lists the platform\'s work and turns it on or off', async
   r = run('--auto', 'on');
   assert.match(r.stdout, /turned on automatically/);
 });
+
+test('every kind of work fits the database column, as MySQL cuts longer values', () => {
+  const schema = fs.readFileSync('sql/schema.mysql.sql', 'utf8');
+  const table = schema.slice(schema.indexOf('CREATE TABLE IF NOT EXISTS ai_tasks'));
+  const width = +table.match(/\n\s*kind VARCHAR\((\d+)\)/)[1];
+  const php = spawnSync('php', ['-r', 'require "src/bootstrap.php"; echo json_encode(App\\Controllers\\AiTaskController::kinds());'], { encoding: 'utf8' });
+  assert.equal(php.status, 0, php.stderr);
+  for (const k of JSON.parse(php.stdout)) assert.ok(k.length <= width, `${k} is longer than ai_tasks.kind (${width})`);
+  const client = fs.readFileSync(CLIENT, 'utf8').match(/PROCEDURE_ID = re\.compile\(r"\[a-z\]\[a-z0-9_\]\{1,(\d+)\}"\)/);
+  assert.ok(client && +client[1] + 1 <= width, 'a procedure name the client accepts fits the column');
+  assert.match(fs.readFileSync('src/Db.php', 'utf8'), /MODIFY kind VARCHAR\(40\)/, 'existing databases get the wider column');
+});
+
+test('the AI page shows a task of a kind it does not know, such as a new procedure', () => {
+  const view = fs.readFileSync('public/assets/js/views/ai.js', 'utf8');
+  assert.doesNotMatch(view, /kinds\[t\.kind\]\.(?!\?)/);
+});
