@@ -27,6 +27,13 @@ final class NotationController
     /** People and AI clients propose an entry. Only a person agrees on it. */
     public static function create(Request $r): never
     {
+        [$out, $status] = self::propose($r);
+        Response::json($out, $status);
+    }
+
+    /** @return array{0: array, 1: int} the entry and the HTTP status */
+    public static function propose(Request $r): array
+    {
         $pid = $r->int('id');
         Access::member($pid);
         $data = self::fields($r, $pid, null);
@@ -45,14 +52,14 @@ final class NotationController
             $variants[] = ['symbol' => $data['symbol'], 'meaning' => mb_substr($meaning, 0, 1000), 'where' => mb_substr(trim($r->str('where')) ?: 'found by ' . ($model ?: 'an AI client'), 0, 300),
                 'relation' => in_array($r->str('relation'), self::RELATIONS, true) ? $r->str('relation') : 'clash'];
             Db::update('notations', ['variants_json' => json_encode($variants, JSON_UNESCAPED_UNICODE), 'updated_at' => Db::now()], 'id = :id', ['id' => $same['id']]);
-            Response::json(self::one((int)$same['id']) + ['merged' => true]);
+            return [self::one((int)$same['id']) + ['merged' => true], 200];
         }
         $now = Db::now();
         $id = Db::insert('notations', $data + Provenance::stamp($model, $r->input('generation_seconds')) + [
             'project_id' => $pid, 'status' => 'proposed', 'author_id' => Auth::id(), 'author_kind' => Auth::isAi() ? 'agent' : 'human',
             'ai_model' => $model, 'created_at' => $now, 'updated_at' => $now,
         ]);
-        Response::json(self::one($id), 201);
+        return [self::one($id), 201];
     }
 
     /** A member edits an entry. Changing an agreed entry makes it proposed again. */
@@ -97,6 +104,13 @@ final class NotationController
     /** An AI client writes a fact again in the agreed notation. */
     public static function rephrase(Request $r): never
     {
+        $fid = self::rephraseFact($r);
+        Response::json(FactController::present(Access::fact($fid)), 201);
+    }
+
+    /** Records the rewrite of a fact. Returns the fact's id. */
+    public static function rephraseFact(Request $r): int
+    {
         if (!Auth::isAi()) throw new HttpError(403, 'This is for AI clients.');
         $f = Access::fact($r->int('id'));
         $pid = (int)$f['project_id'];
@@ -116,7 +130,7 @@ final class NotationController
             'author_id' => Auth::id(), 'ai_model' => $model, 'created_at' => Db::now(),
         ]);
         Activity::touch($pid, 'fact', (int)$f['id'], 'rephrased', $id);
-        Response::json(FactController::present(Access::fact((int)$f['id'])), 201);
+        return (int)$f['id'];
     }
 
     /** A person says whether a rephrasing says exactly what the original says. */

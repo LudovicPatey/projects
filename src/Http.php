@@ -30,6 +30,15 @@ final class Request
         $this->query = $_GET;
     }
 
+    /** A request made by the platform itself, to apply an AI answer through the same checks as the API. */
+    public static function internal(array $body, array $params = []): self
+    {
+        $r = new self();
+        $r->json = $body;
+        $r->params = $params;
+        return $r;
+    }
+
     /** JSON body (or form fields for multipart requests). */
     public function input(?string $key = null, mixed $default = null): mixed
     {

@@ -127,6 +127,12 @@ final class ConsolidationController
         $stamp = Provenance::stamp($model, $r->input('generation_seconds'));
         $taskId = (int)$r->input('task_id') ?: null;
         if ($taskId && (int)Db::value('SELECT project_id FROM ai_tasks WHERE id = ?', [$taskId]) !== $pid) $taskId = null;
+        Response::json(self::store($pid, $items, $model, $stamp, $taskId), 201);
+    }
+
+    /** Records the proposals that are valid and new. @return array{created: list<int>, skipped: list<array>} */
+    public static function store(int $pid, array $items, ?string $model, array $stamp, ?int $taskId): array
+    {
         $created = []; $skipped = [];
         foreach ($items as $i => $x) {
             try {
@@ -138,7 +144,7 @@ final class ConsolidationController
             if ($why = self::known($pid, $s)) { $skipped[] = ['index' => $i, 'reason' => $why]; continue; }
             $created[] = Db::insert('fact_suggestions', $s + $stamp + ['project_id' => $pid, 'task_id' => $taskId, 'status' => 'proposed', 'ai_model' => $model, 'created_at' => Db::now()]);
         }
-        Response::json(['created' => $created, 'skipped' => $skipped], 201);
+        return ['created' => $created, 'skipped' => $skipped];
     }
 
     /** What the AI reads: every fact in short, with its source, its dependencies and its tags, and what was already proposed. */

@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 namespace App\Controllers;
 
-use App\{Access, Activity, Auth, BibTex, ClientProtocol, Db, HttpError, ModelOrder, Notify, Provenance, Request, Response, Sanitizer};
+use App\{Access, Activity, Auth, BibTex, ClientProtocol, Db, HttpError, ModelOrder, Notify, Procedures, Provenance, Request, Response, Sanitizer};
 
 /**
  * The AI work queue. The platform stores requests and results and never runs a model:
@@ -12,6 +12,8 @@ use App\{Access, Activity, Auth, BibTex, ClientProtocol, Db, HttpError, ModelOrd
 final class AiTaskController
 {
     public const KINDS = ['extract', 'ask', 'bib', 'derive', 'review', 'lean', 'notation', 'consolidate'];
+    /** Procedures that clients from before generic procedures handle with their own code, and the feature they announce. */
+    private const BUILT_IN = ['ask' => null, 'notation' => 'notation', 'consolidate' => 'consolidate'];
     private const LEASE_SECONDS = 900;
     private const MAX_ATTEMPTS = 3;
     private const MAX_REQUESTS_PER_DAY = 40;
@@ -22,6 +24,12 @@ final class AiTaskController
     private const MAX_CONVERSATION_CHARS = 600000;
     /** Raise it when a client release needs new server features: older platforms are then not offered that release. */
     public const API_LEVEL = 2;
+
+    /** Every kind of work: the client's own, and the platform's procedures. */
+    public static function kinds(): array
+    {
+        return array_values(array_unique(array_merge(self::KINDS, Procedures::ids())));
+    }
 
     // ----- created by the platform -----
 
@@ -118,7 +126,7 @@ final class AiTaskController
         $kind = $r->str('kind');
         // A person's own client may record the Danus run they just launched, and nothing else.
         if (Auth::isAi() && !(Auth::isClient() && $kind === 'derive')) throw new HttpError(403, 'Only a person can do this.');
-        if (!in_array($kind, self::KINDS, true)) throw new HttpError(422, 'Choose what the AI should do.');
+        if (!in_array($kind, self::kinds(), true)) throw new HttpError(422, 'Choose what the AI should do.');
         $since = gmdate('Y-m-d H:i:s', time() - 86400);
         if ((int)Db::value('SELECT COUNT(*) FROM ai_tasks WHERE requested_by = ? AND created_at > ? AND dedupe_key IS NULL', [Auth::id(), $since]) >= self::MAX_REQUESTS_PER_DAY) {
             throw new HttpError(429, 'You have reached the limit of AI requests for today.');
@@ -533,7 +541,7 @@ final class AiTaskController
         $name = mb_substr($r->str('client_name'), 0, 80) ?: 'AI client';
         $model = mb_substr($r->str('ai_model'), 0, 120) ?: null;
         self::seen($me, $name, $model);
-        $kinds = array_values(array_intersect((array)$r->input('kinds', self::KINDS), self::KINDS));
+        $kinds = array_values(array_intersect((array)$r->input('kinds', self::kinds()), self::kinds()));
         if (!$kinds) throw new HttpError(422, 'No valid task kind.');
         [$in, $params] = Db::in($kinds);
         $project = (int)$r->input('project_id');
@@ -542,7 +550,16 @@ final class AiTaskController
         // A client from before this feature would fail these tasks and use up their attempts.
         if (!in_array('extract_bib', (array)$r->input('features', []), true)) $where .= " AND (t.kind <> 'extract' OR t.source_type IS NULL OR t.source_type <> 'bib')";
         if (!in_array('extract_conversation', (array)$r->input('features', []), true)) $where .= " AND (t.kind <> 'extract' OR t.source_type IS NULL OR t.source_type <> 'conversation')";
-        foreach (['review', 'lean', 'notation', 'consolidate'] as $newKind) if (!in_array($newKind, (array)$r->input('features', []), true)) $where .= " AND t.kind <> '$newKind'";
+        $features = (array)$r->input('features', []);
+        foreach (['review', 'lean'] as $newKind) if (!in_array($newKind, $features, true)) $where .= " AND t.kind <> '$newKind'";
+        // A procedure goes to a client that runs recipes and has what it needs, or to one with its own code for it.
+        $generic = in_array('procedures', $features, true);
+        $caps = array_values(array_filter((array)$r->input('capabilities', []), 'is_string'));
+        foreach (Procedures::ids() as $p) {
+            $byRecipe = $generic && !array_diff(Procedures::capabilities($p), $caps);
+            $own = array_key_exists($p, self::BUILT_IN) && (self::BUILT_IN[$p] === null || in_array(self::BUILT_IN[$p], $features, true));
+            if (!$byRecipe && !$own) $where .= " AND t.kind <> '$p'";
+        }
         $perKind = is_array($r->input('models')) ? $r->input('models') : [];
         // Tasks this model must leave to a stronger one are skipped, so they cannot hide the work behind them.
         for ($offset = 0; ; $offset += 100) {
@@ -575,7 +592,9 @@ final class AiTaskController
                     $reads = in_array('extract_comments', (array)$r->input('features', []), true);
                     if ($c['kind'] === 'extract') Db::update('ai_tasks', ['comments_hash' => $c['source_type'] === 'conversation' ? self::snapshotHash($c) : ($reads ? self::commentsHash(self::extractComments($c)) : null)], 'id = :id', ['id' => $c['id']]);
                     $t = self::row((int)$c['id']);
-                    Response::json(['task' => self::present($t) + ['lease' => $lease, 'lease_seconds' => self::LEASE_SECONDS, 'publish_private' => (bool)self::snapshot($t)['shared'], 'context' => self::context($t)]]);
+                    $ctx = self::context($t);
+                    $recipe = $generic && Procedures::has((string)$t['kind']) ? ['recipe' => Procedures::recipe($t, $ctx)] : [];
+                    Response::json(['task' => self::present($t) + ['lease' => $lease, 'lease_seconds' => self::LEASE_SECONDS, 'publish_private' => (bool)self::snapshot($t)['shared'], 'context' => $ctx] + $recipe]);
                 }
             }
             if (count($candidates) < 100) break;
@@ -609,6 +628,38 @@ final class AiTaskController
             if (mb_strlen($text) > 20000) throw new HttpError(422, 'The answer is too long.');
             $reply = self::postReply($t, $text, $model, $stamp);
         }
+        self::finish($t, $model, $stamp, $summary, $factIds, $suggestionIds, $reply);
+        Response::json(self::present(self::row((int)$t['id'])));
+    }
+
+    /**
+     * A client that runs recipes sends the model's answer to a procedure. The platform checks it against the
+     * procedure's schema and applies it itself, so that a new procedure needs no new client.
+     */
+    public static function answer(Request $r): never
+    {
+        self::aiOnly();
+        $t = self::leased($r);
+        if (!Procedures::has((string)$t['kind'])) throw new HttpError(422, 'This task is not a procedure: complete it with /complete.');
+        $answer = $r->input('answer');
+        if (!is_array($answer) || array_is_list($answer)) throw new HttpError(422, 'answer must be the JSON object the model returned.');
+        $model = Provenance::agentModel($r);
+        $stamp = Provenance::stamp($model, $r->input('generation_seconds'));
+        $done = Db::tx(fn() => Procedures::apply($t, $answer, $model, $r->input('generation_seconds')));
+        $reply = isset($done['reply_text']) ? self::postReply($t, mb_substr((string)$done['reply_text'], 0, 20000), $model, $stamp) : null;
+        self::finish($t, $model, $stamp, mb_substr((string)($done['summary'] ?? ''), 0, 1000) ?: null, $done['fact_ids'] ?? [], $done['suggestion_ids'] ?? [], $reply);
+        Response::json(self::present(self::row((int)$t['id'])));
+    }
+
+    /** The procedures of this platform, for clients to offer them to their user. */
+    public static function procedures(Request $r): never
+    {
+        Response::json(['procedures' => Procedures::list(), 'capabilities' => Procedures::CAPABILITIES]);
+    }
+
+    private static function finish(array $t, ?string $model, array $stamp, ?string $summary, array $factIds, array $suggestionIds, ?array $reply): void
+    {
+        $pid = (int)$t['project_id'];
         $now = Db::now();
         Db::update('ai_tasks', ['status' => 'done', 'lease_hash' => null, 'lease_until' => null, 'ai_model' => $model, 'ai_user_id' => $stamp['ai_user_id'], 'ai_generation_ms' => $stamp['ai_generation_ms'],
             'summary_text' => $summary, 'error_text' => null,
@@ -617,7 +668,6 @@ final class AiTaskController
         if ($t['requested_by'] && (int)$t['requested_by'] !== Auth::aiUserId()) {
             Notify::send((int)$t['requested_by'], $pid, 'ai_done', ['link' => self::resultLink($t, $reply), 'excerpt' => $summary ?? 'Your AI request is done.']);
         }
-        Response::json(self::present(self::row((int)$t['id'])));
     }
 
     public static function fail(Request $r): never

@@ -154,7 +154,7 @@ test('a fact is rewritten in the agreed notation without touching its reviewed t
 test('the client proposes entries, rewrites a fact, and extraction keeps definitions in each fact', async () => {
   await clear();
   await app.call(ann, 'POST', `/api/projects/${pid}/ai/tasks`, { kind: 'notation' });
-  fakeClaude(`{"summary": "Compared.", "entries": [{"symbol": "\\\\mathrm{IP}(X)", "meaning": "The IP set of $X$.", "note": None, "variants": [], "definition_fact_id": None}, {"symbol": "\\\\mathrm{NS}(X)", "meaning": "$\\\\mathrm{FS}(X) \\\\setminus \\\\{0\\\\}$.", "note": None, "variants": [], "definition_fact_id": None}]} if "review the notation of the whole project" in prompt else None`);
+  fakeClaude(`{"summary": "Compared.", "entries": [{"symbol": "\\\\mathrm{IP}(X)", "meaning": "The IP set of $X$.", "note": None, "variants": [], "definition_fact_id": None, "facts": []}, {"symbol": "\\\\mathrm{NS}(X)", "meaning": "$\\\\mathrm{FS}(X) \\\\setminus \\\\{0\\\\}$.", "note": None, "variants": [], "definition_fact_id": None, "facts": []}]} if "review the notation of the whole project" in prompt else None`);
   let r = runClient('notation');
   assert.equal(r.status, 0, r.stderr);
   const ip = (await notation()).entries.find((x) => x.symbol === '\\mathrm{IP}(X)');
@@ -164,7 +164,7 @@ test('the client proposes entries, rewrites a fact, and extraction keeps definit
 
   const { b } = await facts([{ ref: 'b', title: 'Rewrite me', kind: 'lemma', labels: ['conclusion'], method: 'deduced', statement_text: 'FS(X) avoids 0.', proof_text: 'Non-empty sums.' }]);
   await app.call(ann, 'POST', `/api/projects/${pid}/ai/tasks`, { kind: 'notation', source_type: 'fact', source_id: b });
-  fakeClaude(`{"summary": "Done.", "unchanged": False, "statement": "$\\\\mathrm{NS}(X)$ avoids 0.", "proof": "Non-empty sums.", "uses": [{"symbol": "FS(X)", "meaning_here": "non-empty sums", "project_symbol": "\\\\mathrm{NS}(X)"}]} if task["fact"]["id"] == ${b} and "again in the project" in prompt else None`);
+  fakeClaude(`{"summary": "Done.", "unchanged": False, "statement": "$\\\\mathrm{NS}(X)$ avoids 0.", "proof": "Non-empty sums.", "uses": [{"symbol": "FS(X)", "meaning_here": "non-empty sums", "project_symbol": "\\\\mathrm{NS}(X)"}], "local_notation": []} if task["fact"]["id"] == ${b} and "again in the project" in prompt else None`);
   r = runClient('notation');
   assert.equal(r.status, 0, r.stderr);
   const fb = (await app.call(ann, 'GET', `/api/facts/${b}`)).data;

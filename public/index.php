@@ -50,6 +50,8 @@ $routes = [
     ['POST',   '/api/projects/{id}/ai/tasks',             [AiTaskController::class, 'request']],
     ['POST',   '/api/projects/{id}/ai/suggestions',       [AiTaskController::class, 'suggest']],
     ['POST',   '/api/ai/tasks/claim',                     [AiTaskController::class, 'claim']],
+    ['GET',    '/api/ai/procedures',                      [AiTaskController::class, 'procedures']],
+    ['POST',   '/api/ai/tasks/{id}/answer',               [AiTaskController::class, 'answer']],
     ['POST',   '/api/ai/tasks/{id}/heartbeat',            [AiTaskController::class, 'heartbeat']],
     ['POST',   '/api/ai/tasks/{id}/complete',             [AiTaskController::class, 'complete']],
     ['POST',   '/api/ai/tasks/{id}/fail',                 [AiTaskController::class, 'fail']],

@@ -52,7 +52,7 @@ import webbrowser
 import zipfile
 import zlib
 
-VERSION = "1.11.0"
+VERSION = "1.12.0"
 API_LEVEL = 2  # raise with the server's AiTaskController::API_LEVEL when a client needs new server features
 GITHUB_REPO = "LudovicPatey/projects"
 KINDS = ["extract", "ask", "bib", "derive", "review", "lean", "notation", "consolidate"]
@@ -199,10 +199,88 @@ MODEL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,79}")
 ALIAS_MEMORY_SECONDS = 86400
 
 
+TIER_MODEL = {"claude": {"strong": "opus", "fast": "sonnet"}, "codex": {}}
+
+
 def chosen_model(provider, kind):
     """The model set for this work, or None to let the AI tool decide."""
     value = ((load_prefs().get("models") or {}).get(provider) or {}).get(kind)
-    return value if value and value != "auto" else MODEL_AUTO.get(provider, {}).get(kind)
+    if value and value != "auto":
+        return value
+    if kind in MODEL_AUTO.get(provider, {}):
+        return MODEL_AUTO[provider][kind]
+    tier = next((x["tier"] for x in cached_procedures() if x["id"] == kind), None)  # a procedure of the platform
+    return TIER_MODEL.get(provider, {}).get(tier)
+
+
+# ----- procedures of the platform: reasoning tasks that need no new client -----
+
+CAPABILITIES = ("web_search", "document")  # all a recipe may ask for besides reasoning: never a shell or a file outside its folder
+PROCEDURE_ID = re.compile(r"[a-z][a-z0-9_]{1,39}")
+PROCEDURE_MAX_AGE = 600
+
+
+def procedures_file():
+    return data_dir() / "procedures.json"
+
+
+def clean_procedure(x):
+    if not isinstance(x, dict) or not PROCEDURE_ID.fullmatch(str(x.get("id") or "")):
+        return None
+    caps = [str(c) for c in (x.get("capabilities") or []) if isinstance(c, str)][:10]
+    return {"id": x["id"], "label": str(x.get("label") or x["id"])[:80], "description": str(x.get("description") or "")[:400],
+            "tier": x.get("tier") if x.get("tier") in ("strong", "fast") else "strong", "capabilities": caps,
+            "runnable": all(c in CAPABILITIES for c in caps), "version": str(x.get("version") or "")[:20]}
+
+
+def cached_procedures(url=None):
+    """The procedures last read from the platform this computer is connected to."""
+    try:
+        data = json.loads(procedures_file().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    if not url:
+        try:
+            url = load_config().get("url") or ""
+        except Stop:
+            url = ""
+    rows = (data.get(site_name(url)) or {}).get("list") if url else None
+    return [x for x in (clean_procedure(r) for r in rows or []) if x]
+
+
+def refresh_procedures(api, max_age=PROCEDURE_MAX_AGE):
+    """Reads the platform's procedures again when the copy is old. An older platform has none: the client's own work still runs."""
+    try:
+        data = json.loads(procedures_file().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        data = {}
+    site = site_name(api.url)
+    if time.time() - (data.get(site) or {}).get("at", 0) < max_age:
+        return cached_procedures(api.url)
+    try:
+        rows = api.get("/api/ai/procedures").get("procedures") or []
+    except ApiError as e:
+        if e.status not in (404, 405):
+            return cached_procedures(api.url)
+        rows = []
+    data[site] = {"at": time.time(), "list": [x for x in (clean_procedure(r) for r in rows) if x]}
+    data_dir().mkdir(parents=True, exist_ok=True)
+    procedures_file().write_text(json.dumps(data, indent=1), encoding="utf-8")
+    return cached_procedures(api.url)
+
+
+def new_procedures(url=None):
+    """The platform's procedures this client has no code of its own for."""
+    return [x for x in cached_procedures(url) if x["id"] not in KINDS]
+
+
+def procedure_on(limits, pid):
+    """A procedure the user never decided on runs only if they let new kinds of work start on their own."""
+    return bool((limits.get("procedures") or {}).get(pid, limits.get("auto_procedures")))
+
+
+def procedure_label(kind):
+    return KIND_NAMES.get(kind) or next((x["label"] for x in cached_procedures() if x["id"] == kind), kind)
 
 
 def remember_alias(alias, used):
@@ -235,7 +313,7 @@ def save_models(provider, choices, danus=None):
     clean = {}
     for kind, value in (choices or {}).items():
         value = str(value or "").strip()
-        if kind not in KINDS or (value and value != "auto" and not MODEL_NAME.fullmatch(value)):
+        if not (kind in KINDS or PROCEDURE_ID.fullmatch(str(kind))) or (value and value != "auto" and not MODEL_NAME.fullmatch(value)):
             raise Stop(f"Invalid model name: {value[:40]}")
         if value and value != "auto":
             if not model_fits(provider, value):
@@ -315,7 +393,9 @@ def codex_fallback(wait=False):
 def models_public():
     prefs = load_prefs().get("models") or {}
     claude = danus_engine() == "claude"
-    return {"choices": prefs, "auto": MODEL_AUTO, "suggest": {"claude": [{"id": "auto", "label": "Automatic"}, {"id": "fable", "label": "Fable (latest)"}, {"id": "opus", "label": "Opus (latest)"}, {"id": "sonnet", "label": "Sonnet (latest)"}, {"id": "haiku", "label": "Haiku (latest)"}],
+    extra = [x for x in new_procedures() if x["runnable"]]
+    auto = {tool: {**MODEL_AUTO[tool], **{x["id"]: TIER_MODEL[tool].get(x["tier"]) for x in extra if TIER_MODEL[tool].get(x["tier"])}} for tool in MODEL_AUTO}
+    return {"choices": prefs, "auto": auto, "procedures": [{"id": x["id"], "label": x["label"]} for x in extra], "suggest": {"claude": [{"id": "auto", "label": "Automatic"}, {"id": "fable", "label": "Fable (latest)"}, {"id": "opus", "label": "Opus (latest)"}, {"id": "sonnet", "label": "Sonnet (latest)"}, {"id": "haiku", "label": "Haiku (latest)"}],
                         "codex": [{"id": "auto", "label": "Automatic"}, *[{"id": x["id"], "label": x["label"]} for x in codex_models()]]},
             "danus": load_prefs().get("danus_claude_model" if claude else "danus_model") or "",
             "danus_default": MODEL_AUTO["claude"]["derive"] if claude else codex_fallback(), "danus_tool": "claude" if claude else "codex"}
@@ -529,6 +609,36 @@ def process_consolidate(api, task, opts, workdir):
         created, skipped = len(r.get("created") or []), len(r.get("skipped") or [])
     summary = f"{created} change{'' if created == 1 else 's'} proposed" + (f", {skipped} set aside (already proposed, rejected or invalid)" if skipped else "")
     return {"lease": task["lease"], "ai_model": model, "generation_seconds": seconds, "summary": f"{summary}. {answer.get('summary') or ''}".strip()[:1000]}
+
+
+def process_procedure(api, task, opts):
+    """Runs a procedure of the platform: its instructions and schema, the model chosen here, and the answer sent back.
+    The model gets the task's data and nothing else: no shell, no file outside its folder, and web search only when asked."""
+    recipe = task["recipe"]
+    caps = [str(c) for c in recipe.get("capabilities") or []]
+    missing = [c for c in caps if c not in CAPABILITIES]
+    if missing:
+        safe_fail(api, f"/api/ai/tasks/{task['id']}", task, f"This procedure needs {', '.join(missing)}, which this client cannot do. Update the client.", True)
+        return {"answered": True, "summary": "Left to a newer client."}
+    instructions, schema = str(recipe.get("instructions") or ""), recipe.get("schema")
+    if not instructions.strip() or not isinstance(schema, dict):
+        raise RuntimeError("The platform sent an incomplete procedure.")
+    with tempfile.TemporaryDirectory(prefix="oq-task-") as tmp:
+        workdir = pathlib.Path(os.path.realpath(tmp))
+        if "document" in caps and task["context"].get("document"):
+            try:
+                prepare_document(api, task["context"]["document"], workdir, opts.provider)
+            except Stop:
+                pass  # the question can still be answered from the thread
+        public = {k: task.get(k) for k in ("id", "kind", "source_type", "source_id", "prompt_text")}
+        (workdir / "task.json").write_text(json.dumps({"task": public, **task["context"]}, ensure_ascii=False, indent=1), encoding="utf-8")
+        wanted = opts.model or chosen_model(opts.provider, task["kind"])
+        prompt = f"{SAFETY}\n\n{instructions}\n\nRead task.json in the current folder to begin."
+        answer, model, seconds = run_ai(opts.provider, prompt, schema, workdir, wanted, "web_search" in caps, opts.timeout)
+        remember_alias(wanted, model)
+    answer = scrub(answer, api.key)
+    done = api.post(f"/api/ai/tasks/{task['id']}/answer", {"lease": task["lease"], "ai_model": model, "generation_seconds": seconds, "answer": answer})
+    return {"answered": True, "summary": str(done.get("summary_text") or "Done.")}
 
 
 def process_review(api, task, opts, workdir):
@@ -1076,6 +1186,8 @@ def scrub(value, secret):
 
 def process(api, task, opts):
     kind = task["kind"]
+    if task.get("recipe"):
+        return process_procedure(api, task, opts)
     with tempfile.TemporaryDirectory(prefix="oq-task-") as tmp:
         workdir = pathlib.Path(os.path.realpath(tmp))
         if kind in ("review", "lean", "notation", "consolidate"):
@@ -1229,7 +1341,7 @@ class Heartbeat(threading.Thread):
 
 def describe(task):
     subject = task.get("subject") or (task["context"].get("subject") if task.get("context") else None)
-    return f"#{task['id']} {KIND_NAMES[task['kind']]}" + (f": {subject}" if subject else "")
+    return f"#{task['id']} {procedure_label(task['kind'])}" + (f": {subject}" if subject else "")
 
 
 def claim_task(api, opts, body):
@@ -1265,14 +1377,19 @@ def work_once(api, opts, name, stop=None):
     opts.hold = None if allowed else (reason, retry)
     if not allowed:
         return False
-    kinds = [k for k in opts.kinds if k in limits["kinds"] and (k != "lean" or lean_conf())]
+    kinds = [k for k in opts.kinds if k in KINDS and k in limits["kinds"] and (k != "lean" or lean_conf())]
+    try:
+        extra = refresh_procedures(api)
+    except (OSError, ValueError):
+        extra = cached_procedures(api.url)
+    kinds += [x["id"] for x in extra if x["id"] not in KINDS and x["runnable"] and procedure_on(limits, x["id"]) and (opts.kinds == KINDS or x["id"] in opts.kinds)]
     if not kinds:
         opts.hold = ("All kinds of work are turned off in your limits.", None)
         return False
     models = claim_models(opts, kinds)
     if "review" in kinds:
         models["review"] = review_models(opts)
-    body = {"kinds": kinds, "client_name": name, "ai_model": opts.model or opts.provider, "models": models, "features": ["extract_bib", "extract_comments", "extract_conversation", "review", "lean", "notation", "consolidate"]}
+    body = {"kinds": kinds, "client_name": name, "ai_model": opts.model or opts.provider, "models": models, "features": ["extract_bib", "extract_comments", "extract_conversation", "review", "lean", "notation", "consolidate", "procedures"], "capabilities": list(CAPABILITIES)}
     task, opts.hold = claim_task(api, opts, body)
     if not task:
         return False
@@ -1284,7 +1401,8 @@ def work_once(api, opts, name, stop=None):
     per_task = argparse.Namespace(**{**vars(opts), "timeout": min(opts.timeout, limits["task_minutes"] * 60)})
     try:
         result = process(api, task, per_task)
-        api.post(url + "/complete", result)
+        if not result.pop("answered", False):  # a procedure's answer has already been sent
+            api.post(url + "/complete", result)
         say(f"          done: {result['summary'][:160]}")
     except ToolBusy as e:
         opts.__dict__.setdefault("tool_hold", {})[e.tool] = e.until
@@ -1359,11 +1477,11 @@ def cmd_run(a):
     api, _ = connect()
     a.provider = detect_provider(a.provider)
     a.kinds = [k.strip() for k in a.only.split(",")] if a.only else KINDS
-    if any(k not in KINDS for k in a.kinds):
-        raise Stop(f"--only accepts: {', '.join(KINDS)}")
+    if any(not PROCEDURE_ID.fullmatch(k) for k in a.kinds):
+        raise Stop(f"--only accepts: {', '.join(KINDS)}, or a procedure of the platform (see: oq.py procedures)")
     name = a.name or f"{platform.node() or 'computer'} ({a.provider})"
     update_notice()
-    print(f"Connected to {api.url}, using {a.provider}. Handles: {', '.join(KIND_NAMES[k] for k in a.kinds if k in load_limits()['kinds']) or 'nothing, see your limits'}.")
+    print(f"Connected to {api.url}, using {a.provider}. Handles: {', '.join(KIND_NAMES[k] for k in a.kinds if k in KINDS and k in load_limits()['kinds']) or 'nothing, see your limits'}.")
     print("Leave this window open. Press Ctrl+C to stop." if not a.once else "Processing what is waiting.", flush=True)
     if not a.once:
         threading.Thread(target=backup_scheduler, daemon=True).start()
@@ -1664,6 +1782,7 @@ DEFAULT_LIMITS = {
     "task_minutes": 30, "hours": "", "kinds": ["extract", "ask", "bib", "review", "notation", "consolidate"], "review_offered": True, "notation_offered": True, "consolidate_offered": True, "paused": False,  # derivation is the costliest: opt-in
     "danus_enabled": False, "danus_workers": 1, "danus_minutes": 60,
     "ai_billing": "subscription",  # "api" must be chosen explicitly, because it is charged per use
+    "procedures": {}, "auto_procedures": False,  # the platform's procedures: each one is off until its user turns it on
 }
 
 
@@ -1709,9 +1828,13 @@ def clean_limits(raw):
             if not low <= v <= high:
                 raise Stop(f"{k} must be between {low} and {high}.")
             out[k] = v
-    for k in ("paused", "danus_enabled"):
+    for k in ("paused", "danus_enabled", "auto_procedures"):
         if k in raw:
             out[k] = bool(raw[k])
+    if "procedures" in raw:
+        if not isinstance(raw["procedures"], dict):
+            raise Stop("procedures must map each procedure to on or off.")
+        out["procedures"] = {str(k): bool(v) for k, v in list(raw["procedures"].items())[:100] if PROCEDURE_ID.fullmatch(str(k)) and str(k) not in KINDS}
     if "hours" in raw:
         if not valid_hours(str(raw["hours"] or "")):
             raise Stop('Hours must look like "22-7", or be empty for all day.')
@@ -3520,6 +3643,10 @@ class Service:
         elif cfg.get("url") and cfg.get("key"):
             try:
                 a = Api(cfg["url"], cfg["key"])
+                try:
+                    refresh_procedures(a)
+                except (ApiError, OSError, ValueError):
+                    pass
                 for p in project_list(a.get("/api/projects")):
                     try:  # one project that cannot be read must not disconnect the others
                         d = a.get(f"/api/projects/{p['id']}/ai")
@@ -3536,7 +3663,8 @@ class Service:
         if allowed and projects and all(p["paused"] for p in projects):
             allowed, reason, retry = False, "All your projects are paused.", None
         dm = DanusManager()
-        return {"lean": lean_public(), "models": models_public(), "backup": backup_public(projects), "update": read_update(), "danus_run": DanusRun().public(), "version": VERSION, "connected": bool(cfg.get("key")) and not error, "url": cfg.get("url", ""), "error": error, "projects": projects, "tools": tools, "provider": provider,
+        procedures = [{**x, "on": procedure_on(limits, x["id"])} for x in new_procedures(cfg.get("url"))] if cfg.get("url") else []
+        return {"procedures": procedures, "lean": lean_public(), "models": models_public(), "backup": backup_public(projects), "update": read_update(), "danus_run": DanusRun().public(), "version": VERSION, "connected": bool(cfg.get("key")) and not error, "url": cfg.get("url", ""), "error": error, "projects": projects, "tools": tools, "provider": provider,
                 "running": self.running(), "allowed": allowed, "reason": reason, "retry_at": retry, "limits": limits, "day": day, "windows": windows,
                 "log": list(self.log)[-60:], "jobs": self.jobs, "danus": {**dm.state(), "engine": danus_engine(), "mode": danus_mode(), "can_native": sys.platform == "darwin", "isolated_installed": sys.platform == "darwin" and danus_mode() == "native" and LimaVm().exists(), "unavailable": dm.unavailable_reason()}}
 
@@ -3799,8 +3927,36 @@ def cmd_models(a):
                 raise Stop("Write each choice as kind=model, for example extract=opus.")
             current[kind.strip()] = value.strip()
         save_models(provider, current)
-    for k in KINDS:
-        print(f"{KIND_NAMES[k]}: {chosen_model(provider, k) or 'default of ' + provider}")
+    for k in KINDS + [x["id"] for x in new_procedures()]:
+        print(f"{procedure_label(k)} ({k}): {chosen_model(provider, k) or 'default of ' + provider}")
+    return 0
+
+
+def cmd_procedures(a):
+    """The work the platform defines, beyond the client's own: list it, and choose what this computer runs."""
+    api, _ = connect()
+    rows = refresh_procedures(api, 0)
+    changes = {}
+    current = dict(load_limits().get("procedures") or {})
+    for pid, on in [(x, True) for x in a.on or []] + [(x, False) for x in a.off or []]:
+        if pid not in {x["id"] for x in rows}:
+            raise Stop(f"No procedure {pid} on this platform.")
+        if pid in KINDS:
+            raise Stop(f"{pid} is part of the client: use oq.py limits --only.")
+        current[pid] = on
+        changes["procedures"] = current
+    if a.auto:
+        changes["auto_procedures"] = a.auto == "on"
+    limits = save_limits(changes) if changes else load_limits()
+    if not rows:
+        print("This platform defines no procedure.")
+    for x in rows:
+        if x["id"] in KINDS:
+            state = "on" if x["id"] in limits["kinds"] else "off"
+        else:
+            state = ("on" if procedure_on(limits, x["id"]) else "off") if x["runnable"] else "needs a newer client"
+        print(f"{x['id']:14s} {state:8s} {x['label']}: {x['description']}")
+    print(f"New procedures: {'turned on automatically' if limits['auto_procedures'] else 'off until you turn them on'}")
     return 0
 
 
@@ -4546,6 +4702,11 @@ def parser():
     mo.add_argument("--provider", choices=["claude", "codex"])
     mo.add_argument("--set", action="append", metavar="KIND=MODEL", help="for example extract=opus, or extract=auto")
     mo.set_defaults(fn=cmd_models)
+    pr = sub.add_parser("procedures", help="list the platform's kinds of work, and choose which ones run here")
+    pr.add_argument("--on", action="append", metavar="ID", help="run this procedure")
+    pr.add_argument("--off", action="append", metavar="ID", help="do not run this procedure")
+    pr.add_argument("--auto", choices=["on", "off"], help="turn new procedures on automatically, or leave them off")
+    pr.set_defaults(fn=cmd_procedures)
     r = sub.add_parser("run", help="process the work")
     r.add_argument("--once", action="store_true", help="process what is waiting, then stop")
     r.add_argument("--limit", type=int, help="stop after this many tasks")
@@ -4650,7 +4811,7 @@ button.btn{border:1px solid var(--line);background:var(--panel);color:var(--text
 .meter{margin:10px 0}.meter header{display:flex;justify-content:space-between;gap:8px;font-size:13px}.meter small{color:var(--muted)}.bar{position:relative;height:8px;margin-top:5px;border-radius:5px;background:var(--line)}.bar i{display:block;height:100%;border-radius:5px;background:var(--accent)}.bar i.high{background:var(--bad)}.bar u{position:absolute;top:-3px;width:2px;height:14px;background:var(--text)}
 .row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px solid var(--line)}.row:first-of-type{border-top:0}.row>div{min-width:0}.row small{display:block;color:var(--muted)}.pill{flex:none;padding:2px 9px;border-radius:99px;background:var(--soft);color:var(--accent);font-size:12px;font-weight:700}.pill.good{background:var(--goodbg);color:var(--good)}.pill.warn{background:var(--warnbg);color:var(--warn)}
 .log{max-height:240px;overflow:auto;font:12px/1.6 ui-monospace,Menlo,monospace;white-space:pre-wrap;overflow-wrap:anywhere}.log span{color:var(--muted);margin-right:8px}.empty{color:var(--muted);padding:6px 0}
-label.f{display:grid;gap:4px;margin-bottom:12px;font-weight:650;font-size:13px}label.f small{font-weight:400;color:var(--muted)}input[type=text],input[type=password],input[type=number],select{width:100%;padding:8px 30px 8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23667085' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") no-repeat right 10px center/12px 12px;color:var(--text);font:inherit;-webkit-appearance:none;appearance:none;text-overflow:ellipsis;cursor:pointer}input[type=range]{width:100%;accent-color:var(--accent)}.check{display:flex;gap:8px;align-items:center;padding:4px 0;font-weight:500}.ver{margin-top:auto;display:grid;gap:2px;padding:10px 11px 2px;color:#c7c9f0}.ver small{font-size:11.5px}.ver button{all:unset;cursor:pointer;margin-top:3px;font-size:11.5px;font-weight:700;color:#fff;text-decoration:underline}.ver a{margin-top:3px;font-size:11.5px;color:#c7c9f0}.ver button:focus-visible{outline:2px solid #fff;outline-offset:2px}.update{display:flex;align-items:center;justify-content:space-between;gap:12px;background:var(--soft);border-color:transparent}.update div{display:grid;min-width:0}.update span{color:var(--muted);font-size:13px}.update a.btn{border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:8px;padding:8px 13px;font-weight:650;text-decoration:none}.run-form h3{font-size:13px;margin:0 0 8px}.run-form textarea{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--text);font:inherit;resize:vertical}.run-btn{width:100%;padding:12px;font-size:15px}.pill.bad{background:var(--badbg);color:var(--bad)}.err{padding:9px 11px;border-radius:8px;background:var(--badbg);color:var(--bad);margin-bottom:12px;overflow-wrap:anywhere}.note{padding:9px 11px;border-radius:8px;background:var(--soft);font-size:13px;margin:10px 0}.code{font:700 20px ui-monospace,Menlo,monospace;letter-spacing:.06em}.steps{display:grid;gap:6px;margin:0 0 12px;padding:0;list-style:none}.steps li{display:flex;gap:8px;align-items:center}.steps i{width:20px;height:20px;border-radius:50%;display:grid;place-items:center;background:var(--line);font-style:normal;font-size:11px;font-weight:800}.steps li.ok i{background:var(--good);color:#fff}
+label.f{display:grid;gap:4px;margin-bottom:12px;font-weight:650;font-size:13px}label.f small{font-weight:400;color:var(--muted)}input[type=text],input[type=password],input[type=number],select{width:100%;padding:8px 30px 8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23667085' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") no-repeat right 10px center/12px 12px;color:var(--text);font:inherit;-webkit-appearance:none;appearance:none;text-overflow:ellipsis;cursor:pointer}input[type=range]{width:100%;accent-color:var(--accent)}.check{display:flex;gap:8px;align-items:center;padding:4px 0;font-weight:500}.check.proc{align-items:flex-start}.check.proc input{margin-top:3px}.check.proc small{display:block;color:var(--muted);font-weight:400;font-size:12px}.ver{margin-top:auto;display:grid;gap:2px;padding:10px 11px 2px;color:#c7c9f0}.ver small{font-size:11.5px}.ver button{all:unset;cursor:pointer;margin-top:3px;font-size:11.5px;font-weight:700;color:#fff;text-decoration:underline}.ver a{margin-top:3px;font-size:11.5px;color:#c7c9f0}.ver button:focus-visible{outline:2px solid #fff;outline-offset:2px}.update{display:flex;align-items:center;justify-content:space-between;gap:12px;background:var(--soft);border-color:transparent}.update div{display:grid;min-width:0}.update span{color:var(--muted);font-size:13px}.update a.btn{border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:8px;padding:8px 13px;font-weight:650;text-decoration:none}.run-form h3{font-size:13px;margin:0 0 8px}.run-form textarea{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--text);font:inherit;resize:vertical}.run-btn{width:100%;padding:12px;font-size:15px}.pill.bad{background:var(--badbg);color:var(--bad)}.err{padding:9px 11px;border-radius:8px;background:var(--badbg);color:var(--bad);margin-bottom:12px;overflow-wrap:anywhere}.note{padding:9px 11px;border-radius:8px;background:var(--soft);font-size:13px;margin:10px 0}.code{font:700 20px ui-monospace,Menlo,monospace;letter-spacing:.06em}.steps{display:grid;gap:6px;margin:0 0 12px;padding:0;list-style:none}.steps li{display:flex;gap:8px;align-items:center}.steps i{width:20px;height:20px;border-radius:50%;display:grid;place-items:center;background:var(--line);font-style:normal;font-size:11px;font-weight:800}.steps li.ok i{background:var(--good);color:#fff}
 .mode-pick{display:grid;gap:6px;margin:0 0 12px}.mode-pick .check{align-items:flex-start;padding:9px 10px;border:1px solid var(--line);border-radius:8px}.actions{display:flex;flex-wrap:wrap;gap:8px}.toggle{all:unset;flex:none;display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-size:12.5px;font-weight:700;color:var(--muted);min-width:86px;justify-content:flex-end}.toggle i{position:relative;width:34px;height:20px;border-radius:99px;background:var(--line);transition:background .15s}.toggle i:after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 1px 2px #0005;transition:left .15s}.toggle[aria-checked=true]{color:var(--good)}.toggle[aria-checked=true] i{background:var(--good)}.toggle[aria-checked=true] i:after{left:16px}.toggle:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:6px}.row.off b{color:var(--muted)}
 @media(max-width:680px){.app{display:block}nav{flex-direction:row;overflow-x:auto;padding:8px}.brand{display:none}nav button{flex:none}.ver{margin:0 0 0 auto;flex:none;display:flex;align-items:center;gap:8px;padding:0 6px}.ver small:first-child,.ver a{display:none}.update{flex-wrap:wrap}main{padding:16px}.grid{grid-template-columns:minmax(0,1fr)}.hero{flex-wrap:wrap}.hero .btn{width:100%}}
 </style></head><body><div class="app"><nav aria-label="Sections"><div class="brand">Open Questions AI</div><button data-v="home">Home</button><button data-v="limits">Usage limits</button><button data-v="danus">Prove new facts</button><button data-v="backup">Backups</button><button data-v="account">Accounts</button><div class=ver id=ver></div></nav><main id="m">Loading…</main></div>
@@ -4674,7 +4835,7 @@ const updateBanner=()=>{const u=S.update;if(!u?.available&&!u?.required)return''
 const versionBox=()=>{const u=S.update||{};const label=u.available?`Version ${u.latest} available`:u.error?'Check failed':u.checked_at?'Up to date':'Not checked yet';return`<small>Version ${e(S.version)}</small><small>${e(label)}</small><button data-a=updatecheck ${checking?'disabled':''}>${checking?'Checking…':'Check for updates'}</button><a href="https://github.com/LudovicPatey/projects" target=_blank rel="noopener noreferrer">Source code (AGPL-3.0)</a>`};
 const home=()=>`<h1>Home</h1><p class=sub>Your computer helps your research projects, within the limits you set.</p>${updateBanner()}${hero()}<div class=grid>${usage()}<section class=panel><h2>Your projects</h2>${S.projects.map(p=>`<div class="row ${p.paused?'off':''}"><div><b>${e(p.title)}</b><small>${p.unavailable?'Could not read its work queue':p.waiting+' waiting'}${p.review?' · '+p.review+' reference(s) to validate':''}</small></div><button class=toggle role=switch aria-checked=${!p.paused} aria-label="${e(p.title)}: ${p.paused?'paused':'active'}" data-pswitch=${p.id}>${p.paused?'Paused':'Active'}<i></i></button></div>`).join('')||'<div class=empty>No project yet.</div>'}</section></div><section class=panel style="margin-top:14px"><h2>Activity</h2><div class=log tabindex=0>${S.log.slice().reverse().map(x=>`<div><span>${e(x.at)}</span>${e(x.text)}</div>`).join('')||'<div class=empty>Nothing yet.</div>'}</div></section>`;
 const num=(k,l,h,min,max,unit)=>`<label class=f>${e(l)}<small>${e(h)}</small><input type=number data-l=${k} min=${min} max=${max} value="${e(draft[k])}"></label>`;
-let MD=null,MO={},MP=null;const modelTool=()=>MP||(S.provider==='codex'?'codex':'claude');const pickModel=(k,val,list)=>MO[k]?`<input type=text data-md=${k} placeholder="Exact model name" value="${e(val==='auto'?'':val)}">`:`<select data-msel=${k}>${[...list,...(list.some(o=>o.id===val)?[]:[{id:val,label:val}]),{id:'__other',label:'Other model…'}].map(o=>`<option value="${e(o.id)}" ${o.id===val?'selected':''}>${e(o.label)}</option>`).join('')}</select>`;const modelsPanel=()=>{const m=S.models;if(!m)return'';const p=modelTool(),c=m.choices[p]||{},v=k=>MD?.[k]??(c[k]||'auto'),hint=k=>m.auto[p]?.[k]||'your '+toolName(p)+' default';return`<section class=panel style="margin-bottom:14px"><h2>AI models</h2><p class=sub>Automatic follows new releases. A weaker model never repeats an extraction that a stronger one finished.</p><p class=actions role=group aria-label="AI tool">${[['claude','Claude'],['codex','ChatGPT']].map(([x,l])=>`<button class="btn ${x===p?'primary':''}" data-mp=${x} aria-pressed=${x===p}>${l}</button>`).join('')}</p><div class=grid>${[['extract','Extract facts'],['ask','Answer @AI'],['bib','Find references'],['review','Independent review'],['lean','Lean proofs'],['notation','Project notation'],['consolidate','Consolidate the facts'],['derive','Automatic proving']].map(([k,l])=>`<label class=f>${l}<small>Automatic: ${e(hint(k))}</small>${pickModel(k,v(k),m.suggest[p])}</label>`).join('')}<label class=f>Proof search (Prove new facts)<small>Automatic: ${e(m.danus_default)}</small>${pickModel('danus',MD?.danus??(m.danus||'auto'),m.suggest[m.danus_tool])}</label></div><p><button class=btn data-a=modelsave>Save models</button></p></section>`};const limits=()=>`<h1>Usage limits</h1><p class=sub>Keep your AI subscription for your own work. These limits apply to all your active projects together.</p>${modelsPanel()}<div class=grid><section class=panel><h2>Share of your subscription</h2><label class=f>Stop at this share of the session limit: ${draft.max_session_percent}%<small>ChatGPT reports this directly.</small><input type=range min=5 max=100 step=5 data-l=max_session_percent value="${draft.max_session_percent}"></label><label class=f>Stop at this share of the weekly limit: ${draft.max_weekly_percent}%<input type=range min=5 max=100 step=5 data-l=max_weekly_percent value="${draft.max_weekly_percent}"></label><label class=f>Working hours<small>For example 22-7 for nights. Empty means all day.</small><input type=text data-l=hours value="${e(draft.hours)}" placeholder="All day"></label></section><section class=panel><h2>Daily caps</h2>${num('tasks_per_day','Tasks per day','0 means no cap.',0,1000)}${num('minutes_per_day','Computing minutes per day','0 means no cap.',0,1440)}${num('tokens_per_day','Tokens per day','0 means no cap.',0,10000000000)}${num('task_minutes','Maximum minutes per task','A longer task is stopped.',1,720)}</section></div><section class=panel style="margin-top:14px"><h2>What this computer may do</h2>${[['extract','Extract facts from new files, and from references and conversations when a member asks'],['ask','Answer @AI questions'],['bib','Suggest references'],['review','Review facts independently, when a member asks'],['lean','Write and compile Lean proofs, when a member asks (needs Lean)'],['notation','Propose a common notation and rewrite facts in it, when a member asks'],['consolidate','Consolidate the facts database after extractions: duplicates, links, open questions, subject tags'],['derive','Prove new facts automatically, without pressing Start (uses more of your subscription)']].map(([k,l])=>`<label class=check><input type=checkbox data-k=${k} ${draft.kinds.includes(k)?'checked':''}> ${l}</label>`).join('')}<p><button class="btn primary" data-a=save>Save limits</button></p></section>${leanPanel()}`;const leanPanel=()=>{const l=S.lean||{},j=S.jobs.lean?.running;if(!l.available)return'';return`<section class=panel style="margin-top:14px"><h2>Lean proofs</h2><div class=row><div><b>${l.ready?'Lean '+e(l.version)+' is ready':j?'Installing Lean':'Not installed'}</b><small>${l.ready?'Proofs compile with no network and no access to your files.':'Needs about '+l.min_free_gb+' GB of free disk space, mostly for Mathlib.'}</small></div>${l.ready?'':`<button class=btn data-a=leansetup ${j?'disabled':''}>${j?'Installing…':'Install Lean'}</button>`}</div></section>`};
+let MD=null,MO={},MP=null;const modelTool=()=>MP||(S.provider==='codex'?'codex':'claude');const pickModel=(k,val,list)=>MO[k]?`<input type=text data-md=${k} placeholder="Exact model name" value="${e(val==='auto'?'':val)}">`:`<select data-msel=${k}>${[...list,...(list.some(o=>o.id===val)?[]:[{id:val,label:val}]),{id:'__other',label:'Other model…'}].map(o=>`<option value="${e(o.id)}" ${o.id===val?'selected':''}>${e(o.label)}</option>`).join('')}</select>`;const modelsPanel=()=>{const m=S.models;if(!m)return'';const p=modelTool(),c=m.choices[p]||{},v=k=>MD?.[k]??(c[k]||'auto'),hint=k=>m.auto[p]?.[k]||'your '+toolName(p)+' default';return`<section class=panel style="margin-bottom:14px"><h2>AI models</h2><p class=sub>Automatic follows new releases. A weaker model never repeats an extraction that a stronger one finished.</p><p class=actions role=group aria-label="AI tool">${[['claude','Claude'],['codex','ChatGPT']].map(([x,l])=>`<button class="btn ${x===p?'primary':''}" data-mp=${x} aria-pressed=${x===p}>${l}</button>`).join('')}</p><div class=grid>${[['extract','Extract facts'],['ask','Answer @AI'],['bib','Find references'],['review','Independent review'],['lean','Lean proofs'],['notation','Project notation'],['consolidate','Consolidate the facts'],['derive','Automatic proving'],...(m.procedures||[]).map(x=>[x.id,x.label])].map(([k,l])=>`<label class=f>${l}<small>Automatic: ${e(hint(k))}</small>${pickModel(k,v(k),m.suggest[p])}</label>`).join('')}<label class=f>Proof search (Prove new facts)<small>Automatic: ${e(m.danus_default)}</small>${pickModel('danus',MD?.danus??(m.danus||'auto'),m.suggest[m.danus_tool])}</label></div><p><button class=btn data-a=modelsave>Save models</button></p></section>`};const limits=()=>`<h1>Usage limits</h1><p class=sub>Keep your AI subscription for your own work. These limits apply to all your active projects together.</p>${modelsPanel()}<div class=grid><section class=panel><h2>Share of your subscription</h2><label class=f>Stop at this share of the session limit: ${draft.max_session_percent}%<small>ChatGPT reports this directly.</small><input type=range min=5 max=100 step=5 data-l=max_session_percent value="${draft.max_session_percent}"></label><label class=f>Stop at this share of the weekly limit: ${draft.max_weekly_percent}%<input type=range min=5 max=100 step=5 data-l=max_weekly_percent value="${draft.max_weekly_percent}"></label><label class=f>Working hours<small>For example 22-7 for nights. Empty means all day.</small><input type=text data-l=hours value="${e(draft.hours)}" placeholder="All day"></label></section><section class=panel><h2>Daily caps</h2>${num('tasks_per_day','Tasks per day','0 means no cap.',0,1000)}${num('minutes_per_day','Computing minutes per day','0 means no cap.',0,1440)}${num('tokens_per_day','Tokens per day','0 means no cap.',0,10000000000)}${num('task_minutes','Maximum minutes per task','A longer task is stopped.',1,720)}</section></div><section class=panel style="margin-top:14px"><h2>What this computer may do</h2>${[['extract','Extract facts from new files, and from references and conversations when a member asks'],['ask','Answer @AI questions'],['bib','Suggest references'],['review','Review facts independently, when a member asks'],['lean','Write and compile Lean proofs, when a member asks (needs Lean)'],['notation','Propose a common notation and rewrite facts in it, when a member asks'],['consolidate','Consolidate the facts database after extractions: duplicates, links, open questions, subject tags'],['derive','Prove new facts automatically, without pressing Start (uses more of your subscription)']].map(([k,l])=>`<label class=check><input type=checkbox data-k=${k} ${draft.kinds.includes(k)?'checked':''}> ${l}</label>`).join('')}${procPanel()}<p><button class="btn primary" data-a=save>Save limits</button></p></section>${leanPanel()}`;const procPanel=()=>{const P=S.procedures||[],on=x=>(draft.procedures||{})[x.id]??draft.auto_procedures;return`${P.length?`<p style="margin:14px 0 4px"><b>Added by the platform</b></p><p class=sub>Reasoning only: the model reads the task and answers, with no access to your files. Each one stays off until you turn it on.</p>`:''}${P.map(x=>`<label class="check proc"><input type=checkbox data-pk="${e(x.id)}" ${on(x)&&x.runnable?'checked':''} ${x.runnable?'':'disabled'}><span>${e(x.label)}<small>${e(x.description)}${x.capabilities.includes('web_search')?' Searches the web.':''}${x.runnable?'':' Needs a newer client.'}</small></span></label>`).join('')}<label class=check><input type=checkbox data-autop ${draft.auto_procedures?'checked':''}> Turn on new kinds of work when the platform adds them</label>`};const leanPanel=()=>{const l=S.lean||{},j=S.jobs.lean?.running;if(!l.available)return'';return`<section class=panel style="margin-top:14px"><h2>Lean proofs</h2><div class=row><div><b>${l.ready?'Lean '+e(l.version)+' is ready':j?'Installing Lean':'Not installed'}</b><small>${l.ready?'Proofs compile with no network and no access to your files.':'Needs about '+l.min_free_gb+' GB of free disk space, mostly for Mathlib.'}</small></div>${l.ready?'':`<button class=btn data-a=leansetup ${j?'disabled':''}>${j?'Installing…':'Install Lean'}</button>`}</div></section>`};
 const account=()=>{const t=n=>{const x=S.tools[n],j=S.jobs['install-'+n]?.running,g=S.jobs['login-'+n]?.running;return`<div class=row><div><b>${toolName(n)}</b><small>${x.installed?(x.signed_in?'Installed and signed in':'Installed, sign-in needed'):'Not installed'}${x.via_app?' · from Claude for Mac':''}</small></div>${!x.installed?`<button class=btn data-tool=install data-n=${n} ${j?'disabled':''}>${j?'Installing…':'Install'}</button>`:!x.signed_in?`<button class="btn primary" data-tool=login data-n=${n} ${g?'disabled':''}>${g?'Check your browser…':'Sign in'}</button>`:`<button class=btn data-use=${n} ${S.provider===n?'disabled':''}>${S.provider===n?'In use':'Use this'}</button>`}</div>`};
  return`<h1>Accounts</h1><p class=sub>The app uses your own AI account, on this computer.</p><section class=panel><h2>1. Choose your AI</h2>${t('claude')}${t('codex')}</section><section class=panel><h2>2. Connect to the platform</h2>${S.connected?`<div class=row><div><b>Connected</b><small>${e(S.url)}</small></div><button class="btn danger" data-a=disconnect>Disconnect</button></div>`:`<label class=f>Platform address<input type=text id=url data-c=url value="${e(CF.url??(S.url||'https://projects.ludovicpatey.com'))}"></label><label class=f>Personal key<small>Create it on your profile page on the platform, then paste it here.</small><input type=password id=key data-c=key autocomplete=off placeholder="ouk_…" value="${e(CF.key||'')}"></label>${connectErr||S.error?`<div class=err id=cerr role=alert>${e(connectErr||S.error)}</div>`:''}<button class="btn primary" data-a=connect ${connecting?'disabled':''}>${connecting?'Connecting…':'Connect'}</button>`}</section><section class=panel><h2>3. How AI use is paid</h2><label class=check><input type=radio name=billing data-billing=subscription ${S.limits.ai_billing==='subscription'?'checked':''}> <span><b>My subscription only</b> (recommended). API keys on this computer are ignored.</span></label><label class=check><input type=radio name=billing data-billing=api ${S.limits.ai_billing==='api'?'checked':''}> <span><b>Allow a paid API key.</b> The provider charges each use.</span></label><div class=note>If you turned on <b>usage credits</b> in your Claude settings, background work can spend them after your plan limit. Keep them off, or set a monthly cap.</div></section>`};
 const fmtMin=m=>{m=Math.round(m);return m>=60?`${Math.floor(m/60)} h ${String(m%60).padStart(2,'0')}`:`${m} min`};
@@ -4698,7 +4859,7 @@ const backup=()=>{const b=S.backup,s=b.settings,j=S.jobs.backup;BD=BD||{...s};co
 const render=()=>{if(pressing)return;const a=document.activeElement;if(a&&['INPUT','SELECT','TEXTAREA'].includes(a.tagName)&&view!=='home')return;for(const b of document.querySelectorAll('nav button')){b.classList.toggle('on',b.dataset.v===view);b.setAttribute('aria-current',b.dataset.v===view?'page':'false')}document.getElementById('ver').innerHTML=versionBox();const m=document.getElementById('m');const sc=m.querySelector('.log')?.scrollTop;m.innerHTML=(msg?`<div class=err role=alert>${e(msg)}</div>`:'')+{home,limits,danus,backup,account}[view]();if(sc)m.querySelector('.log').scrollTop=sc};
 document.addEventListener('click',ev=>{const b=ev.target.closest('button');if(!b)return;if(b.dataset.v){view=b.dataset.v;msg='';draft={...S.limits};BD=null;return render()}if(b.dataset.go){view=b.dataset.go;return render()}if(b.dataset.pswitch){const q=S.projects.find(p=>p.id===+b.dataset.pswitch);return call('/api/project/pause',{project_id:q.id,paused:!q.paused})}if(b.dataset.tool)return call('/api/tool/'+b.dataset.tool,{tool:b.dataset.n});if(b.dataset.use)return call('/api/limits',{}).then(()=>call('/api/start',{provider:b.dataset.use}));const x=b.dataset.a;if(x==='start')call('/api/start',{provider:S.provider});if(x==='stop')call('/api/stop');if(x==='disconnect'&&confirm('Disconnect this computer?'))call('/api/disconnect');if(x==='connect'&&!connecting){CF={url:document.getElementById('url').value,key:document.getElementById('key').value};connecting=true;connectErr='';render();call('/api/connect',CF).then(()=>{connecting=false;if(msg){connectErr=msg;msg=''}else{CF={};connectErr=''}render();document.getElementById('cerr')?.scrollIntoView({block:'center'})})}if(x==='save'){const{paused,...rest}=draft;document.activeElement?.blur();call('/api/limits',rest).then(()=>{if(!msg)draft={...S.limits}})}if(x==='updatecheck'){checking=true;render();call('/api/update/check').finally(()=>{checking=false;render()})}if(x==='updateapply'&&confirm('Install version '+S.update.latest+' now? The client restarts.')){updating=true;render();call('/api/update/apply').finally(()=>{setTimeout(()=>{updating=false;load()},2500)})}if(x==='backupnow')call('/api/backup/run');if(x==='backupopen')call('/api/backup/open');if(x==='backupsave'){document.activeElement?.blur();call('/api/backup/settings',BD).then(()=>{if(!msg){BD=null;render()}})}if(x==='danus')call('/api/danus/setup');if(x==='danusmode'){const m=S.danus.mode==='native'?'isolated':'native';if(m==='isolated'||confirm(NATIVE_WARNING))call('/api/danus/mode',{mode:m,accept:m==='native'})}if(x==='danusremoveiso'&&confirm('Remove the isolated machine and free its disk space?'))call('/api/danus/remove',{mode:'isolated'});if(x==='danusstop'&&confirm('Stop the proof search now? Its facts so far are kept.'))call('/api/danus/stop');if(x==='danusrun'){document.activeElement?.blur();const g=R.goal||'',b={project_id:R.project_id,prompt:R.prompt,minutes:R.minutes,stop_session:R.stop_session,stop_weekly:R.stop_weekly,on_limit:R.on_limit,workers:R.workers,task_id:g[0]==='t'?+g.slice(1):null,question_id:g[0]==='q'?+g.slice(1):null};if(R.on_limit==='resume'&&!R.minutes&&!confirm('This run continues after every reset until you stop it. Start it?'))return;call('/api/danus/run',b).then(()=>{if(!msg)O={}})}if(x==='danusremove'&&confirm('Remove the prover and its isolated machine?'))call('/api/danus/remove')});
 document.addEventListener('pointerdown',()=>{pressing=true});for(const n of ['pointerup','pointercancel'])document.addEventListener(n,()=>setTimeout(()=>{pressing=false},0));document.addEventListener('input',ev=>{const t=ev.target;if(t.dataset.c){CF[t.dataset.c]=t.value;connectErr=''}if(t.dataset.b&&BD){const k=t.dataset.b;BD[k]=k==='enabled'?t.checked:k==='folder'?t.value:+t.value;if(t.type==='checkbox'||t.tagName==='SELECT')t.blur()}if(t.dataset.l){draft[t.dataset.l]=t.type==='text'?t.value:+t.value;if(t.type==='range'){t.closest('label').firstChild.textContent=t.closest('label').firstChild.textContent.replace(/\d+%/,t.value+'%')}}if(t.dataset.k){draft.kinds=[...document.querySelectorAll('[data-k]')].filter(x=>x.checked).map(x=>x.dataset.k)}if('danus'in t.dataset)draft.danus_enabled=t.checked;if(t.dataset.r&&R){const k=t.dataset.r;R[k]=['goal','prompt','on_limit'].includes(k)?t.value:+t.value;if(k==='project_id'){R.goal='';t.blur();options();render()}const set=(i,v)=>{const x=document.getElementById(i);if(x)x.textContent=v};if(k==='workers')set('rw',t.value);if(k==='stop_session')set('rs',t.value);if(k==='stop_weekly')set('rk',t.value);const n=document.getElementById('runsum');if(n)n.innerHTML=runSummary(R.minutes?fmtMin(R.minutes):'no time limit')}});
-document.addEventListener('click',ev=>{if(ev.target.closest('button')?.dataset.a==='leansetup'&&confirm('Download Lean and Mathlib? This uses about '+(S.lean?.min_free_gb||10)+' GB of disk space.'))call('/api/lean/setup')});document.addEventListener('click',ev=>{const x=ev.target.closest('button')?.dataset.mp;if(x){MP=x;MD=null;MO={};render()}});document.addEventListener('input',ev=>{const k=ev.target.dataset?.md;if(k)MD={...(MD||{}),[k]:ev.target.value}});document.addEventListener('click',ev=>{if(ev.target.closest('button')?.dataset.a!=='modelsave')return;document.activeElement?.blur();const p=modelTool(),{danus,...edits}=MD||{};call('/api/models',{provider:p,choices:{...(S.models.choices[p]||{}),...edits},...(danus===undefined?{}:{danus})}).then(()=>{if(!msg){MD=null;MO={};render()}})});document.addEventListener('change',ev=>{const ms=ev.target.dataset?.msel;if(ms){const val=ev.target.value;ev.target.blur();if(val==='__other'){MO={...MO,[ms]:1};MD={...(MD||{}),[ms]:''}}else MD={...(MD||{}),[ms]:val};return render()}const en=ev.target.dataset?.dengine;if(en){ev.target.blur();if(en==='claude'&&!confirm(CLAUDE_WARNING))return load();return call('/api/danus/engine',{engine:en,accept:en==='claude'})}const dm=ev.target.dataset?.dmode;if(dm){ev.target.blur();if(dm==='native'&&!confirm(NATIVE_WARNING))return load();return call('/api/danus/mode',{mode:dm,accept:dm==='native'})}const b=ev.target.dataset?.billing;if(!b)return;ev.target.blur();if(b==='api'&&!confirm('Allow a paid API key? The AI provider will charge each use to that key.'))return load();call('/api/limits',{ai_billing:b}).then(()=>{if(!msg)draft={...S.limits}})});
+document.addEventListener('change',ev=>{const t=ev.target,d=t.dataset||{};if(d.pk)draft.procedures={...(draft.procedures||{}),[d.pk]:t.checked};if('autop'in d)draft.auto_procedures=t.checked});document.addEventListener('click',ev=>{if(ev.target.closest('button')?.dataset.a==='leansetup'&&confirm('Download Lean and Mathlib? This uses about '+(S.lean?.min_free_gb||10)+' GB of disk space.'))call('/api/lean/setup')});document.addEventListener('click',ev=>{const x=ev.target.closest('button')?.dataset.mp;if(x){MP=x;MD=null;MO={};render()}});document.addEventListener('input',ev=>{const k=ev.target.dataset?.md;if(k)MD={...(MD||{}),[k]:ev.target.value}});document.addEventListener('click',ev=>{if(ev.target.closest('button')?.dataset.a!=='modelsave')return;document.activeElement?.blur();const p=modelTool(),{danus,...edits}=MD||{};call('/api/models',{provider:p,choices:{...(S.models.choices[p]||{}),...edits},...(danus===undefined?{}:{danus})}).then(()=>{if(!msg){MD=null;MO={};render()}})});document.addEventListener('change',ev=>{const ms=ev.target.dataset?.msel;if(ms){const val=ev.target.value;ev.target.blur();if(val==='__other'){MO={...MO,[ms]:1};MD={...(MD||{}),[ms]:''}}else MD={...(MD||{}),[ms]:val};return render()}const en=ev.target.dataset?.dengine;if(en){ev.target.blur();if(en==='claude'&&!confirm(CLAUDE_WARNING))return load();return call('/api/danus/engine',{engine:en,accept:en==='claude'})}const dm=ev.target.dataset?.dmode;if(dm){ev.target.blur();if(dm==='native'&&!confirm(NATIVE_WARNING))return load();return call('/api/danus/mode',{mode:dm,accept:dm==='native'})}const b=ev.target.dataset?.billing;if(!b)return;ev.target.blur();if(b==='api'&&!confirm('Allow a paid API key? The AI provider will charge each use to that key.'))return load();call('/api/limits',{ai_billing:b}).then(()=>{if(!msg)draft={...S.limits}})});
 load();setInterval(()=>{if(!document.hidden)load()},3000);
 </script></body></html>
 '''
