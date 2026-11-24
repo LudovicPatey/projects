@@ -164,6 +164,8 @@ final class Db
         $migrations[] = 'ALTER TABLE ai_tasks ADD COLUMN comments_hash CHAR(40) NULL';
         $migrations[] = 'ALTER TABLE fact_sources ADD COLUMN comment_role VARCHAR(10) NULL';
         $migrations[] = 'ALTER TABLE ai_tasks ADD COLUMN snapshot_json TEXT NULL';
+        $migrations[] = 'ALTER TABLE ai_tasks ADD COLUMN started_at DATETIME NULL';
+        $migrations[] = 'ALTER TABLE ai_clients ADD COLUMN version VARCHAR(20) NULL';
         foreach ($migrations as $m) {
             try { self::pdo()->exec($m); } catch (\PDOException) { /* already applied */ }
         }

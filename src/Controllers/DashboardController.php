@@ -41,6 +41,7 @@ final class DashboardController
             'actions' => self::actions($pid, $me, $questions, $facts),
             'activity' => self::activity($pid, $me),
             'people' => self::people($pid),
+            'ai_time' => AiTaskController::computeSummary($pid),
         ]);
     }
 
@@ -184,9 +185,10 @@ final class DashboardController
         $strategies = $count('SELECT r.author_id AS uid, COUNT(DISTINCT r.strategy_id) AS n FROM strategy_revisions r JOIN proof_strategies s ON s.id = r.strategy_id WHERE s.project_id = ? AND s.deleted_at IS NULL GROUP BY r.author_id');
         $files = $count('SELECT created_by AS uid, COUNT(*) AS n FROM documents WHERE project_id = ? AND deleted_at IS NULL GROUP BY created_by');
         $out = [];
+        $online = AiTaskController::onlineMembers($pid);
         foreach (ProjectController::members($pid) as $m) {
             $id = (int)$m['id'];
-            $out[$id] = ['facts' => (int)($facts[$id] ?? 0), 'reviews' => (int)($reviews[$id] ?? 0), 'questions' => (int)($questions[$id] ?? 0),
+            $out[$id] = ['ai_online' => in_array($id, $online, true), 'facts' => (int)($facts[$id] ?? 0), 'reviews' => (int)($reviews[$id] ?? 0), 'questions' => (int)($questions[$id] ?? 0),
                 'strategies' => (int)($strategies[$id] ?? 0), 'files' => (int)($files[$id] ?? 0)];
         }
         return $out ?: [];

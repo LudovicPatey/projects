@@ -528,6 +528,7 @@ CREATE TABLE IF NOT EXISTS ai_tasks (
   lease_until DATETIME NULL,
   claimed_by INT UNSIGNED NULL,
   client_name VARCHAR(80) NULL,
+  started_at DATETIME NULL,               -- when the current attempt was claimed
   ai_model VARCHAR(120) NULL,
   ai_user_id INT UNSIGNED NULL,
   ai_generation_ms INT UNSIGNED NULL,
@@ -550,6 +551,7 @@ CREATE TABLE IF NOT EXISTS ai_clients (
   user_id INT UNSIGNED NOT NULL,
   name VARCHAR(80) NOT NULL,
   ai_model VARCHAR(120) NULL,
+  version VARCHAR(20) NULL,               -- client release, from its User-Agent
   last_seen_at DATETIME NOT NULL,
   UNIQUE KEY uq_ai_client (user_id, name),
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE

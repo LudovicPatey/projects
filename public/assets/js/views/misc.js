@@ -1,6 +1,7 @@
 import { api } from '../api.js';
 import { store, go, link, attempt, toast, refreshProject, refreshMentionables, refreshCounters, markRead, markAllRead } from '../store.js';
 import { timeAgo, fullDate } from '../util.js';
+import { aiTimeSummary, computeTime } from '../ai-model.js';
 import { FACT_SEGMENTS, PROOF_SEGMENTS, QUESTION_SEGMENTS, STRATEGY_SEGMENTS, dashboardComponents } from '../dashboard.js';
 
 const first = (r) => (Array.isArray(r) ? r[0] : r);
@@ -32,7 +33,7 @@ export const ProjectsView = {
           <div><h3><math-text :text="p.title"/></h3><div class="pc-tags"><pill :status="p.status === 'solved' ? 'solved_project' : p.status"/><span class="pill t-neutral">{{ p.role === 'owner' ? 'Owner' : 'Member' }}</span></div></div></div>
         <p class="pc-text"><math-text :text="p.question_text || 'No statement yet.'"/></p>
         <div class="pc-progress"><div><span>Questions settled</span><b>{{ p.counts.settled }}/{{ p.counts.questions }}</b></div><i><span :style="{width: (p.counts.questions ? 100 * p.counts.settled / p.counts.questions : 0) + '%'}"></span></i></div>
-        <div class="pc-stats"><span title="Facts"><icon name="graph" :size="14"/> {{ p.counts.facts }}</span><span title="Files"><icon name="files" :size="14"/> {{ p.counts.files }}</span><span title="References"><icon name="book" :size="14"/> {{ p.counts.references }}</span>
+        <div class="pc-stats"><span title="Facts"><icon name="graph" :size="14"/> {{ p.counts.facts }}</span><span title="Files"><icon name="files" :size="14"/> {{ p.counts.files }}</span><span title="References"><icon name="book" :size="14"/> {{ p.counts.references }}</span><span v-if="p.ai_time" :title="'AI computing: ' + aiTimeSummary(p.ai_time)"><icon name="clock" :size="14"/> {{ computeTime(p.ai_time.standard.ms + p.ai_time.proving.ms) }}</span>
           <span class="grow"></span><span class="stack-av"><avatar v-for="u in p.people" :key="u.id" :name="u.name" :id="u.id" :kind="u.kind" :size="24"/></span></div>
         <footer>Updated {{ timeAgo(p.updated_at) }} · {{ p.members }} {{ p.members === 1 ? 'member' : 'members' }}</footer>
       </a>
@@ -54,7 +55,7 @@ export const ProjectsView = {
     summary() { const n = this.totals.unread; return n ? `${n} new ${n === 1 ? 'item awaits' : 'items await'} you across your projects.` : 'You are up to date across your projects.'; },
   },
   methods: {
-    timeAgo,
+    timeAgo, computeTime, aiTimeSummary,
     initials(t) { return String(t).split(/[\s–—-]+/u).filter((w) => w.length > 2 && !['the', 'and', 'for', 'with'].includes(w.toLowerCase())).slice(0, 2).map((w) => w[0].toUpperCase()).join('') || '?'; },
     tint(id) { return ['#4338ca', '#0f766e', '#7c3aed', '#b45309', '#0369a1', '#be185d'][id % 6]; },
     async create() {
@@ -109,6 +110,7 @@ export const OverviewView = {
       <kpi icon="files" :value="d.files.total" label="Files" :sub="d.files.human + ' human, ' + d.files.ai + ' AI'" :href="link('files')" tone="violet"/>
       <kpi icon="book" :value="d.bib.total" label="References" :sub="d.bib.with_pdf + ' with PDF'" :href="link('bib')" tone="amber"/>
       <kpi icon="mail" :value="d.conversations.total" label="Conversations" :sub="d.conversations.messages + ' messages'" :href="link('conversations')" tone="blue"/>
+      <kpi icon="clock" :value="computeTime(d.ai_time.standard.ms + d.ai_time.proving.ms)" label="AI computing" :sub="aiTimeSummary(d.ai_time)" :href="link('ai')"/>
     </div>
     <div class="dash">
       <div class="dash-col">
@@ -129,6 +131,7 @@ export const OverviewView = {
         <section class="panel"><header><h2><icon name="history" :size="15"/> Recent activity</h2></header><activity-feed :items="d.activity"/></section>
         <section class="panel"><header><h2><icon name="users" :size="15"/> Team</h2><a :href="link('members')">People ›</a></header>
           <a v-for="m in people" :key="m.id" class="team-row" :href="link('members', null, {user: m.id})"><avatar :name="m.name" :id="m.id" :kind="m.kind" :size="32"/><span><b>{{ m.name }}</b><small>{{ m.kind === 'agent' ? (m.ai_model || 'AI agent') : (m.role === 'owner' ? 'Owner' : 'Member') }}</small></span>
+            <span v-if="m.c.ai_online" class="team-ai" title="Their AI client is running"><icon name="sparkles" :size="11"/> AI on</span>
             <span class="team-n" title="Facts entered and reviews"><icon name="graph" :size="12"/> {{ (m.c.facts || 0) + (m.c.reviews || 0) }}</span></a></section>
         <section class="panel"><header><h2><icon name="files" :size="15"/> Recent files</h2><a :href="link('files')">All files ›</a></header>
           <a v-for="f in d.files.recent" :key="f.id" class="d-row" :href="link('files', f.id)"><origin-badge :origin="f.origin"/><span class="d-title">{{ f.title }}</span><small>{{ timeAgo(f.updated_at) }}</small></a>
@@ -139,7 +142,7 @@ export const OverviewView = {
     <div v-else class="placeholder">Loading…</div>
   </div>`,
   methods: {
-    timeAgo, link,
+    timeAgo, link, computeTime, aiTimeSummary,
     async load() { try { this.d = await api.get(`api/projects/${this.p.id}/dashboard`); } catch (e) { toast(e.message, 'error'); } },
     preparing() { toast('Preparing your copy. The download starts when it is ready.'); },
     startEdit() { this.title = this.p.title; this.editing = true; },

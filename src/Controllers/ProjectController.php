@@ -25,6 +25,7 @@ final class ProjectController
                 'files' => (int)Db::value('SELECT COUNT(*) FROM documents WHERE project_id = ? AND deleted_at IS NULL', [$id]),
                 'references' => (int)Db::value('SELECT COUNT(*) FROM bib_entries WHERE project_id = ?', [$id]),
             ];
+            $p['ai_time'] = AiTaskController::computeSummary($id);
             $p['people'] = Db::all('SELECT u.id, u.name, u.kind FROM project_members m JOIN users u ON u.id = m.user_id WHERE m.project_id = ? ORDER BY m.joined_at, u.id LIMIT 5', [$id]);
         }
         unset($p);

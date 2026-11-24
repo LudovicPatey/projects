@@ -51,7 +51,7 @@ import webbrowser
 import zipfile
 import zlib
 
-VERSION = "1.9.0"
+VERSION = "1.9.1"
 API_LEVEL = 1  # raise with the server's AiTaskController::API_LEVEL when a client needs new server features
 GITHUB_REPO = "LudovicPatey/projects"
 KINDS = ["extract", "ask", "bib", "derive", "review", "lean"]
@@ -3103,7 +3103,7 @@ class DanusRun:
             summary = f"Proof search: {len(facts)} new fact(s) in {round(s.get('active_seconds', 0) / 60)} min. Stopped at {reason}."[:1000]
             try:
                 if status == "failed" and not facts:
-                    api.post(url + "/fail", {"lease": s["lease"], "error": reason[:900], "final": True})
+                    api.post(url + "/fail", {"lease": s["lease"], "error": reason[:900], "final": True, "generation_seconds": round(s.get("active_seconds", 0), 3)})
                 else:
                     api.post(url + "/complete", {"lease": s["lease"], "ai_model": s["model"], "generation_seconds": round(s.get("active_seconds", 0), 3), "fact_ids": facts, "summary": summary})
             except ApiError as e:

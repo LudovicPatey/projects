@@ -93,6 +93,42 @@ export const EXTRACTION_LABEL = {
   done: 'facts extracted', comments: 'new comments', queued: 'extraction queued', failed: 'extraction failed',
 };
 
+export const CLIENT_PERIODS = [['d7', '7 days'], ['d30', '30 days'], ['all', 'All time']];
+
+/** Computing time, short: 45 s, 12 min, 3 h 05 min. A dash when nothing was measured. */
+export function computeTime(ms) {
+  const n = Math.round(+ms || 0);
+  if (n <= 0) return '—';
+  if (n < 60000) return `${Math.max(1, Math.round(n / 1000))} s`;
+  if (n < 3600000) return `${Math.round(n / 60000)} min`;
+  return `${Math.floor(n / 3600000)} h ${String(Math.round(n / 60000) % 60).padStart(2, '0')} min`;
+}
+
+/** One line on a project's computing time: what went to standard work and to proving new facts. */
+export function aiTimeSummary(t) {
+  const s = t?.standard || { ms: 0 }; const p = t?.proving || { ms: 0, facts: 0 };
+  if (!s.ms && !p.ms) return 'No AI computing yet';
+  return `${computeTime(s.ms)} standard · ${computeTime(p.ms)} proving, ${p.facts} new fact${p.facts === 1 ? '' : 's'}`;
+}
+
+/** What a client is doing now. */
+export function clientStatus(c, now = Date.now()) {
+  if (c.working) {
+    const start = c.working.started_at ? Date.parse(c.working.started_at.replace(' ', 'T') + 'Z') : NaN;
+    const what = c.working.private ? 'a task in a private conversation' : `${AI_KINDS[c.working.kind]?.short || 'a task'}${c.working.subject ? ': ' + c.working.subject : ''}`;
+    return { tone: 'info', label: 'Working', text: `Working on ${what}`, since: Number.isFinite(start) ? computeTime(Math.max(0, now - start)) : null };
+  }
+  if (c.online) return { tone: 'good', label: 'Online', text: 'Online, waiting for work' };
+  return { tone: 'off', label: 'Offline', text: c.last_seen_at ? 'Offline' : 'Not seen since this page started tracking it' };
+}
+
+/** Computing time per kind of work, largest first, with its share of the period. */
+export function timeByKind(byKind) {
+  const rows = Object.entries(byKind || {}).map(([kind, v]) => ({ kind, label: AI_KINDS[kind]?.short || kind, n: v.n, ms: v.ms }));
+  const total = rows.reduce((s, r) => s + r.ms, 0);
+  return rows.sort((a, b) => b.ms - a.ms).map((r) => ({ ...r, share: total ? Math.round((r.ms / total) * 100) : 0 }));
+}
+
 /** What the Ask AI button adds to a draft, so that everyone sees that the AI was asked. */
 export function askAiPrefix(text) {
   const t = String(text || '').trim();

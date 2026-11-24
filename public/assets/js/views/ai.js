@@ -2,13 +2,13 @@ import { api } from '../api.js';
 import { store, link, attempt, refreshCounters, toast } from '../store.js';
 import { timeAgo, fullDate } from '../util.js';
 import { Pill, Kpi, StackBar } from '../dashboard.js';
-import { bibProgress, privateExtractionNotice, AI_KINDS, TASK_SEGMENTS, TASK_STATUS, filterTasks, requestBody, requestError, resultLinks, suggestionLink, taskActions, taskTitle } from '../ai-model.js';
+import { bibProgress, privateExtractionNotice, clientStatus, computeTime, timeByKind, CLIENT_PERIODS, AI_KINDS, TASK_SEGMENTS, TASK_STATUS, filterTasks, requestBody, requestError, resultLinks, suggestionLink, taskActions, taskTitle } from '../ai-model.js';
 
 export const AiView = {
   components: { Pill, Kpi, StackBar },
   props: { pid: Number, id: Number, query: Object },
   data() {
-    return { d: null, filter: 'all', draft: { kind: 'bib', prompt: '', document: '', question: '', fact: '' }, documents: [], references: [], conversations: [], questions: [], facts: [], busy: false, timer: null, bibData: null };
+    return { d: null, filter: 'all', period: 'd7', draft: { kind: 'bib', prompt: '', document: '', question: '', fact: '' }, documents: [], references: [], conversations: [], questions: [], facts: [], busy: false, timer: null, bibData: null };
   },
   computed: {
     tasks() { return filterTasks(this.d?.tasks || [], this.filter); },
@@ -19,9 +19,13 @@ export const AiView = {
     online() { return this.d?.clients || []; },
     actions() { return this.task ? taskActions(this.task, { me: store.user.id, owner: store.project?.my_role === 'owner' }) : {}; },
     bib() { return bibProgress(this.bibData); },
+    computers() { return this.d?.computers?.clients || []; },
+    totals() { return this.d?.computers?.totals?.[this.period] || { done: 0, failed: 0, ms: 0, by_kind: {}, groups: null }; },
+    groups() { const z = { done: 0, failed: 0, ms: 0, facts: 0 }; return { standard: z, proving: z, ...(this.totals.groups || {}) }; },
+    kindTimes() { return timeByKind(this.totals.by_kind); },
     open() { return (this.d?.counts.pending || 0) + (this.d?.counts.running || 0); },
   },
-  created() { this.kinds = AI_KINDS; this.statuses = TASK_STATUS; this.segments = TASK_SEGMENTS; },
+  created() { this.kinds = AI_KINDS; this.periods = CLIENT_PERIODS; this.statuses = TASK_STATUS; this.segments = TASK_SEGMENTS; },
   async mounted() {
     await this.load();
     const [docs, qs, bib, facts, convs] = await Promise.all([attempt(() => api.get(`api/projects/${this.pid}/documents`)), attempt(() => api.get(`api/projects/${this.pid}/questions`)), attempt(() => api.get(`api/projects/${this.pid}/bib`)), attempt(() => api.get(`api/projects/${this.pid}/facts`)), attempt(() => api.get(`api/projects/${this.pid}/conversations`))]);
@@ -38,7 +42,7 @@ export const AiView = {
     'query.suggestion': { handler() { this.reveal(); } },
   },
   methods: {
-    link, timeAgo, fullDate, taskTitle, resultLinks, suggestionLink,
+    link, timeAgo, fullDate, taskTitle, resultLinks, suggestionLink, clientStatus, computeTime,
     async load() {
       const r = await attempt(() => api.get(`api/projects/${this.pid}/ai`));
       if (r) { this.d = r; this.$nextTick(() => this.reveal()); }
@@ -47,6 +51,7 @@ export const AiView = {
       const id = this.query?.suggestion;
       if (id) this.$el?.querySelector?.(`[data-suggestion="${id}"]`)?.scrollIntoView({ block: 'center' });
     },
+    share(ms) { return this.totals.ms ? Math.round((100 * ms) / this.totals.ms) : 0; },
     resultHref(x) { return link(x.view, x.id, x.query || null); },
     async send() {
       if (this.error || this.busy) return;
@@ -90,6 +95,31 @@ export const AiView = {
       </div>
       <div class="ai-grid">
         <div class="ai-main">
+          <section class="panel" id="ai-clients">
+            <header class="ai-head"><h2><icon name="clock" :size="15"/> AI clients</h2>
+              <div class="seg small" role="group" aria-label="Period"><button v-for="p in periods" :key="p[0]" :class="{on: period === p[0]}" :aria-pressed="period === p[0]" @click="period = p[0]">{{ p[1] }}</button></div></header>
+            <div class="ai-compute">
+              <div><b>{{ computeTime(totals.ms) }}</b><small>computing in all</small></div>
+              <div><b>{{ computeTime(groups.standard.ms) }}</b><small><i class="ai-swatch is-standard" aria-hidden="true"></i>standard tasks · {{ groups.standard.done }} done</small></div>
+              <div><b>{{ computeTime(groups.proving.ms) }}</b><small><i class="ai-swatch is-proving" aria-hidden="true"></i>proving new facts · {{ groups.proving.facts }} fact{{ groups.proving.facts === 1 ? '' : 's' }}</small></div>
+              <div><b>{{ computers.filter((c) => c.online).length }}</b><small>online now</small></div>
+            </div>
+            <div v-if="totals.ms" class="ai-split" role="img" :aria-label="'Standard tasks ' + share(groups.standard.ms) + '%, proving new facts ' + share(groups.proving.ms) + '%'"><span class="is-standard" :style="{width: share(groups.standard.ms) + '%'}"></span><span class="is-proving" :style="{width: share(groups.proving.ms) + '%'}"></span></div>
+            <p v-if="kindTimes.length" class="ai-kind-times"><span v-for="k in kindTimes" :key="k.kind" class="chip">{{ k.label }} · {{ computeTime(k.ms) }} <small>{{ k.share }}%</small></span></p>
+            <div class="ai-clients">
+              <article v-for="c in computers" :key="c.user_id + c.name" class="ai-client" :class="'is-' + clientStatus(c).tone">
+                <span class="ai-client-dot" :title="clientStatus(c).label" aria-hidden="true"></span>
+                <div class="ai-client-main">
+                  <b>{{ c.name }}</b>
+                  <small>{{ c.user_name }}<template v-if="c.ai_model"> · {{ c.ai_model }}</template><template v-if="c.version"> · v{{ c.version }}</template><span v-if="c.outdated" class="pill t-warn" :title="'Version ' + d.computers.latest_version + ' is available'">Update available</span></small>
+                  <small class="ai-client-now"><span class="sr-only">{{ clientStatus(c).label }}: </span><a v-if="c.working?.id" :href="link('ai', c.working.id)">{{ clientStatus(c).text }}</a><template v-else>{{ clientStatus(c).text }}</template><template v-if="clientStatus(c).since"> · {{ clientStatus(c).since }}</template><template v-if="!c.online && c.last_seen_at"> · seen {{ timeAgo(c.last_seen_at) }}</template></small>
+                </div>
+                <div class="ai-client-stats"><b>{{ computeTime(c.stats[period].ms) }}</b><small>{{ c.stats[period].done }} done<template v-if="c.stats[period].failed"> · {{ c.stats[period].failed }} failed</template></small><small v-if="c.stats[period].proving_ms">{{ computeTime(c.stats[period].proving_ms) }} proving</small></div>
+              </article>
+              <div v-if="!computers.length" class="d-empty">No AI client has worked on this project yet.</div>
+            </div>
+            <p class="ai-note">Proving new facts means proof searches. Standard tasks are extraction, questions, references, reviews and Lean. Time is measured by each client on the tasks it finished or that failed for good, in this project.</p>
+          </section>
           <section v-if="proposed.length || decided.length" class="panel" id="ai-suggestions">
             <header class="ai-head"><h2><icon name="lightbulb" :size="15"/> Suggested references</h2><small>Check the source before accepting</small></header>
             <article v-for="s in proposed" :key="s.id" class="ai-sugg" :data-suggestion="s.id" :class="{active: +query?.suggestion === s.id}">

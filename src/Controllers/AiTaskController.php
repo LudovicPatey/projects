@@ -81,7 +81,7 @@ final class AiTaskController
         $suggestions = Db::all(
             "SELECT s.*, u.name AS ai_user_name, d.name AS decided_by_name FROM bib_suggestions s LEFT JOIN users u ON u.id = s.ai_user_id LEFT JOIN users d ON d.id = s.decided_by
              WHERE s.project_id = ? ORDER BY CASE s.status WHEN 'proposed' THEN 0 ELSE 1 END, s.id DESC LIMIT 100", [$pid]);
-        Response::json(['tasks' => array_map([self::class, 'present'], $tasks), 'counts' => $counts, 'clients' => $clients,
+        Response::json(['tasks' => array_map([self::class, 'present'], $tasks), 'counts' => $counts, 'clients' => $clients, 'computers' => self::computers($pid),
             'suggestions' => array_map([self::class, 'presentSuggestion'], $suggestions)]);
     }
 
@@ -205,6 +205,110 @@ final class AiTaskController
             : ($done ? 'new_messages' : ($last && $last['status'] === 'failed' ? 'failed' : 'none')));
         $outside = self::outsideMembers($pid, $cid);
         return ['state' => $state, 'models' => array_values(array_unique(array_filter(array_column($done, 'ai_model')))), 'private' => $outside > 0, 'outside' => $outside];
+    }
+
+    /**
+     * The AI clients of this project: who is online, what each one is doing, and the computing time it spent here.
+     * Time is what clients measured on finished tasks. Stats count only this project, and private subjects stay unnamed.
+     */
+    public static function computers(int $pid): array
+    {
+        $now = time();
+        $online = gmdate('Y-m-d H:i:s', $now - self::ONLINE_SECONDS);
+        $latest = self::latestVersion();
+        $periods = ['d7' => gmdate('Y-m-d H:i:s', $now - 7 * 86400), 'd30' => gmdate('Y-m-d H:i:s', $now - 30 * 86400), 'all' => ''];
+        $blank = fn() => ['done' => 0, 'failed' => 0, 'ms' => 0, 'proving_ms' => 0];
+        $group = fn() => ['standard' => ['done' => 0, 'failed' => 0, 'ms' => 0, 'facts' => 0], 'proving' => ['done' => 0, 'failed' => 0, 'ms' => 0, 'facts' => 0]];
+        $list = [];
+        $key = fn($uid, $name) => $uid . "\n" . $name;
+        foreach (Db::all('SELECT c.user_id, c.name, c.ai_model, c.version, c.last_seen_at, u.name AS user_name FROM ai_clients c JOIN users u ON u.id = c.user_id
+                          JOIN project_members m ON m.user_id = c.user_id AND m.project_id = ?', [$pid]) as $c) {
+            $list[$key($c['user_id'], $c['name'])] = ['user_id' => (int)$c['user_id'], 'user_name' => $c['user_name'], 'name' => $c['name'], 'ai_model' => $c['ai_model'],
+                'version' => $c['version'], 'last_seen_at' => $c['last_seen_at'], 'online' => $c['last_seen_at'] >= $online, 'member' => true];
+        }
+        $totals = array_map(fn() => $blank() + ['by_kind' => [], 'groups' => $group()], $periods);
+        $rows = Db::all("SELECT t.claimed_by, t.client_name, t.status, t.kind, t.ai_generation_ms, t.finished_at, t.result_json, u.name AS user_name FROM ai_tasks t JOIN users u ON u.id = t.claimed_by
+                         WHERE t.project_id = ? AND t.status IN ('done', 'failed') AND t.finished_at IS NOT NULL", [$pid]);
+        foreach ($rows as $t) {
+            $k = $key($t['claimed_by'], (string)$t['client_name']);
+            $list[$k] ??= ['user_id' => (int)$t['claimed_by'], 'user_name' => $t['user_name'], 'name' => (string)$t['client_name'], 'ai_model' => null, 'version' => null,
+                'last_seen_at' => null, 'online' => false, 'member' => false];
+            $list[$k]['last_done_at'] = max((string)($list[$k]['last_done_at'] ?? ''), (string)$t['finished_at']);
+            foreach ($periods as $p => $since) {
+                $list[$k]['stats'][$p] ??= $blank();
+                if ($since !== '' && $t['finished_at'] < $since) continue;
+                $ms = (int)$t['ai_generation_ms'];
+                $g = $t['kind'] === 'derive' ? 'proving' : 'standard';
+                $list[$k]['stats'][$p][$t['status']]++;
+                $list[$k]['stats'][$p]['ms'] += $ms;
+                if ($g === 'proving') $list[$k]['stats'][$p]['proving_ms'] += $ms;
+                $totals[$p][$t['status']]++;
+                $totals[$p]['ms'] += $ms;
+                $totals[$p]['groups'][$g][$t['status']]++;
+                $totals[$p]['groups'][$g]['ms'] += $ms;
+                if ($t['status'] === 'done') $totals[$p]['groups'][$g]['facts'] += count((array)(json_decode((string)$t['result_json'], true)['fact_ids'] ?? []));
+                $totals[$p]['by_kind'][$t['kind']] = ['n' => ($totals[$p]['by_kind'][$t['kind']]['n'] ?? 0) + ($t['status'] === 'done' ? 1 : 0), 'ms' => ($totals[$p]['by_kind'][$t['kind']]['ms'] ?? 0) + $ms];
+            }
+        }
+        $working = Db::all("SELECT t.id, t.kind, t.claimed_by, t.client_name, t.started_at, t.conversation_id, " . self::subjectSql() . " AS subject
+                            FROM ai_tasks t " . self::subjectJoins() . " WHERE t.project_id = ? AND t.status = 'running' AND t.lease_until >= ?", [$pid, gmdate('Y-m-d H:i:s', $now)]);
+        foreach ($working as $w) {
+            $k = $key($w['claimed_by'], (string)$w['client_name']);
+            if (!isset($list[$k])) continue;
+            $hidden = $w['conversation_id'] && !Db::value('SELECT 1 FROM conversation_participants WHERE conversation_id = ? AND user_id = ?', [$w['conversation_id'], Auth::id()]);
+            $list[$k]['working'] = ['id' => $hidden ? null : (int)$w['id'], 'kind' => $w['kind'], 'subject' => $hidden ? null : $w['subject'], 'private' => (bool)$hidden, 'started_at' => $w['started_at']];
+        }
+        $out = [];
+        foreach ($list as $c) {
+            $c += ['stats' => [], 'working' => null, 'last_done_at' => null];
+            foreach (array_keys($periods) as $p) $c['stats'][$p] ??= $blank();
+            if (!$c['online'] && !$c['stats']['all']['done'] && !$c['stats']['all']['failed'] && !$c['working']) continue; // never worked here
+            $c['outdated'] = $c['version'] && $latest ? version_compare($c['version'], $latest, '<') : false;
+            $out[] = $c;
+        }
+        usort($out, fn($a, $b) => [$b['online'], (bool)$b['working'], $b['stats']['all']['ms']] <=> [$a['online'], (bool)$a['working'], $a['stats']['all']['ms']]);
+        return ['clients' => $out, 'totals' => $totals, 'latest_version' => $latest];
+    }
+
+    /** All the computing time of a project, for standard work and for proving new facts, with the facts each produced. */
+    public static function computeSummary(int $pid): array
+    {
+        $out = ['standard' => ['ms' => 0, 'tasks' => 0, 'facts' => 0], 'proving' => ['ms' => 0, 'tasks' => 0, 'facts' => 0]];
+        foreach (Db::all("SELECT kind, status, ai_generation_ms, result_json FROM ai_tasks WHERE project_id = ? AND status IN ('done', 'failed')", [$pid]) as $t) {
+            $g = $t['kind'] === 'derive' ? 'proving' : 'standard';
+            $out[$g]['ms'] += (int)$t['ai_generation_ms'];
+            $out[$g]['tasks']++;
+            if ($t['status'] === 'done') $out[$g]['facts'] += count((array)(json_decode((string)$t['result_json'], true)['fact_ids'] ?? []));
+        }
+        return $out;
+    }
+
+    /** The members of this project whose AI client is running now. */
+    public static function onlineMembers(int $pid): array
+    {
+        return array_map('intval', array_column(Db::all('SELECT DISTINCT c.user_id FROM ai_clients c JOIN project_members m ON m.user_id = c.user_id AND m.project_id = ? WHERE c.last_seen_at >= ?',
+            [$pid, gmdate('Y-m-d H:i:s', time() - self::ONLINE_SECONDS)]), 'user_id'));
+    }
+
+    private static function latestVersion(): ?string
+    {
+        preg_match('/^VERSION = "([^"]+)"/m', (string)@file_get_contents(__DIR__ . '/../../client/oq.py', false, null, 0, 8192), $m);
+        return $m[1] ?? null;
+    }
+
+    private static function subjectSql(): string
+    {
+        return 'COALESCE(d.title, b.title, cv.subject, q.title, s.title, f.title)';
+    }
+
+    private static function subjectJoins(): string
+    {
+        return "LEFT JOIN documents d ON t.source_type = 'document' AND d.id = t.source_id
+                LEFT JOIN bib_entries b ON t.source_type = 'bib' AND b.id = t.source_id
+                LEFT JOIN conversations cv ON t.source_type = 'conversation' AND cv.id = t.source_id
+                LEFT JOIN open_questions q ON t.source_type = 'question' AND q.id = t.source_id
+                LEFT JOIN proof_strategies s ON t.source_type = 'strategy' AND s.id = t.source_id
+                LEFT JOIN facts f ON t.source_type = 'fact' AND f.id = t.source_id";
     }
 
     /** Where the questions asked to the AI in this conversation stand. Only for its participants: the caller checked access. */
@@ -434,9 +538,9 @@ final class AiTaskController
                 if (ModelOrder::covered(self::extractedBy($c), $used)) continue;
                 $lease = bin2hex(random_bytes(24));
                 $won = Db::run(
-                    "UPDATE ai_tasks SET status = 'running', lease_hash = ?, lease_until = ?, attempts = attempts + 1, claimed_by = ?, client_name = ?, ai_model = ?, updated_at = ?
+                    "UPDATE ai_tasks SET status = 'running', lease_hash = ?, lease_until = ?, attempts = attempts + 1, claimed_by = ?, client_name = ?, ai_model = ?, started_at = ?, updated_at = ?
                      WHERE id = ? AND (status = 'pending' OR (status = 'running' AND lease_until < ?))",
-                    [hash('sha256', $lease), gmdate('Y-m-d H:i:s', time() + self::LEASE_SECONDS), $me, $name, $used, $now, $c['id'], $now])->rowCount();
+                    [hash('sha256', $lease), gmdate('Y-m-d H:i:s', time() + self::LEASE_SECONDS), $me, $name, $used, $now, $now, $c['id'], $now])->rowCount();
                 if ($won === 1) {
                     // An older client ignores comments: its extraction must not count as having read them.
                     $reads = in_array('extract_comments', (array)$r->input('features', []), true);
@@ -493,7 +597,9 @@ final class AiTaskController
         $error = mb_substr(trim($r->str('error')), 0, 1000) ?: 'The AI client reported an error.';
         $final = (bool)$r->input('final') || (int)$t['attempts'] >= self::MAX_ATTEMPTS;
         $now = Db::now();
-        Db::update('ai_tasks', ['status' => $final ? 'failed' : 'pending', 'lease_hash' => null, 'lease_until' => null, 'error_text' => $error,
+        // Time spent before failing still counts as computing time, once the task stops for good.
+        $spent = $final ? Provenance::milliseconds($r->input('generation_seconds')) : null;
+        Db::update('ai_tasks', ($spent ? ['ai_generation_ms' => $spent, 'ai_user_id' => Auth::aiUserId()] : []) + ['status' => $final ? 'failed' : 'pending', 'lease_hash' => null, 'lease_until' => null, 'error_text' => $error,
             'not_before' => $final ? null : gmdate('Y-m-d H:i:s', time() + 120 * (int)$t['attempts']), 'finished_at' => $final ? $now : null, 'updated_at' => $now], 'id = :id', ['id' => $t['id']]);
         Response::json(self::present(self::row((int)$t['id'])));
     }
@@ -827,7 +933,7 @@ final class AiTaskController
         $subject = $t['document_title'] ?? $t['bib_title'] ?? $t['conversation_title'] ?? $t['question_title'] ?? $t['strategy_title'] ?? $t['fact_title'] ?? null;
         foreach (['id', 'project_id', 'source_id', 'version_id', 'conversation_id', 'requested_by', 'claimed_by', 'attempts'] as $k) $t[$k] = $t[$k] === null ? null : (int)$t[$k];
         $out = array_intersect_key($t, array_flip(['id', 'project_id', 'kind', 'status', 'source_type', 'source_id', 'version_id', 'conversation_id', 'prompt_text', 'requested_by', 'requested_by_name',
-            'claimed_by', 'claimed_by_name', 'client_name', 'ai_model', 'ai_generation_ms', 'attempts', 'summary_text', 'error_text', 'created_at', 'updated_at', 'finished_at']));
+            'claimed_by', 'claimed_by_name', 'client_name', 'started_at', 'ai_model', 'ai_generation_ms', 'attempts', 'summary_text', 'error_text', 'created_at', 'updated_at', 'finished_at']));
         $waiting = $t['status'] === 'pending' ? self::extractedBy($t) : [];
         return $out + ['subject' => $subject, 'result' => $result, 'already_done_by' => $waiting];
     }
@@ -849,11 +955,12 @@ final class AiTaskController
     private static function seen(int $uid, string $name, ?string $model): void
     {
         $now = Db::now();
+        $version = preg_match('#^open-questions-client/(\d+\.\d+\.\d+)\b#', (string)($_SERVER['HTTP_USER_AGENT'] ?? ''), $m) ? $m[1] : null;
         if (Db::value('SELECT 1 FROM ai_clients WHERE user_id = ? AND name = ?', [$uid, $name])) {
-            Db::update('ai_clients', ['ai_model' => $model, 'last_seen_at' => $now], 'user_id = :u AND name = :n', ['u' => $uid, 'n' => $name]);
+            Db::update('ai_clients', ['ai_model' => $model, 'last_seen_at' => $now] + ($version ? ['version' => $version] : []), 'user_id = :u AND name = :n', ['u' => $uid, 'n' => $name]);
             return;
         }
-        try { Db::insert('ai_clients', ['user_id' => $uid, 'name' => $name, 'ai_model' => $model, 'last_seen_at' => $now]); } catch (\PDOException) { /* created meanwhile */ }
+        try { Db::insert('ai_clients', ['user_id' => $uid, 'name' => $name, 'ai_model' => $model, 'version' => $version, 'last_seen_at' => $now]); } catch (\PDOException) { /* created meanwhile */ }
     }
 
     private static function aiOnly(): void
