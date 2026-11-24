@@ -407,7 +407,7 @@ const KIND_LABEL = {
   conversation_extract: 'asked to share facts from a private conversation',
   answer_proposed: 'proposed an answer to your question', answer_ratified: 'ratified your proposed answer', answer_rejected: 'rejected your proposed answer',
   answer_revoked: 'revoked the ratification of your answer', answer_fact: 'changed a fact behind an answer you ratified',
-  fact_review: 'reviewed your fact', fact_retracted: 'retracted a fact in your dependency chain',
+  fact_review: 'reviewed your fact', fact_proof: 'proposed another proof of your fact', fact_proof_review: 'reviewed your proof', fact_retracted: 'retracted a fact in your dependency chain',
 };
 
 export const NotificationsDrawer = {

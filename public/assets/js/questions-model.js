@@ -38,6 +38,8 @@ export const FACT_SUPPORT = {
   unvalidated: { ok: false, text: 'A human must endorse this fact before the answer can be ratified.' },
   disputed: { ok: false, text: 'This fact is denied or disputed. Settle its reviews first.' },
   chain_broken: { ok: false, text: 'This fact relies on a denied, disputed or retracted fact.' },
+  proof_disputed: { ok: false, text: 'The result is accepted but no proof of it is. Fix the proof, or propose and check another one.' },
+  chain_unproved: { ok: false, text: 'This fact relies on a result whose proof is disputed.' },
   retracted: { ok: false, text: 'This fact is retracted.' },
   missing: { ok: false, text: 'This fact no longer exists.' },
 };

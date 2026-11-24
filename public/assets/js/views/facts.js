@@ -3,6 +3,7 @@ import { store, go, link, attempt, toast, refreshMentionables, refreshProject, u
 import { timeAgo, fullDate } from '../util.js';
 import { FactGraph, STATUS, PROOF_LABEL } from '../factgraph.js';
 import { factTitle, formatFactHtml, kindCounts, kindLabel, kindOf, parseExternalRefs, texLine } from '../fact-format.js';
+import { PROOF_STATE, proofTally, resultOnlyBody, stance } from '../fact-proofs.js';
 
 const VERDICTS = {
   correct: { label: 'Correct', cls: 'green' },
@@ -15,6 +16,7 @@ const LEAN = {
 };
 const CHAIN = {
   broken: 'Depends on a disputed or retracted fact',
+  unproved: 'Depends on a result whose proof is disputed',
   unchecked: 'Depends on an unchecked fact',
 };
 
@@ -57,6 +59,7 @@ export const FactsView = {
       facts: [], edges: [], loaded: false, search: '', fStatus: 'all', fOrigin: 'all', fLabel: 'all', fLean: 'all', sort: 'recent', lineage: false, showFilters: false,
       fact: null, factError: null, tab: 'content', activeThread: null, backlinks: [],
       readable: readView(), fKind: 'all', outline: [], reviewVerdict: 'correct', checkForm: null, trace: null, retracting: null, revView: null, denying: null,
+      reviewStatement: 'true', resultOnly: null, proposing: null, proofCheck: null,
     };
   },
   computed: {
@@ -93,7 +96,11 @@ export const FactsView = {
     },
     labelOptions() { return Object.keys(this.labelCounts).sort(); },
     endorsed() { return this.myReview?.verdict === 'correct'; },
-    denied() { return this.myReview?.verdict === 'incorrect'; },
+    denied() { return stance(this.myReview)?.key === 'denied'; },
+    resultOnlyOn() { return stance(this.myReview)?.key === 'result_only'; },
+    mainFlawed() { return this.fact ? this.currentReviews.some((v) => v.verdict !== 'correct') : false; },
+    proofs() { return (this.fact?.proofs || []).filter((p) => p.revision_no === this.fact.current_revision); },
+    oldProofs() { return (this.fact?.proofs || []).filter((p) => p.revision_no !== this.fact.current_revision); },
     banner() {
       const f = this.fact, by = f.ai_model, tool = f.tool ? ` with ${f.tool}` : '';
       if (f.method === 'deduced') return { head: 'AI-deduced', rest: `by ${by}${tool}. Check carefully before relying on it.` };
@@ -211,12 +218,15 @@ export const FactsView = {
           <div class="fact-byline"><ai-meta :model="fact.ai_model" :user="fact.ai_user_name" :ms="fact.ai_generation_ms"/><span class="muted small">added by {{ fact.author }} · updated {{ timeAgo(fact.updated_at) }}</span></div>
           <div v-if="fact.endorsed_by.length" class="endorsers"><icon name="check-circle" :size="14"/> Endorsed by
             <a v-for="(e, i) in fact.endorsed_by" :key="e.id" :href="link('members', null, {user: e.id})">{{ e.name }}{{ i < fact.endorsed_by.length - 1 ? ', ' : '' }}</a></div>
+          <div v-if="fact.result_endorsed_by?.length" class="endorsers result-only"><icon name="check" :size="14"/> Result accepted, proof disputed, by
+            <a v-for="(e, i) in fact.result_endorsed_by" :key="e.id" :href="link('members', null, {user: e.id})">{{ e.name }}{{ i < fact.result_endorsed_by.length - 1 ? ', ' : '' }}</a></div>
           <div v-if="fact.denied_by.length" class="endorsers denied"><icon name="x" :size="14"/> Denied by
             <a v-for="(e, i) in fact.denied_by" :key="e.id" :href="link('members', null, {user: e.id})">{{ e.name }}{{ i < fact.denied_by.length - 1 ? ', ' : '' }}</a></div>
         </div>
         <div class="doc-actions">
           <button v-if="!fact.retracted_at" class="btn sm endorse" :class="{on: endorsed}" :aria-pressed="endorsed" :title="endorsed ? 'Withdraw your endorsement' : 'Endorse this revision: you checked it and consider it correct'" @click="toggleEndorse">
             <icon name="check" :size="14"/> {{ endorsed ? 'Endorsed' : 'Endorse' }}</button>
+          <button v-if="!fact.retracted_at" class="btn sm result-only" :class="{on: resultOnlyOn}" :aria-pressed="resultOnlyOn" :title="resultOnlyOn ? 'Withdraw: you no longer say this' : 'You believe the result, but the proof has a gap or an error'" @click="toggleResultOnly"><icon name="check" :size="14"/> {{ resultOnlyOn ? 'Result only' : 'Result, not proof' }}</button>
           <button v-if="!fact.retracted_at" class="btn sm deny" :class="{on: denied}" :aria-pressed="denied" :title="denied ? 'Withdraw your denial' : 'Deny this revision: you found an error'" @click="toggleDeny"><icon name="x" :size="14"/> {{ denied ? 'Denied' : 'Deny' }}</button>
           <ai-action v-if="!fact.retracted_at" kind="review" source-type="fact" :source-id="fact.id" label="AI review"/>
           <ai-action v-if="!fact.retracted_at" kind="lean" source-type="fact" :source-id="fact.id" label="Lean proof"/>
@@ -230,8 +240,24 @@ export const FactsView = {
         </div>
       </header>
       <modal v-if="denying" title="Deny this fact" @close="denying = null">
-        <label class="field"><span>What is wrong? Point to the exact step.</span><textarea v-model="denying.reason" rows="4" autofocus></textarea></label>
+        <p class="muted small">Deny means that the result itself is false. If you believe the result but not its proof, use <b>Result, not proof</b> instead.</p>
+        <label class="field"><span>What is wrong? Point to the exact step, or give a counterexample.</span><textarea v-model="denying.reason" rows="4" autofocus></textarea></label>
         <template #footer><button class="btn ghost" @click="denying = null">Cancel</button><button class="btn danger" :disabled="!denying.reason.trim()" @click="submitDeny">Deny fact</button></template>
+      </modal>
+      <modal v-if="resultOnly" title="Accept the result, not the proof" @close="resultOnly = null">
+        <p class="muted small">The result counts as believed, and facts using it stay usable, but it is not proved until a proof is accepted. Anyone can then propose another proof.</p>
+        <div class="field"><span>The proof has</span><div class="seg" role="group" aria-label="What is wrong with the proof"><button :class="{on: resultOnly.verdict === 'gap'}" :aria-pressed="resultOnly.verdict === 'gap'" @click="resultOnly.verdict = 'gap'">A gap</button><button :class="{on: resultOnly.verdict === 'incorrect'}" :aria-pressed="resultOnly.verdict === 'incorrect'" @click="resultOnly.verdict = 'incorrect'">An error</button></div></div>
+        <label class="field"><span>Where? Point to the exact step.</span><textarea v-model="resultOnly.reason" rows="4" autofocus></textarea></label>
+        <template #footer><button class="btn ghost" @click="resultOnly = null">Cancel</button><button class="btn primary" :disabled="!resultOnly.reason.trim()" @click="submitResultOnly">Accept the result only</button></template>
+      </modal>
+      <modal v-if="proposing" :title="proposing.proof ? 'Edit your proof' : 'Propose another proof'" wide @close="proposing = null">
+        <p class="muted small">A proof of the current statement of {{ fact.label }}. Others review it on its own. Once a proof is accepted, the fact counts as checked, even if another proof is disputed.</p>
+        <rich-editor ref="proofEd" :min-height="220" :initial-html="proposing.proof?.body_html || ''" placeholder="Write the proof. $…$ for LaTeX, @ to cite facts and references."/>
+        <template #footer><button class="btn ghost" @click="proposing = null">Cancel</button><button class="btn primary" @click="submitProof">{{ proposing.proof ? 'Save the proof' : 'Propose the proof' }}</button></template>
+      </modal>
+      <modal v-if="proofCheck" :title="proofCheck.verdict === 'gap' ? 'A gap in this proof' : 'An error in this proof'" @close="proofCheck = null">
+        <label class="field"><span>Point to the exact step.</span><textarea v-model="proofCheck.reason" rows="4" autofocus></textarea></label>
+        <template #footer><button class="btn ghost" @click="proofCheck = null">Cancel</button><button class="btn primary" :disabled="!proofCheck.reason.trim()" @click="submitProofCheck">Save the review</button></template>
       </modal>
       <nav class="tabs">
         <button :class="{on: tab==='content'}" @click="tab='content'"><icon name="eye" :size="14"/> Fact</button>
@@ -246,7 +272,30 @@ export const FactsView = {
         <nav v-if="readable && outline.length > 1" class="fact-outline" aria-label="In this fact"><button v-for="(x, i) in outline" :key="i" :class="'k-' + x.type" @click="jump(x)">{{ x.title }}</button></nav>
         <div class="fact-view-switch"><div class="seg small" role="group" aria-label="How the text is shown"><button :class="{on: readable}" :aria-pressed="readable" title="Same content, with headings, lists and formulas typeset in LaTeX" @click="setReadable(true)">Readable</button><button :class="{on: !readable}" :aria-pressed="!readable" title="The text exactly as stored" @click="setReadable(false)">Original</button></div></div>
         <section class="fact-sec statement"><h4>Statement</h4><rich-content :html="shown(content.statement_html)"/></section>
-        <section class="fact-sec" v-if="content.proof_html"><h4>Proof</h4><rich-content :html="shown(content.proof_html)"/></section>
+        <section class="fact-sec" v-if="content.proof_html"><h4>Proof<span v-if="!shownRevision && mainFlawed" class="tag amber">Disputed</span><span v-if="!shownRevision && proofs.length" class="tag">1 of {{ proofs.length + 1 }}</span></h4><rich-content :html="shown(content.proof_html)"/></section>
+        <section v-if="!shownRevision && !fact.retracted_at" class="fact-sec other-proofs" id="other-proofs">
+          <h4>Other proofs<span v-if="proofs.length" class="count">{{ proofs.length }}</span><span class="grow"></span><button class="btn sm" @click="proposing = {proof: null}"><icon name="plus" :size="13"/> Propose another proof</button></h4>
+          <p v-if="!proofs.length" class="muted small">{{ mainFlawed || fact.status === 'proof_disputed' ? 'The proof above is disputed. A correct proof here is enough for the fact to count as checked.' : 'A different argument can be proposed here, by a person or an AI client, and reviewed on its own.' }}</p>
+          <article v-for="p in proofs" :key="p.id" class="alt-proof" :class="{flash: +query?.proof === p.id}" :data-proof="p.id">
+            <header class="row-gap"><span class="tag" :class="proofStates[p.state].cls">{{ proofStates[p.state].label }}</span>
+              <by-line :name="p.author_name" :model="p.author_kind === 'agent' ? p.ai_model : null" :user="p.ai_user_name" :ms="p.ai_generation_ms"/>
+              <span class="grow"></span><span class="muted small">{{ timeAgo(p.updated_at) }}</span>
+              <template v-if="p.author_id === me && p.author_kind === 'human'"><button class="icon-btn xs" title="Edit your proof" aria-label="Edit your proof" @click="proposing = {proof: p}"><icon name="edit" :size="13"/></button></template>
+              <button v-if="p.author_id === me || isOwner" class="icon-btn xs" title="Withdraw this proof" aria-label="Withdraw this proof" @click="removeProof(p)"><icon name="trash" :size="13"/></button></header>
+            <rich-content :html="shown(p.body_html)"/>
+            <footer class="alt-proof-foot">
+              <span class="muted small">{{ tallyText(p) }}</span><span class="grow"></span>
+              <template v-if="!(p.author_id === me && p.author_kind === 'human')">
+                <button class="btn sm endorse" :class="{on: myProofVerdict(p) === 'correct'}" :aria-pressed="myProofVerdict(p) === 'correct'" @click="checkProof(p, 'correct')"><icon name="check" :size="13"/> Correct</button>
+                <button class="btn sm" :class="{on: myProofVerdict(p) === 'gap'}" :aria-pressed="myProofVerdict(p) === 'gap'" @click="checkProof(p, 'gap')">Gap</button>
+                <button class="btn sm deny" :class="{on: myProofVerdict(p) === 'incorrect'}" :aria-pressed="myProofVerdict(p) === 'incorrect'" @click="checkProof(p, 'incorrect')">Error</button>
+              </template>
+            </footer>
+            <div v-for="v in p.reviews.filter((x) => x.body_html)" :key="v.id" class="alt-proof-review"><span class="tag" :class="verdicts[v.verdict].cls">{{ verdicts[v.verdict].label }}</span> <b>{{ v.reviewer_name }}</b><rich-content :html="v.body_html"/></div>
+          </article>
+          <details v-if="oldProofs.length" class="old-proofs"><summary>{{ oldProofs.length }} proof{{ oldProofs.length > 1 ? 's' : '' }} of an earlier statement</summary>
+            <article v-for="p in oldProofs" :key="p.id" class="alt-proof old"><header class="row-gap"><span class="tag">r{{ p.revision_no }}</span><by-line :name="p.author_name" :model="p.author_kind === 'agent' ? p.ai_model : null" :user="p.ai_user_name" :ms="p.ai_generation_ms"/></header><rich-content :html="shown(p.body_html)"/></article></details>
+        </section>
         <section class="fact-sec" v-if="content.intuition_html"><h4>Intuition</h4><rich-content :html="shown(content.intuition_html)"/></section>
         <template v-if="!shownRevision">
           <section class="fact-sec" v-if="fact.sources.length"><h4>Sources</h4>
@@ -275,14 +324,15 @@ export const FactsView = {
       <div v-if="tab==='reviews'" class="pad scroll">
         <div v-if="canWriteReview" class="card review-form">
           <h4>{{ myReview ? 'Update your review' : 'Review revision ' + fact.current_revision }}</h4>
-          <div class="seg"><button v-for="(v, k) in verdicts" :key="k" :class="{on: reviewVerdict === k}" @click="reviewVerdict = k">{{ v.label }}</button></div>
+          <div class="field"><span>The proof</span><div class="seg" role="group" aria-label="The proof"><button v-for="(v, k) in verdicts" :key="k" :class="{on: reviewVerdict === k}" :aria-pressed="reviewVerdict === k" @click="reviewVerdict = k">{{ v.label }}</button></div></div>
+          <div v-if="reviewVerdict !== 'correct'" class="field"><span>The result itself</span><div class="seg" role="group" aria-label="The result itself"><button v-for="(l, k) in {true: 'Is true', unsure: 'Not sure', false: 'Is false'}" :key="k" :class="{on: reviewStatement === k}" :aria-pressed="reviewStatement === k" :disabled="k === 'false' && reviewVerdict === 'gap'" @click="reviewStatement = k">{{ l }}</button></div></div>
           <rich-editor ref="reviewEd" compact :key="fact.id + '-' + fact.current_revision" :initial-html="myReview?.body_html || ''" :placeholder="reviewVerdict === 'correct' ? 'What did you check? (optional)' : 'Point to the exact step…'"/>
           <div class="row-end"><button class="btn primary sm" @click="submitReview">Submit review</button></div>
         </div>
         
         <div v-if="!currentReviews.length" class="empty">No review of this revision yet.</div>
         <article v-for="v in currentReviews" :key="v.id" class="review">
-          <div class="row-gap"><span class="tag" :class="verdicts[v.verdict].cls">{{ verdicts[v.verdict].label }}</span>
+          <div class="row-gap"><span class="tag" :class="stance(v).cls">{{ stance(v).label }}</span>
             <by-line :name="v.reviewer_name" :model="v.ai_model" :user="v.ai_user_name" :ms="v.ai_generation_ms"/>
             <span v-if="!v.independent" class="tag amber" title="Same model as the author: recorded, but not counted as an independent check">same model as author</span>
             <span class="grow"></span><span class="muted small">{{ timeAgo(v.updated_at) }}</span>
@@ -408,9 +458,9 @@ export const FactsView = {
     </form>
   </modal>
 </div>`,
-  created() { this.basis = BASIS; this.covers = COVERS; this.statuses = STATUS; this.verdicts = VERDICTS; this.leanLabels = LEAN; this.chainLabels = CHAIN; },
+  created() { this.proofStates = PROOF_STATE; this.basis = BASIS; this.covers = COVERS; this.statuses = STATUS; this.verdicts = VERDICTS; this.leanLabels = LEAN; this.chainLabels = CHAIN; },
   methods: {
-    factTitle, texLine, kindOf, kindLabel,
+    factTitle, texLine, kindOf, kindLabel, stance,
     shown(html) { return this.readable ? formatFactHtml(html) : html; },
     setReadable(on) { this.readable = on; this.refreshOutline(); try { localStorage.setItem('oq-fact-view', on ? 'readable' : 'original'); } catch { /* the choice lasts for this page only */ } },
     timeAgo, fullDate, link, markItemUnread,
@@ -460,7 +510,9 @@ export const FactsView = {
       this.fact = f;
       const mine = f.reviews.find((v) => v.reviewer_id === this.me && v.reviewer_kind === 'human' && v.revision_no === f.current_revision);
       this.reviewVerdict = mine?.verdict || 'correct';
+      this.reviewStatement = mine?.statement_verdict || (mine?.verdict === 'incorrect' ? 'false' : 'unsure');
       markRead('fact', f.id, f.last_activity_id);
+      if (this.query?.proof) { this.tab = 'content'; this.$nextTick(() => this.$el.querySelector?.(`[data-proof="${+this.query.proof}"]`)?.scrollIntoView({ block: 'center' })); }
       if (this.tab === 'trace') this.loadTrace();
     },
     clearFilters() { this.fStatus = this.fOrigin = this.fLabel = this.fLean = 'all'; },
@@ -500,12 +552,48 @@ export const FactsView = {
       await this.refresh(await attempt(() => api.del(`api/facts/${this.fact.id}/reviews/${this.myReview.id}`), 'Denial withdrawn'));
     },
     async submitDeny() {
-      const f = await attempt(() => api.post(`api/facts/${this.fact.id}/reviews`, { verdict: 'incorrect', body_text: this.denying.reason }), 'Fact denied');
+      const f = await attempt(() => api.post(`api/facts/${this.fact.id}/reviews`, { verdict: 'incorrect', statement: 'false', body_text: this.denying.reason }), 'Fact denied');
       if (f) { this.denying = null; await this.refresh(f); }
     },
     async submitReview() {
       const body_html = this.$refs.reviewEd?.getHTML() || '';
-      await this.refresh(await attempt(() => api.post(`api/facts/${this.fact.id}/reviews`, { verdict: this.reviewVerdict, body_html }), 'Review saved'));
+      const statement = this.reviewVerdict === 'correct' ? 'true' : (this.reviewVerdict === 'gap' && this.reviewStatement === 'false' ? 'unsure' : this.reviewStatement);
+      await this.refresh(await attempt(() => api.post(`api/facts/${this.fact.id}/reviews`, { verdict: this.reviewVerdict, statement, body_html }), 'Review saved'));
+    },
+    async toggleResultOnly() {
+      if (!this.resultOnlyOn) { this.resultOnly = { verdict: 'gap', reason: '' }; return; }
+      await this.refresh(await attempt(() => api.del(`api/facts/${this.fact.id}/reviews/${this.myReview.id}`), 'Withdrawn'));
+    },
+    async submitResultOnly() {
+      const f = await attempt(() => api.post(`api/facts/${this.fact.id}/reviews`, resultOnlyBody(this.resultOnly.verdict, this.resultOnly.reason)), 'Result accepted, proof disputed');
+      if (f) { this.resultOnly = null; await this.refresh(f); }
+    },
+    myProofVerdict(p) { return p.reviews.find((v) => v.reviewer_id === this.me && v.reviewer_kind === 'human')?.verdict || null; },
+    tallyText(p) {
+      const t = proofTally(p);
+      const parts = [[t.correct, 'correct'], [t.gap, 'gap'], [t.incorrect, 'error']].filter(([n]) => n).map(([n, w]) => `${n} ${w}${n > 1 && w !== 'correct' ? 's' : ''}`);
+      return parts.length ? parts.join(' · ') : 'No review yet';
+    },
+    async submitProof() {
+      const body_html = this.$refs.proofEd?.getHTML() || '';
+      if (!body_html) return toast('Write the proof first', 'error');
+      const p = this.proposing.proof;
+      const f = await attempt(() => (p ? api.patch(`api/fact-proofs/${p.id}`, { body_html }) : api.post(`api/facts/${this.fact.id}/proofs`, { body_html })), p ? 'Proof saved. Its earlier reviews were cleared.' : 'Proof proposed');
+      if (f) { this.proposing = null; await this.refresh(f); }
+    },
+    async removeProof(p) {
+      if (!confirm('Withdraw this proof and its reviews?')) return;
+      await this.refresh(await attempt(() => api.del(`api/fact-proofs/${p.id}`), 'Proof withdrawn'));
+    },
+    async checkProof(p, verdict) {
+      const mine = p.reviews.find((v) => v.reviewer_id === this.me && v.reviewer_kind === 'human');
+      if (mine?.verdict === verdict) { await this.refresh(await attempt(() => api.del(`api/fact-proofs/${p.id}/reviews/${mine.id}`), 'Review withdrawn')); return; }
+      if (verdict === 'correct') { await this.refresh(await attempt(() => api.post(`api/fact-proofs/${p.id}/reviews`, { verdict }), 'Proof accepted')); return; }
+      this.proofCheck = { proof: p, verdict, reason: '' };
+    },
+    async submitProofCheck() {
+      const f = await attempt(() => api.post(`api/fact-proofs/${this.proofCheck.proof.id}/reviews`, { verdict: this.proofCheck.verdict, body_text: this.proofCheck.reason }), 'Review saved');
+      if (f) { this.proofCheck = null; await this.refresh(f); }
     },
     async withdraw(v) {
       if (!confirm('Withdraw your review?')) return;

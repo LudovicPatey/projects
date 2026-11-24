@@ -285,12 +285,48 @@ CREATE TABLE IF NOT EXISTS fact_reviews (
   ai_model VARCHAR(120) NULL,
   ai_user_id INT UNSIGNED NULL,           -- user this AI output was produced for
   ai_generation_ms INT UNSIGNED NULL,     -- generation time, when the client measured it
-  verdict VARCHAR(12) NOT NULL,
+  verdict VARCHAR(12) NOT NULL,           -- the proof: correct, gap, incorrect
+  statement_verdict VARCHAR(8) NULL,      -- the result itself: true, false, unsure (NULL: not stated)
   body_html MEDIUMTEXT NULL,
   created_at DATETIME NOT NULL,
   updated_at DATETIME NOT NULL,
   UNIQUE KEY uq_fact_review (fact_id, revision_no, reviewer_id, reviewer_kind),
   FOREIGN KEY (fact_id) REFERENCES facts(id) ON DELETE CASCADE,
+  FOREIGN KEY (reviewer_id) REFERENCES users(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Other proofs of a fact's statement, proposed by people or AI clients, each reviewed on its own.
+CREATE TABLE IF NOT EXISTS fact_proofs (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  fact_id INT UNSIGNED NOT NULL,
+  revision_no INT UNSIGNED NOT NULL,      -- the revision whose statement it proves
+  author_id INT UNSIGNED NOT NULL,
+  author_kind VARCHAR(10) NOT NULL,       -- human or agent
+  ai_model VARCHAR(120) NULL,
+  ai_user_id INT UNSIGNED NULL,
+  ai_generation_ms INT UNSIGNED NULL,
+  body_html MEDIUMTEXT NOT NULL,
+  created_at DATETIME NOT NULL,
+  updated_at DATETIME NOT NULL,
+  KEY idx_fact_proof (fact_id, revision_no),
+  FOREIGN KEY (fact_id) REFERENCES facts(id) ON DELETE CASCADE,
+  FOREIGN KEY (author_id) REFERENCES users(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS fact_proof_reviews (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  proof_id INT UNSIGNED NOT NULL,
+  reviewer_id INT UNSIGNED NOT NULL,
+  reviewer_kind VARCHAR(10) NOT NULL,
+  ai_model VARCHAR(120) NULL,
+  ai_user_id INT UNSIGNED NULL,
+  ai_generation_ms INT UNSIGNED NULL,
+  verdict VARCHAR(12) NOT NULL,           -- correct, gap, incorrect
+  body_html MEDIUMTEXT NULL,
+  created_at DATETIME NOT NULL,
+  updated_at DATETIME NOT NULL,
+  UNIQUE KEY uq_fact_proof_review (proof_id, reviewer_id, reviewer_kind),
+  FOREIGN KEY (proof_id) REFERENCES fact_proofs(id) ON DELETE CASCADE,
   FOREIGN KEY (reviewer_id) REFERENCES users(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 

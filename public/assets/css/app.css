@@ -987,6 +987,20 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: non
 .q-a-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 10px; }
 .btn.deny.on { border-color: var(--danger); background: #fdecea; color: var(--danger); }
 .endorsers.denied, .endorsers.denied a { color: var(--danger); }
+.endorsers.result-only, .endorsers.result-only a { color: var(--warn); }
+.btn.result-only { color: var(--warn); border-color: #f5d49c; }
+.btn.result-only.on { border-color: var(--warn); background: var(--warn-bg); color: var(--warn); }
+.fact-sec h4 .tag { margin-left: 8px; vertical-align: 1px; }
+.other-proofs h4 { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.other-proofs h4 .count { padding: 0 6px; border-radius: 999px; background: var(--line-2); color: var(--muted); font-size: 11px; }
+.other-proofs h4 .btn { text-transform: none; letter-spacing: 0; }
+.alt-proof { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
+.alt-proof.flash { border-color: #f59e0b; box-shadow: 0 0 0 3px rgba(245, 158, 11, .25); }
+.alt-proof.old { opacity: .7; }
+.alt-proof > header { flex-wrap: wrap; }
+.alt-proof-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding-top: 8px; border-top: 1px solid var(--line-2); }
+.alt-proof-review { padding: 6px 8px; border-radius: 6px; background: var(--panel-2); font-size: 13px; }
+.old-proofs summary { cursor: pointer; color: var(--muted); font-size: 13px; margin-bottom: 8px; }
 .q-pending { padding: 0 6px; border-radius: 8px; background: var(--warn-bg); color: var(--warn); font-weight: 650; }
 .q-at-risk { padding: 0 6px; border-radius: 8px; background: #fdecea; color: var(--danger); font-weight: 650; }
 .q-comment-tabs { flex: none; margin: 10px 12px 0; }

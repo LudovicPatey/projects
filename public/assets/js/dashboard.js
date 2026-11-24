@@ -7,7 +7,7 @@ import { REF_TYPES, activityVerb, refHref, statusInfo } from './references.js';
 // Fixed colors per status, so that a state looks the same on every page. Each is always labelled.
 export const QUESTION_SEGMENTS = [['solved', 'Solved', '#0d9488'], ['refuted', 'Refuted', '#b42318'], ['partial', 'Partial', '#d97706'], ['active', 'In progress', '#4f46e5'], ['open', 'Open', '#98a2b3'], ['abandoned', 'Abandoned', '#d0d5dd']];
 export const STRATEGY_SEGMENTS = [['succeeded', 'Succeeded', '#0d9488'], ['failed', 'Failed', '#b42318'], ['blocked', 'Blocked', '#d97706'], ['active', 'Being tried', '#4f46e5'], ['idea', 'Idea', '#98a2b3'], ['abandoned', 'Abandoned', '#d0d5dd']];
-export const FACT_SEGMENTS = [['double_checked', 'Human + AI', '#0d9488'], ['human_checked', 'Human-checked', '#2dd4bf'], ['ai_checked', 'AI-checked', '#4f46e5'], ['unchecked', 'Unchecked', '#98a2b3'], ['disputed', 'Disputed', '#b42318'], ['retracted', 'Retracted', '#d0d5dd']];
+export const FACT_SEGMENTS = [['double_checked', 'Human + AI', '#0d9488'], ['human_checked', 'Human-checked', '#2dd4bf'], ['ai_checked', 'AI-checked', '#4f46e5'], ['unchecked', 'Unchecked', '#98a2b3'], ['proof_disputed', 'Proof disputed', '#d97706'], ['disputed', 'Disputed', '#b42318'], ['retracted', 'Retracted', '#d0d5dd']];
 export const PROOF_SEGMENTS = [['human', 'Human proof', '#0d9488'], ['mixed', 'Human + AI', '#2dd4bf'], ['ai', 'AI proof', '#4f46e5'], ['none', 'No proof', '#98a2b3']];
 
 const ACTIONS = {

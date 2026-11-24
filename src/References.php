@@ -13,7 +13,7 @@ use App\Controllers\{FactController, SearchController};
  */
 final class References
 {
-    public const TYPES = ['user', 'project', 'question', 'strategy', 'revision', 'answer', 'fact', 'review', 'lean',
+    public const TYPES = ['user', 'project', 'question', 'strategy', 'revision', 'answer', 'fact', 'review', 'proof', 'lean',
         'document', 'version', 'bib', 'suggestion', 'conversation', 'message', 'comment', 'aitask'];
     /** Their stored label is generic, and a reader without access cannot tell whether they exist. */
     public const PRIVATE = ['conversation', 'message', 'comment', 'aitask'];
@@ -106,6 +106,7 @@ final class References
             'answer' => 'SELECT id FROM question_answers WHERE project_id = ?',
             'fact' => 'SELECT id FROM facts WHERE project_id = ? AND deleted_at IS NULL',
             'review' => 'SELECT v.id FROM fact_reviews v JOIN facts f ON f.id = v.fact_id WHERE f.project_id = ? AND f.deleted_at IS NULL',
+            'proof' => 'SELECT p.id FROM fact_proofs p JOIN facts f ON f.id = p.fact_id WHERE f.project_id = ? AND f.deleted_at IS NULL',
             'lean' => 'SELECT l.id FROM fact_lean l JOIN facts f ON f.id = l.fact_id WHERE f.project_id = ? AND f.deleted_at IS NULL',
             'document' => 'SELECT id FROM documents WHERE project_id = ? AND deleted_at IS NULL',
             'version' => 'SELECT v.id FROM document_versions v JOIN documents d ON d.id = v.document_id WHERE d.project_id = ? AND d.deleted_at IS NULL',
@@ -183,6 +184,13 @@ final class References
                              FROM fact_reviews v JOIN facts f ON f.id = v.fact_id JOIN users u ON u.id = v.reviewer_id WHERE f.project_id = ? AND f.deleted_at IS NULL AND v.id IN $in") as $r) {
                     $out[(int)$r['id']] = self::item($type, (int)$r['id'], "Review of {$r['label']}", "Review of {$r['label']}", "By {$r['by_name']}, revision {$r['revision_no']}", $r['verdict'], self::plain($r['body_html']), $r['by_name'], $r['ai_model'], $r['updated_at'],
                         ['view' => 'facts', 'id' => (int)$r['fact_id'], 'query' => ['tab' => 'reviews']]);
+                }
+                break;
+            case 'proof':
+                foreach ($q("SELECT p.id, p.body_html, p.ai_model, p.updated_at, p.revision_no, f.id AS fact_id, f.label, u.name AS by_name
+                             FROM fact_proofs p JOIN facts f ON f.id = p.fact_id JOIN users u ON u.id = p.author_id WHERE f.project_id = ? AND f.deleted_at IS NULL AND p.id IN $in") as $r) {
+                    $out[(int)$r['id']] = self::item($type, (int)$r['id'], "Proof of {$r['label']}", "Another proof of {$r['label']}", "By {$r['by_name']}, revision {$r['revision_no']}", null, self::plain($r['body_html']), $r['by_name'], $r['ai_model'], $r['updated_at'],
+                        ['view' => 'facts', 'id' => (int)$r['fact_id'], 'query' => ['proof' => (int)$r['id']]]);
                 }
                 break;
             case 'lean':

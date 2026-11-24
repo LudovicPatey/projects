@@ -8,6 +8,7 @@ export const REF_TYPES = {
   answer: { label: 'Answer', plural: 'Answers', icon: 'check-circle', aliases: ['a', 'answer', 'answers'] },
   fact: { label: 'Fact', plural: 'Facts', icon: 'graph', aliases: ['f', 'fact', 'facts'] },
   review: { label: 'Fact review', plural: 'Fact reviews', icon: 'eye', aliases: ['review', 'reviews'] },
+  proof: { label: 'Other proof', plural: 'Other proofs', icon: 'check-circle', aliases: ['proof', 'proofs'] },
   lean: { label: 'Lean proof', plural: 'Lean proofs', icon: 'code', aliases: ['lean'] },
   document: { label: 'File', plural: 'Files', icon: 'files', aliases: ['file', 'files', 'doc', 'document'] },
   version: { label: 'File version', plural: 'File versions', icon: 'layers', aliases: ['version', 'v'] },
@@ -50,7 +51,7 @@ const STATUS = {
   open: ['Open', 'neutral'], active: ['In progress', 'info'], partial: ['Partial result', 'warn'], solved: ['Solved', 'good'], refuted: ['Refuted', 'bad'], abandoned: ['Abandoned', 'off'],
   idea: ['Idea', 'neutral'], blocked: ['Blocked', 'warn'], succeeded: ['Succeeded', 'good'], failed: ['Failed', 'bad'],
   proposed: ['Awaiting ratification', 'warn'], ratified: ['Ratified', 'good'], rejected: ['Rejected', 'bad'], revoked: ['Revoked', 'bad'], withdrawn: ['Withdrawn', 'off'],
-  unchecked: ['Unchecked', 'neutral'], ai_checked: ['AI-checked', 'info'], human_checked: ['Human-checked', 'good'], double_checked: ['Human + AI checked', 'good'], disputed: ['Disputed', 'bad'], retracted: ['Retracted', 'off'],
+  unchecked: ['Unchecked', 'neutral'], ai_checked: ['AI-checked', 'info'], human_checked: ['Human-checked', 'good'], double_checked: ['Human + AI checked', 'good'], proof_disputed: ['Proof disputed', 'warn'], disputed: ['Disputed', 'bad'], retracted: ['Retracted', 'off'],
   correct: ['Correct', 'good'], gap: ['Gap', 'warn'], incorrect: ['Incorrect', 'bad'], compiles: ['Reported compiling', 'good'], fails: ['Reported failing', 'bad'], incomplete: ['Contains sorry', 'warn'],
   suggested: ['Awaiting validation', 'warn'], accepted: ['Accepted', 'good'], task_pending: ['Waiting for an AI client', 'neutral'], task_running: ['Running', 'info'], task_done: ['Done', 'good'], task_failed: ['Failed', 'bad'], task_cancelled: ['Cancelled', 'off'],
   human: ['Human', 'good'], ai: ['AI', 'info'], owner: ['Owner', 'info'], member: ['Member', 'neutral'], agent: ['AI agent', 'info'], solved_project: ['Solved', 'good'], archived: ['Archived', 'off'],
@@ -67,7 +68,7 @@ const VERBS = {
   created: 'added', updated: 'updated', status: 'changed the status of', comment: 'commented on', comment_edit: 'edited a comment on', revision: 'revised',
   review: 'reviewed', retracted: 'retracted', reinstated: 'reinstated', message: 'wrote in', answer: 'proposed an answer to', ratified: 'ratified an answer to',
   rejected: 'rejected an answer to', revoked: 'revoked an answer to', withdrawn: 'withdrew an answer to', answer_fact: 'changed the fact behind', link: 'linked an item to',
-  joined: 'joined', version: 'uploaded a new version of', restored: 'restored', lean: 'added a Lean proof to', lean_check: 'checked the Lean proof of', new: 'started',
+  joined: 'joined', version: 'uploaded a new version of', restored: 'restored', lean: 'added a Lean proof to', proof: 'proposed a proof of', lean_check: 'checked the Lean proof of', new: 'started',
 };
 
 export const activityVerb = (kind) => VERBS[kind] || 'updated';

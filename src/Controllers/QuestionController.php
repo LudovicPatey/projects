@@ -22,6 +22,8 @@ final class QuestionController
         'retracted' => 'This fact is retracted.',
         'disputed' => 'This fact is denied or disputed. Settle its reviews first.',
         'chain_broken' => 'This fact relies on a denied, disputed or retracted fact.',
+        'proof_disputed' => 'The result is accepted but no proof of it is. Fix the proof, or propose and check another one.',
+        'chain_unproved' => 'This fact relies on a result whose proof is disputed.',
         'unvalidated' => 'A human must endorse the current revision of this fact first.',
     ];
     private const HUMAN_ONLY = ['solved', 'refuted'];
@@ -399,7 +401,9 @@ final class QuestionController
         if (!$f) return 'missing';
         if ($f['status'] === 'retracted') return 'retracted';
         if ($f['status'] === 'disputed') return 'disputed';
+        if ($f['status'] === 'proof_disputed') return 'proof_disputed';
         if ($f['chain'] === 'broken') return 'chain_broken';
+        if ($f['chain'] === 'unproved') return 'chain_unproved';
         return $f['endorsed_by'] ? 'validated' : 'unvalidated';
     }
 

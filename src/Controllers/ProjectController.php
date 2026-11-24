@@ -218,6 +218,9 @@ final class ProjectController
             } elseif ($m['source_type'] === 'fact') {
                 $f = Db::one('SELECT id, label, updated_at FROM facts WHERE id = ? AND deleted_at IS NULL', [$m['source_id']]);
                 if ($f) $out[] = ['kind' => 'fact', 'label' => 'Fact ' . $f['label'], 'link' => ['view' => 'facts', 'id' => (int)$f['id']], 'at' => $f['updated_at']];
+            } elseif ($m['source_type'] === 'fact_proof') {
+                $f = Db::one('SELECT f.id, f.label, p.id AS proof_id, p.updated_at FROM fact_proofs p JOIN facts f ON f.id = p.fact_id WHERE p.id = ? AND f.deleted_at IS NULL', [$m['source_id']]);
+                if ($f) $out[] = ['kind' => 'fact', 'label' => 'Proof of ' . $f['label'], 'link' => ['view' => 'facts', 'id' => (int)$f['id'], 'query' => ['proof' => (int)$f['proof_id']]], 'at' => $f['updated_at']];
             } elseif ($m['source_type'] === 'fact_review') {
                 $f = Db::one('SELECT f.id, f.label, v.updated_at FROM fact_reviews v JOIN facts f ON f.id = v.fact_id WHERE v.id = ? AND f.deleted_at IS NULL', [$m['source_id']]);
                 if ($f) $out[] = ['kind' => 'fact', 'label' => 'Review of ' . $f['label'], 'link' => ['view' => 'facts', 'id' => (int)$f['id']], 'at' => $f['updated_at']];

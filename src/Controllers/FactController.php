@@ -20,6 +20,8 @@ final class FactController
         'corollary' => 'cor', 'conjecture' => 'conj', 'observation' => 'obs', 'counterexample' => 'cex',
         'computation' => 'comp', 'remark' => 'rem'];
     private const VERDICTS = ['correct', 'gap', 'incorrect'];
+    /** What a reviewer thinks of the result itself, apart from its proof. */
+    private const STATEMENT_VERDICTS = ['true', 'false', 'unsure'];
     private const MAX_LEAN_BYTES = 1000000;
     private const METHODS = ['extracted', 'deduced'];
     private const NO_PROOF_KINDS = ['definition', 'conjecture', 'remark'];
@@ -57,10 +59,19 @@ final class FactController
              JOIN facts a ON a.id = d.fact_id JOIN facts b ON b.id = d.depends_on_id
              WHERE a.project_id = ? AND a.deleted_at IS NULL AND b.deleted_at IS NULL', [$pid]));
         $reviews = [];
-        foreach (Db::all('SELECT v.fact_id, v.verdict, v.reviewer_id, v.reviewer_kind, v.ai_model, u.name AS reviewer_name FROM fact_reviews v
+        foreach (Db::all('SELECT v.fact_id, v.verdict, v.statement_verdict, v.reviewer_id, v.reviewer_kind, v.ai_model, u.name AS reviewer_name FROM fact_reviews v
                           JOIN users u ON u.id = v.reviewer_id
                           JOIN facts f ON f.id = v.fact_id AND v.revision_no = f.current_revision WHERE f.project_id = ?', [$pid]) as $v) {
             $reviews[(int)$v['fact_id']][] = $v;
+        }
+        $proofs = [];
+        foreach (Db::all('SELECT p.id, p.fact_id, p.ai_model FROM fact_proofs p JOIN facts f ON f.id = p.fact_id AND p.revision_no = f.current_revision WHERE f.project_id = ?', [$pid]) as $p) {
+            $proofs[(int)$p['fact_id']][(int)$p['id']] = $p + ['reviews' => []];
+        }
+        foreach (Db::all('SELECT v.proof_id, p.fact_id, v.verdict, v.reviewer_id, v.reviewer_kind, v.ai_model, u.name AS reviewer_name FROM fact_proof_reviews v
+                          JOIN users u ON u.id = v.reviewer_id JOIN fact_proofs p ON p.id = v.proof_id
+                          JOIN facts f ON f.id = p.fact_id AND p.revision_no = f.current_revision WHERE f.project_id = ?', [$pid]) as $v) {
+            $proofs[(int)$v['fact_id']][(int)$v['proof_id']]['reviews'][] = $v;
         }
         $lean = [];
         foreach (Db::all('SELECT l.fact_id, l.incomplete, l.check_status FROM fact_lean l
@@ -76,15 +87,21 @@ final class FactController
             $f['revision_author'] = (int)$f['revision_author'];
             $f['current_revision'] = (int)$f['current_revision'];
             $f['comment_count'] = (int)$f['comment_count'];
-            $f['status'] = self::status($f, $reviews[$id] ?? []);
+            $f['status'] = self::status($f, $reviews[$id] ?? [], array_values($proofs[$id] ?? []));
+            $f['proof_count'] = 1 + count($proofs[$id] ?? []);
             $f['review_counts'] = array_count_values(array_column($reviews[$id] ?? [], 'verdict'));
             $f['lean'] = self::leanState($lean[$id] ?? []);
             $f['labels'] = json_decode((string)$f['labels_json'], true) ?: [];
             unset($f['labels_json']);
-            $f['endorsed_by'] = array_values(array_map(fn($v) => ['id' => (int)$v['reviewer_id'], 'name' => $v['reviewer_name']],
-                array_filter($reviews[$id] ?? [], fn($v) => $v['reviewer_kind'] === 'human' && $v['verdict'] === 'correct')));
-            $f['denied_by'] = array_values(array_map(fn($v) => ['id' => (int)$v['reviewer_id'], 'name' => $v['reviewer_name']],
-                array_filter($reviews[$id] ?? [], fn($v) => $v['reviewer_kind'] === 'human' && $v['verdict'] === 'incorrect')));
+            $people = fn(array $rows) => array_values(array_map(fn($v) => ['id' => (int)$v['reviewer_id'], 'name' => $v['reviewer_name']],
+                array_values(array_column(array_filter($rows, fn($v) => $v['reviewer_kind'] === 'human'), null, 'reviewer_id'))));
+            $altReviews = array_merge([], ...array_map(fn($p) => $p['reviews'], array_values($proofs[$id] ?? [])));
+            // Endorsed: a person accepted a proof of this revision, the main one or another.
+            $f['endorsed_by'] = $people(array_merge(array_filter($reviews[$id] ?? [], fn($v) => $v['verdict'] === 'correct'), array_filter($altReviews, fn($v) => $v['verdict'] === 'correct')));
+            $endorsers = array_column($f['endorsed_by'], 'id');
+            // The result is accepted, but no proof is: "I believe it, the proof is wrong".
+            $f['result_endorsed_by'] = array_values(array_filter($people(array_filter($reviews[$id] ?? [], fn($v) => $v['statement_verdict'] === 'true' && $v['verdict'] !== 'correct')), fn($p) => !in_array($p['id'], $endorsers, true)));
+            $f['denied_by'] = $people(array_filter($reviews[$id] ?? [], [self::class, 'doubtsStatement']));
             $f['statement_text'] = Sanitizer::toText($f['statement_html']);
             $f['display_kind'] = FactKind::of((string)$f['kind'], $f['tool'], $f['statement_text']);
             unset($f['statement_html']);
@@ -95,8 +112,9 @@ final class FactController
         }
         foreach ($edges as [$a, $b]) { $byId[$a]['deps'][] = $b; $byId[$b]['dependents'][] = $a; }
 
-        // Propagate along dependents: 'unchecked' first, so 'broken' takes precedence.
+        // Propagate along dependents, weakest first, so that 'broken' takes precedence.
         self::mark($byId, fn($f) => $f['status'] === 'unchecked', 'unchecked');
+        self::mark($byId, fn($f) => $f['status'] === 'proof_disputed', 'unproved');
         self::mark($byId, fn($f) => in_array($f['status'], ['disputed', 'retracted'], true), 'broken');
         return ['facts' => array_values($byId), 'edges' => $edges];
     }
@@ -115,17 +133,37 @@ final class FactController
         }
     }
 
-    /** A review by the model that wrote the fact is recorded but is not an independent check. */
-    private static function status(array $f, array $reviews): string
+    /**
+     * The status of a fact from all the proofs of its current revision: the main one and any other proposed.
+     * Doubting the result disputes the fact. Otherwise one accepted proof is enough, and a flaw in a proof
+     * only disputes that proof. When every proof is flawed but someone accepts the result, the proof is disputed.
+     * A review by the model that wrote a proof is recorded but is not an independent check of it.
+     */
+    private static function status(array $f, array $reviews, array $proofs = []): string
     {
         if ($f['retracted_at']) return 'retracted';
-        $human = $ai = false;
-        foreach ($reviews as $v) {
-            if ($v['verdict'] !== 'correct') return 'disputed';
-            if ($v['reviewer_kind'] === 'human') $human = true;
-            elseif (!self::sameModel($f, $v['ai_model'])) $ai = true;
+        if (array_filter($reviews, [self::class, 'doubtsStatement'])) return 'disputed';
+        $candidates = [[$reviews, (string)$f['ai_model']]];
+        foreach ($proofs as $p) $candidates[] = [$p['reviews'], (string)$p['ai_model']];
+        $human = $ai = $flawed = false;
+        foreach ($candidates as [$rows, $model]) {
+            if (array_filter($rows, fn($v) => $v['verdict'] !== 'correct')) { $flawed = true; continue; }
+            foreach ($rows as $v) {
+                if ($v['reviewer_kind'] === 'human') $human = true;
+                elseif ($model === '' || mb_strtolower(trim($model)) !== mb_strtolower(trim((string)$v['ai_model']))) $ai = true;
+            }
         }
-        return $human && $ai ? 'double_checked' : ($human ? 'human_checked' : ($ai ? 'ai_checked' : 'unchecked'));
+        if ($human || $ai) return $human && $ai ? 'double_checked' : ($human ? 'human_checked' : 'ai_checked');
+        if (!$flawed) return 'unchecked';
+        $believed = array_filter($reviews, fn($v) => $v['statement_verdict'] === 'true');
+        foreach ($proofs as $p) foreach ($p['reviews'] as $v) if ($v['verdict'] === 'correct') $believed[] = $v;
+        return $believed ? 'proof_disputed' : 'disputed';
+    }
+
+    /** A review that says the result is false. An error reported without saying so (older reviews, AI reviews) counts as doubt. */
+    private static function doubtsStatement(array $v): bool
+    {
+        return $v['statement_verdict'] === 'false' || ($v['statement_verdict'] === null && $v['verdict'] === 'incorrect');
     }
 
     private static function sameModel(array $f, ?string $model): bool
@@ -419,6 +457,13 @@ final class FactController
         if ($f['retracted_at']) throw new HttpError(422, 'This fact is retracted.');
         $verdict = $r->str('verdict');
         if (!in_array($verdict, self::VERDICTS, true)) throw new HttpError(422, 'The verdict must be correct, gap or incorrect.');
+        $statement = $r->str('statement') ?: null;
+        if ($statement !== null && !in_array($statement, self::STATEMENT_VERDICTS, true)) throw new HttpError(422, 'The statement verdict must be true, false or unsure.');
+        if ($verdict === 'correct') {
+            if ($statement !== null && $statement !== 'true') throw new HttpError(422, 'A correct proof proves the statement: it cannot be false or unsure.');
+            $statement = 'true';
+        }
+        if ($statement === 'false' && $verdict !== 'incorrect') throw new HttpError(422, 'If the result is false, its proof is incorrect.');
         $rev = Db::one('SELECT * FROM fact_revisions WHERE fact_id = ? AND revision_no = ?', [$f['id'], $f['current_revision']]);
         $kind = Auth::isAi() ? 'agent' : 'human';
         // Every revision is AI-written, so a human can always check it, including their own client's work.
@@ -432,7 +477,7 @@ final class FactController
         $model = Provenance::agentModel($r);
         $now = Db::now();
         $old = Db::value('SELECT id FROM fact_reviews WHERE fact_id = ? AND revision_no = ? AND reviewer_id = ? AND reviewer_kind = ?', [$f['id'], $f['current_revision'], Auth::id(), $kind]);
-        $row = Provenance::stamp($model, $r->input('generation_seconds')) + ['verdict' => $verdict, 'ai_model' => $model, 'body_html' => $body['html'] ?? null, 'updated_at' => $now];
+        $row = Provenance::stamp($model, $r->input('generation_seconds')) + ['verdict' => $verdict, 'statement_verdict' => $statement, 'ai_model' => $model, 'body_html' => $body['html'] ?? null, 'updated_at' => $now];
         if ($old) {
             Db::update('fact_reviews', $row, 'id = :id', ['id' => $old]);
             $rid = (int)$old;
@@ -443,7 +488,7 @@ final class FactController
             ]);
         }
         Activity::touch((int)$f['project_id'], 'fact', (int)$f['id'], 'review', $rid);
-        if ($verdict !== 'correct') QuestionController::factChanged((int)$f['project_id'], (int)$f['id'], "{$f['label']} was " . ($verdict === 'incorrect' ? 'denied' : 'reported with a gap'));
+        if ($verdict !== 'correct') QuestionController::factChanged((int)$f['project_id'], (int)$f['id'], "{$f['label']} was " . ($statement === 'true' ? 'accepted with a disputed proof' : ($verdict === 'incorrect' ? 'denied' : 'reported with a gap')));
         $link = ['view' => 'facts', 'id' => (int)$f['id']];
         if ($body) Notify::mentions((int)$f['project_id'], 'fact_review', $rid, $body['mentions'], $link, $body['text'], null, !$old);
         if ((int)$rev['author_id'] !== Auth::id() && Access::isMember((int)$f['project_id'], (int)$rev['author_id'])) {
@@ -476,6 +521,109 @@ final class FactController
             Activity::touch((int)$f['project_id'], 'fact', (int)$f['id'], 'source');
         }
         Response::json(self::present(Access::fact((int)$f['id'])));
+    }
+
+    // ----- other proofs of the same statement -----
+
+    /** A person or an AI client proposes another proof of the current revision's statement. */
+    public static function proposeProof(Request $r): never
+    {
+        $f = Access::fact($r->int('id'));
+        if ($f['retracted_at']) throw new HttpError(422, 'This fact is retracted.');
+        $pid = (int)$f['project_id'];
+        $body = Sanitizer::fromRequest($r, $pid);
+        if (!$body || ($body['text'] === '' && !$body['mentions'])) throw new HttpError(422, 'Write the proof.');
+        $model = Provenance::agentModel($r);
+        $now = Db::now();
+        $id = Db::insert('fact_proofs', Provenance::stamp($model, $r->input('generation_seconds')) + [
+            'fact_id' => $f['id'], 'revision_no' => $f['current_revision'], 'author_id' => Auth::id(), 'author_kind' => Auth::isAi() ? 'agent' : 'human',
+            'ai_model' => $model, 'body_html' => $body['html'], 'created_at' => $now, 'updated_at' => $now,
+        ]);
+        Activity::touch($pid, 'fact', (int)$f['id'], 'proof', $id);
+        $link = ['view' => 'facts', 'id' => (int)$f['id'], 'query' => ['proof' => $id]];
+        Notify::mentions($pid, 'fact_proof', $id, $body['mentions'], $link, $body['text']);
+        $author = (int)Db::value('SELECT author_id FROM fact_revisions WHERE fact_id = ? AND revision_no = ?', [$f['id'], $f['current_revision']]);
+        if ($author !== Auth::id() && Access::isMember($pid, $author)) Notify::send($author, $pid, 'fact_proof', ['link' => $link, 'excerpt' => $f['label'] . ': ' . mb_substr($body['text'], 0, 150)]);
+        Response::json(self::present(Access::fact((int)$f['id'])), 201);
+    }
+
+    /** Its author rewrites a proof. Reviews of the old text no longer apply. */
+    public static function updateProof(Request $r): never
+    {
+        [$p, $f] = self::proof($r->int('proof'));
+        if ((int)$p['author_id'] !== Auth::id()) throw new HttpError(403, 'Only its author can change this proof.');
+        $body = Sanitizer::fromRequest($r, (int)$f['project_id']);
+        if (!$body || ($body['text'] === '' && !$body['mentions'])) throw new HttpError(422, 'Write the proof.');
+        $model = Provenance::agentModel($r);
+        Db::tx(function () use ($p, $body, $model, $r) {
+            Db::update('fact_proofs', Provenance::stamp($model, $r->input('generation_seconds')) + ['body_html' => $body['html'], 'ai_model' => $model, 'updated_at' => Db::now()], 'id = :id', ['id' => $p['id']]);
+            Db::run('DELETE FROM fact_proof_reviews WHERE proof_id = ?', [$p['id']]);
+        });
+        Notify::mentions((int)$f['project_id'], 'fact_proof', (int)$p['id'], $body['mentions'], ['view' => 'facts', 'id' => (int)$f['id'], 'query' => ['proof' => (int)$p['id']]], $body['text'], null, false);
+        Activity::touch((int)$f['project_id'], 'fact', (int)$f['id'], 'proof', (int)$p['id']);
+        QuestionController::factChanged((int)$f['project_id'], (int)$f['id'], "A proof of {$f['label']} was rewritten");
+        Response::json(self::present(Access::fact((int)$f['id'])));
+    }
+
+    /** Its author, or a project owner, withdraws a proof. */
+    public static function deleteProof(Request $r): never
+    {
+        [$p, $f] = self::proof($r->int('proof'));
+        if ((int)$p['author_id'] !== Auth::id()) Access::owner((int)$f['project_id']);
+        Db::run('DELETE FROM fact_proof_reviews WHERE proof_id = ?', [$p['id']]);
+        Db::run('DELETE FROM fact_proofs WHERE id = ?', [$p['id']]);
+        Db::run("DELETE FROM mentions WHERE source_type = 'fact_proof' AND source_id = ?", [$p['id']]);
+        QuestionController::factChanged((int)$f['project_id'], (int)$f['id'], "A proof of {$f['label']} was withdrawn");
+        Response::json(self::present(Access::fact((int)$f['id'])));
+    }
+
+    /** One review per reviewer and proof. Nobody reviews their own proof, and a model does not review its own. */
+    public static function reviewProof(Request $r): never
+    {
+        [$p, $f] = self::proof($r->int('proof'));
+        if ($f['retracted_at']) throw new HttpError(422, 'This fact is retracted.');
+        if ((int)$p['revision_no'] !== (int)$f['current_revision']) throw new HttpError(422, 'This proof is about an older revision of the statement.');
+        $verdict = $r->str('verdict');
+        if (!in_array($verdict, self::VERDICTS, true)) throw new HttpError(422, 'The verdict must be correct, gap or incorrect.');
+        $kind = Auth::isAi() ? 'agent' : 'human';
+        $model = Provenance::agentModel($r);
+        if ((int)$p['author_id'] === Auth::id() && $kind === $p['author_kind'] && ($kind === 'human' || mb_strtolower((string)$p['ai_model']) === mb_strtolower((string)$model))) {
+            throw new HttpError(403, 'You wrote this proof: someone else has to check it.');
+        }
+        if ($kind === 'agent' && $p['ai_model'] && mb_strtolower(trim((string)$p['ai_model'])) === mb_strtolower(trim((string)$model))) throw new HttpError(403, 'This model wrote this proof: another model or a human has to check it.');
+        $body = Sanitizer::fromRequest($r, (int)$f['project_id']);
+        if ($verdict !== 'correct' && (!$body || ($body['text'] === '' && !$body['mentions']))) throw new HttpError(422, 'Please explain the gap or the error.');
+        $now = Db::now();
+        $old = Db::value('SELECT id FROM fact_proof_reviews WHERE proof_id = ? AND reviewer_id = ? AND reviewer_kind = ?', [$p['id'], Auth::id(), $kind]);
+        $row = Provenance::stamp($model, $r->input('generation_seconds')) + ['verdict' => $verdict, 'ai_model' => $model, 'body_html' => $body['html'] ?? null, 'updated_at' => $now];
+        if ($old) Db::update('fact_proof_reviews', $row, 'id = :id', ['id' => $old]);
+        else Db::insert('fact_proof_reviews', $row + ['proof_id' => $p['id'], 'reviewer_id' => Auth::id(), 'reviewer_kind' => $kind, 'created_at' => $now]);
+        Activity::touch((int)$f['project_id'], 'fact', (int)$f['id'], 'review', (int)$p['id']);
+        $link = ['view' => 'facts', 'id' => (int)$f['id'], 'query' => ['proof' => (int)$p['id']]];
+        if ((int)$p['author_id'] !== Auth::id() && Access::isMember((int)$f['project_id'], (int)$p['author_id'])) {
+            Notify::send((int)$p['author_id'], (int)$f['project_id'], 'fact_proof_review', ['link' => $link, 'excerpt' => $f['label'] . ': ' . $verdict]);
+        }
+        if ($verdict !== 'correct') QuestionController::factChanged((int)$f['project_id'], (int)$f['id'], "A proof of {$f['label']} was reported with " . ($verdict === 'gap' ? 'a gap' : 'an error'));
+        Response::json(self::present(Access::fact((int)$f['id'])), $old ? 200 : 201);
+    }
+
+    public static function deleteProofReview(Request $r): never
+    {
+        [$p, $f] = self::proof($r->int('proof'));
+        $v = Db::one('SELECT * FROM fact_proof_reviews WHERE id = ? AND proof_id = ?', [$r->int('rid'), $p['id']]);
+        if (!$v) throw new HttpError(404, 'Review not found');
+        if ((int)$v['reviewer_id'] !== Auth::id()) throw new HttpError(403, 'You can only withdraw your own review.');
+        Db::run('DELETE FROM fact_proof_reviews WHERE id = ?', [$v['id']]);
+        if ($v['verdict'] === 'correct') QuestionController::factChanged((int)$f['project_id'], (int)$f['id'], "An endorsement of a proof of {$f['label']} was withdrawn");
+        Response::json(self::present(Access::fact((int)$f['id'])));
+    }
+
+    /** @return array{0: array, 1: array} the proof and its fact, if the caller may see them */
+    private static function proof(int $id): array
+    {
+        $p = Db::one('SELECT * FROM fact_proofs WHERE id = ?', [$id]);
+        if (!$p) throw new HttpError(404, 'Proof not found');
+        return [$p, Access::fact((int)$p['fact_id'])];
     }
 
     public static function deleteReview(Request $r): never
@@ -1043,6 +1191,20 @@ final class FactController
             return $v;
         }, Db::all('SELECT v.*, u.name AS reviewer_name, au.name AS ai_user_name FROM fact_reviews v JOIN users u ON u.id = v.reviewer_id
                     LEFT JOIN users au ON au.id = v.ai_user_id WHERE v.fact_id = ? ORDER BY v.revision_no DESC, v.updated_at DESC', [$id]));
+        $proofReviews = [];
+        foreach (Db::all('SELECT v.*, u.name AS reviewer_name, au.name AS ai_user_name FROM fact_proof_reviews v JOIN users u ON u.id = v.reviewer_id LEFT JOIN users au ON au.id = v.ai_user_id
+                          JOIN fact_proofs p ON p.id = v.proof_id WHERE p.fact_id = ? ORDER BY v.updated_at DESC', [$id]) as $v) {
+            $v['body_text'] = Sanitizer::toText((string)$v['body_html']);
+            $proofReviews[(int)$v['proof_id']][] = $v;
+        }
+        $out['proofs'] = array_map(function ($p) use ($proofReviews) {
+            $p['reviews'] = $proofReviews[(int)$p['id']] ?? [];
+            $p['body_text'] = Sanitizer::toText((string)$p['body_html']);
+            $bad = array_filter($p['reviews'], fn($v) => $v['verdict'] !== 'correct');
+            $p['state'] = $bad ? 'flawed' : (array_filter($p['reviews'], fn($v) => $v['reviewer_kind'] === 'human' || mb_strtolower((string)$v['ai_model']) !== mb_strtolower((string)$p['ai_model'])) ? 'accepted' : 'unchecked');
+            return $p;
+        }, Db::all('SELECT p.*, u.name AS author_name, au.name AS ai_user_name FROM fact_proofs p JOIN users u ON u.id = p.author_id LEFT JOIN users au ON au.id = p.ai_user_id
+                    WHERE p.fact_id = ? ORDER BY p.revision_no DESC, p.id', [$id]));
         $out['lean_proofs'] = Db::all(
             'SELECT l.*, u.name AS created_by_name, c.name AS checked_by_name, au.name AS ai_user_name, cu.name AS check_user_name FROM fact_lean l
              JOIN users u ON u.id = l.created_by LEFT JOIN users c ON c.id = l.checked_by

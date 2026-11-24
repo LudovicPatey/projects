@@ -172,8 +172,15 @@ final class ExportController
         if ($current) {
             $out .= "\n## reviews\n\n";
             foreach ($current as $v) {
-                $out .= "- **{$v['verdict']}** by {$v['reviewer_name']}" . ($v['ai_model'] ? " (AI: {$v['ai_model']})" : '') . ($v['body_text'] !== '' ? ": {$v['body_text']}" : '') . "\n";
+                $result = $v['verdict'] !== 'correct' && $v['statement_verdict'] ? " (result: {$v['statement_verdict']})" : '';
+                $out .= "- **{$v['verdict']}**$result by {$v['reviewer_name']}" . ($v['ai_model'] ? " (AI: {$v['ai_model']})" : '') . ($v['body_text'] !== '' ? ": {$v['body_text']}" : '') . "\n";
             }
+        }
+        $proofs = array_filter($f['proofs'] ?? [], fn($p) => (int)$p['revision_no'] === (int)$f['current_revision']);
+        foreach (array_values($proofs) as $i => $p) {
+            $out .= "\n## other proof " . ($i + 1) . " ({$p['state']}), by {$p['author_name']}" . ($p['author_kind'] === 'agent' ? " (AI: {$p['ai_model']})" : '') . "\n\n{$p['body_text']}\n";
+            foreach ($p['reviews'] as $v) $out .= "\n- **{$v['verdict']}** by {$v['reviewer_name']}" . ($v['body_text'] !== '' ? ": {$v['body_text']}" : '');
+            if ($p['reviews']) $out .= "\n";
         }
         return $out . self::commentsMarkdown($f['comments']);
     }
