@@ -419,14 +419,14 @@ export const ARTICLES = [
   // ---------------------------------------------------------------- Fact database
   {
     slug: 'facts-overview', category: 'facts', title: 'What is the fact database?', summary: 'A shared graph of statements, proofs and dependencies.',
-    keywords: 'facts database graph dag statement proof intuition dependency list danus knowledge star stars starred interesting important key facts large huge big graph neighborhood around depth',
+    keywords: 'facts database graph dag statement proof intuition dependency list danus knowledge star stars starred interesting important key facts large huge big graph neighborhood around depth subject tag tags topic consolidate',
     blocks: [
       p('[Facts](app:facts) records what the project knows. A fact has a **statement**, usually a **proof**, an optional **intuition**, and the **facts it depends on**. Together they form a graph.'),
       live((c) => c.facts.total ? [line(`This project has ${n(c.facts.total, 'fact')}.` + (c.facts.to_review_count ? ` ${n(c.facts.to_review_count, 'fact')} await your review:` : ' You have reviewed them all.'), c.facts.to_review.map(toFact)),
         c.facts.most_used && line(`The most reused result is used by ${n(c.facts.most_used.used_by, 'other fact')}:`, [toFact(c.facts.most_used)])].filter(Boolean)
         : [line('This project has no fact yet. Your [AI client](help:ai-client) can extract them from your papers and discussions.')]),
       h('List and graph'),
-      list('**List:** search, filter by status, proof origin, label, star or Lean, and sort, for example by **Most starred**. Click **Filters** to show them.', '**Graph:** a fact appears below what it depends on. Click one to highlight its lineage. Drag to pan, and scroll to move. Use the zoom buttons or **Fit**.'),
+      list('**List:** search, filter by status, proof origin, label, star, [subject tag](help:consolidation) or Lean, and sort, for example by **Most starred**. Click **Filters** to show them.', '**Graph:** a fact appears below what it depends on. Click one to highlight its lineage. Drag to pan, and scroll to move. Use the zoom buttons or **Fit**.'),
       h('Stars and large graphs'),
       p('Not every fact matters as much. Click **Star** on a fact, or the star in the list, to mark the ones that do. Stars are shared: everyone sees how many a fact has and who gave them, and **Starred by me** shows only yours. Only people give stars.'),
       table(['Graph view', 'What it shows'], ['**★ Key facts**', 'Only starred facts. Two are linked when one relies on the other, directly or through other facts, and the link says through how many. Links implied by others are left out, so the map stays readable however large the database is'], ['**Around a fact**', 'The selected fact, what it relies on and what relies on it, 1, 2, 3 or 5 steps away, or its whole lineage. Without a selection, it centers on the most starred or used fact'], ['**Everything**', 'Every fact. Starred ones stand out with a gold border and keep their name when you zoom out']),
@@ -436,7 +436,7 @@ export const ARTICLES = [
       h('Reading a fact'),
       table(['Tab', 'Content'], ['**Fact**', 'Statement, proof, intuition and sources'], ['**Reviews**', 'Verdicts of humans and AI'], ['**Lean**', 'Formal proofs'], ['**Links**', 'What it uses, and what uses it'], ['**Trace**', 'Where it comes from, and who is credited']),
     ],
-    related: ['fact-labels', 'reviews', 'traceability'],
+    related: ['fact-labels', 'reviews', 'traceability', 'consolidation'],
   },
   {
     slug: 'fact-labels', category: 'facts', title: 'Labels and kinds of facts', summary: 'Counterexample, conclusion, dead end and the other labels.',
@@ -503,14 +503,34 @@ export const ARTICLES = [
       list('Click **Local** on a proposal that is too specific to be a project symbol, such as $B \\cup C$ written for a union with $\\max B < \\min C$. Rewrites then unfold it, or define it within the fact. The AI only proposes notations that several facts or sources use.', 'A term that depends on its setting gets one entry per setting, with the setting in parentheses in its name: **full-match (HT)** for Hindman\'s theorem, **full-match (FUT)** for the finite union theorem, **homogeneous (pairs)**. Each is agreed on its own. A fact that stays in one setting may write the bare term, and its notation says which entry it stands for.', 'A notion such as an IP set or a full-match makes sense in any semigroup. Its entry gives the general definition, and lists **in particular settings** how papers define it, for example in $(\\mathbb{N}, +)$ or $(\\mathrm{FIN}, \\cup)$. Facts in one setting keep using it. **Other meanings in sources** are real clashes, which rewrites remove.', 'Click **Discuss** on an entry to comment on it beside the list. Every member sees the discussion, and an AI proposing or rewriting the notation reads it. Write `@AI` there to ask its opinion.', 'An entry gives the symbol in LaTeX, its meaning, how sources differ, and the other meanings found, with where they appear.', 'Editing the symbol or meaning of an agreed entry makes it a proposal again.', 'Cite an entry with `@notation:`.'),
       h('Each fact\'s own notation'),
       p('A fact reads alone. It uses the project symbols, and defines every other symbol itself, under **Notation in this fact**. Extraction, proof searches and rewrites fill this in. A local abbreviation stays there rather than becoming a project symbol.'),
-      p('The Notation page lists the symbols **defined in several facts**, and warns when facts give one symbol different meanings. Click **Propose as global** to make one a project symbol, or let the AI review do it. Once agreed, rewrites use the global symbol instead of the local definitions.'),
+      p('The Notation page lists the symbols **defined in several facts**, and warns when facts give one symbol different meanings. One notion written in several ways, such as FS(X), FS(Y) and $\\mathrm{FS}(S)$, is listed once, with its spellings. Single-letter variables of one proof, such as $x_n$, are left out. Click **Propose as global** to make one a project symbol, or let the AI review do it. Once agreed, rewrites use the global symbol instead of the local definitions.'),
       h('Definitions'),
-      p('A definition is a convention, not a result. Definitions are no longer listed among the facts, have no review status, and never flag the facts that use them as unchecked. They appear on the Notation page, under **Definitions from the facts**: click **Make an entry** to give one its agreed symbol. New extractions no longer create definition facts. A definition found in a paper becomes a notation proposal, and a symbol the project already has with another meaning is recorded on that entry as a clash.'),
+      p('A definition is a convention, not a result. Definitions are no longer listed among the facts, have no review status, and never flag the facts that use them as unchecked. They appear on the Notation page, under **Definitions from the facts**: click **Make an entry** to give one its agreed symbol. New extractions no longer create definition facts, and propose no project notation: a definition found in a paper goes into the notation of each fact that uses it. Project symbols are decided afterwards, by a review of the whole project. When an AI proposes a symbol the project already has, even written another way, such as FS(X) and $\\mathrm{FS}(H)$, it is recorded on that entry, as a clash when its meaning differs.'),
       h('Rewrite the facts'),
       steps('Click **Rewrite N facts** on the Notation page, or **Project notation** on one fact.', 'An AI client writes the fact again in the agreed notation, using what its source means by each symbol.', 'The fact shows this version, with **Project notation** and **As written** to switch, and lists what each symbol meant in its source.'),
       list('The reviewed text never changes, so endorsements and reviews stay valid.', 'Click **Same meaning** or **Not the same** to check a rewrite. One reported as not the same is hidden, and the original is shown.', 'When the agreed notation changes, facts show that their rewrite is out of date, and can be rewritten again.', 'New extractions already write statements and proofs in the agreed notation. Only their quotations keep the paper\'s own notation.'),
     ],
     related: ['facts-overview', 'reviews', 'ai-work'],
+  },
+  {
+    slug: 'consolidation', category: 'facts', title: 'Consolidate the facts', summary: 'Duplicates across sources, missing dependencies, open questions in remarks, and subject tags.',
+    keywords: 'consolidate consolidation duplicate same result merge dependency cross paper source link remark open question kind topic topics tag tags subject filter',
+    blocks: [
+      p('Extraction reads one source at a time, so it cannot see that two papers state the same theorem, or that a proof in one paper relies on a result from another. After the last waiting extraction of a project, an AI client reads the **whole facts database** and proposes changes. People accept or reject each one.'),
+      live(() => [line('See what the AI proposed for this project.', [{ label: 'Open Consolidate', to: { view: 'facts', query: { mode: 'consolidate' } } }])]),
+      table(['Proposal', 'What accepting does', 'Who decides'],
+        ['**Same result**', 'Keeps the first fact. The other leaves the list: its sources, stars, question links and proposed answers move to the kept fact, its proof becomes [another proof](help:reviews) of it, and the facts that relied on it rely on the kept fact. Its old link opens the kept fact.', 'An owner'],
+        ['**Missing dependency**', 'Records that a proof relies on another fact. The text does not change, so reviews stay valid. A dependency that would make a cycle is refused.', 'Any member'],
+        ['**Open question**', 'A remark that asks something open becomes an [open question](help:open-questions), linked to its source, and leaves the facts. A remark that other facts rely on stays.', 'An owner'],
+        ['**Kind**', 'Corrects the kind of a fact, for example a remark that states and proves a lemma.', 'Any member'],
+        ['**Subject tags**', 'Adds free tags to the fact.', 'Any member']),
+      steps('In [Facts](app:facts), click **Consolidate**.', 'Read each proposal, the two facts it concerns and the reason the AI gives. Click a fact to open it.', 'Click **Accept** or **Reject**, or **Accept all** and **Reject all** for a whole group.'),
+      list('The AI never proposes again what people rejected.', 'Click **Ask AI to consolidate** to run it at any time, for example after adding facts by hand.', 'Each proposal shows the model that made it and its computing time.'),
+      h('Subject tags'),
+      p('Tags are free words for the subject of a fact: an area, a method, an object. They are not a fixed list, so they fit any field. The AI reuses the tags already in the project, so that a subject keeps one name.'),
+      list('On a fact, click **Add tags** or **Edit** beside the tag icon, and type the tags separated by commas. A fact has at most 8 tags.', 'Filter the list or the graph by subject under **Filters**. Click a tag to see every fact that has it.', 'The Consolidate page lists every tag in use, with its number of facts.'),
+    ],
+    related: ['facts-overview', 'notation', 'ai-work', 'reviews'],
   },
   {
     slug: 'lean', category: 'facts', title: 'Lean proofs', summary: 'Attach formal proofs and report whether they compile.',
@@ -566,6 +586,7 @@ export const ARTICLES = [
       shot('ai-page.webp', 'The AI work page with a status banner, figures, the queue and the new request form', 'The AI work page.'),
       h('What the AI does'),
       table(['Work', 'How it starts', 'What you get'],
+        ['**Consolidate the facts**', 'Automatically after the last waiting extraction, or on the Consolidate page', '[Proposals](help:consolidation) to merge duplicates, add dependencies, turn remarks into questions and tag subjects'],
         ['**Agree on notation**', 'A request on the Notation page, or on one fact', 'Proposed notation entries that a person agrees on, or a fact rewritten in the agreed notation'],
         ['**Extract facts**', 'Automatically for an uploaded file or new version. On request for a reference or a [conversation](help:conversations)', 'Facts with an exact quotation. A quotation not found in the source is refused'],
         ['**Answer a question**', 'Write `@AI` in a message or a comment', 'A reply in the same thread, labelled with its model'],
@@ -866,7 +887,7 @@ export const VIEW_HELP = { overview: 'question', questions: 'open-questions', co
 /** The article covering each server feature. Adding a controller without help makes the tests fail. */
 export const CONTROLLER_HELP = {
   AuthController: 'account', FeedbackController: 'feedback', ProjectController: 'question', DashboardController: 'question', ReferenceController: 'references', QuestionController: 'open-questions', AgentController: 'project-agents', KeyController: 'ai-client', AiTaskController: 'ai-work', BibController: 'bibliography',
-  DocumentController: 'files', FactController: 'facts-overview', NotationController: 'notation', AdminController: 'administration', AuditController: 'administration', ConversationController: 'conversations', CommentController: 'comments',
+  DocumentController: 'files', FactController: 'facts-overview', NotationController: 'notation', ConsolidationController: 'consolidation', AdminController: 'administration', AuditController: 'administration', ConversationController: 'conversations', CommentController: 'comments',
   NotificationController: 'notifications', ExportController: 'download-project', SearchController: 'search', HelpController: 'welcome',
 };
 

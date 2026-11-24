@@ -437,9 +437,13 @@ h4.mt { margin-top: 18px; }
 .fact-li.o-ai { border-left-color: #c4b5fd; }
 .fact-li.o-human { border-left-color: #99d5cb; }
 .li-meta.wrap { flex-wrap: wrap; gap: 5px 8px; }
-.fact-filters { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.fact-filters { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px; }
+.fact-filters .wide-filter { grid-column: 1 / -1; }
 .fact-filters select { padding: 4px 24px 4px 7px; font-size: 12px; background-position: right 7px center; background-size: 10px 10px; }
 .mode-seg button { white-space: nowrap; }
+/* In a narrow column, only the current view keeps its name; the others show their icon. */
+.compact-seg button:not(.on) .ms-l { display: none; }
+@media (max-width: 700px) { .narrow-seg button:not(.on) .ms-l { display: none; } }
 .lean-tag { display: inline-flex !important; font-size: 10.5px; font-weight: 700; padding: 1px 6px; border-radius: 4px; background: var(--line-2); color: var(--muted); white-space: nowrap; }
 .lean-tag.compiled { background: #1e40af; color: #fff; }
 .lean-tag.partial, .lean-tag.failed { background: #fdecea; color: var(--danger); }
@@ -535,6 +539,21 @@ h4.mt { margin-top: 18px; }
 .notation-use small { color: var(--muted); }
 @media (max-width: 1200px) { .notation-grid { grid-template-columns: minmax(0, 1fr); } .notation-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 900px) { .notation-entry { grid-template-columns: minmax(0, 1fr); } .notation-actions { justify-content: flex-start; } }
+/* Consolidation and subject tags */
+.cons-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 14px; align-items: start; padding: 12px 2px; border-top: 1px solid var(--line); }
+.cons-main { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.cons-what { font-weight: 600; overflow-wrap: anywhere; }
+.cons-facts { display: flex; flex-direction: column; gap: 4px; }
+.cons-fact { display: block; color: inherit; text-decoration: none; overflow-wrap: anywhere; }
+.cons-fact:hover .key { text-decoration: underline; }
+.cons-reason { margin: 0; color: var(--muted); overflow-wrap: anywhere; }
+@media (max-width: 900px) { .cons-item { grid-template-columns: minmax(0, 1fr); } }
+.topic-cloud { display: flex; flex-wrap: wrap; gap: 6px; }
+.topic-chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 999px; background: var(--accent-2); color: var(--accent); font-size: 12px; line-height: 18px; text-decoration: none; white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.topic-chip small { opacity: .7; }
+.topic-chip.sm { font-size: 11px; padding: 0 6px; line-height: 16px; }
+.fact-topics { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 6px 0 2px; color: var(--muted); }
+.fact-topics .topic-input { flex: 1 1 200px; min-width: 0; padding: 4px 8px; font-size: 13px; }
 .facts-graph { display: grid; grid-template-columns: minmax(0, 1fr); height: var(--app-h); }
 .facts-graph.has-detail { grid-template-columns: minmax(0, 1fr) minmax(360px, 480px) 300px; }
 .fg-col { min-height: 0; }
@@ -705,7 +724,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: non
 .ai-meta.compact { display: inline-flex; flex-wrap: nowrap; background: none; padding: 0; color: #6d3fc7; white-space: nowrap; overflow: hidden; font-size: 11.5px; }
 .ai-meta.compact b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
 .ai-meta .icon { flex: none; }
-.filter-bar { display: flex; align-items: center; gap: 6px; min-height: 28px; }
+.filter-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-height: 28px; }
+.filter-bar > select { flex-shrink: 0; }
 .filter-bar select { padding: 3px 22px 3px 6px; font-size: 12px; border-color: transparent; background-color: transparent; background-position: right 6px center; background-size: 10px 10px; color: var(--muted); font-weight: 600; cursor: pointer; }
 .filter-bar select:hover { background-color: var(--line-2); }
 .filter-bar .seg-n { margin-left: 2px; }

@@ -95,7 +95,7 @@ export const NotationPanel = {
   },
   template: `<div class="page wide notation-page">
     <header class="page-title"><span class="sh-icon"><icon name="book" :size="22"/></span><div><h1>Project notation</h1><p>One meaning per symbol. Facts from papers with other conventions are rewritten in it, and their original text is kept.</p></div>
-      <div class="seg small mode-seg"><button @click="$emit('mode', 'list')"><icon name="list" :size="13"/> List</button><button @click="$emit('mode', 'graph')"><icon name="graph" :size="13"/> Graph</button><button class="on" aria-pressed="true"><icon name="book" :size="13"/> Notation</button></div></header>
+      <div class="seg small mode-seg"><button @click="$emit('mode', 'list')"><icon name="list" :size="13"/> List</button><button @click="$emit('mode', 'graph')"><icon name="graph" :size="13"/> Graph</button><button class="on" aria-pressed="true"><icon name="book" :size="13"/> Notation</button><button @click="$emit('mode', 'consolidate')"><icon name="layers" :size="13"/> Consolidate</button></div></header>
     <div v-if="!d" class="d-empty">Loading…</div>
     <template v-else>
       <div class="kpi-grid notation-kpis">
@@ -118,7 +118,7 @@ export const NotationPanel = {
             <p class="muted small">Each fact defines the symbols that are not project symbols, so that it reads alone. These symbols are defined in several facts: making them global saves repeating them.</p>
             <article v-for="s in d.shared.slice(0, 30)" :key="s.symbol" class="notation-shared">
               <div class="notation-symbol"><math-text :text="asMath(s.symbol)"/></div>
-              <div class="notation-body"><small class="muted">In {{ s.facts }} facts<template v-if="s.meanings.length > 1"> · <b class="warn-text">{{ s.meanings.length }} different meanings</b></template></small>
+              <div class="notation-body"><small v-if="s.spellings?.length > 1" class="muted">Written {{ s.spellings.length }} ways: <template v-for="(w, i) in s.spellings.slice(0, 5)" :key="w"><math-text :text="asMath(w)"/>{{ i < Math.min(s.spellings.length, 5) - 1 ? ', ' : '' }}</template></small><small class="muted">In {{ s.facts }} facts<template v-if="s.meanings.length > 1"> · <b class="warn-text">{{ s.meanings.length }} different meanings</b></template></small>
                 <ul class="notation-variants"><li v-for="(m, i) in s.meanings" :key="i"><math-text :text="m.meaning"/> <small><template v-for="(id, j) in m.facts.slice(0, 4)" :key="id"><a :href="link('facts', id)">{{ labels.get(id) || '#' + id }}</a>{{ j < Math.min(m.facts.length, 4) - 1 ? ', ' : '' }}</template><template v-if="m.facts.length > 4"> and {{ m.facts.length - 4 }} more</template></small></li></ul></div>
               <div class="notation-actions"><span v-if="s.entry" class="pill t-neutral">{{ s.entry.status }}</span><button v-else class="btn sm" @click="fromShared(s)">Propose as global</button></div>
             </article>

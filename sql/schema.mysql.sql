@@ -239,6 +239,8 @@ CREATE TABLE IF NOT EXISTS facts (
   created_at DATETIME NOT NULL,
   updated_at DATETIME NOT NULL,
   deleted_at DATETIME NULL,
+  merged_into INT UNSIGNED NULL,          -- the fact this one was merged into, as the same result
+  topics_json TEXT NULL,                  -- free subject tags, e.g. ["computable instances"]
   UNIQUE KEY uq_fact_label (project_id, label),
   UNIQUE KEY uq_fact_external (project_id, external_id),
   FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
@@ -293,6 +295,27 @@ CREATE TABLE IF NOT EXISTS fact_reviews (
   UNIQUE KEY uq_fact_review (fact_id, revision_no, reviewer_id, reviewer_kind),
   FOREIGN KEY (fact_id) REFERENCES facts(id) ON DELETE CASCADE,
   FOREIGN KEY (reviewer_id) REFERENCES users(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Consolidation: changes an AI proposes after reading the whole database, that people accept or reject.
+CREATE TABLE IF NOT EXISTS fact_suggestions (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  project_id INT UNSIGNED NOT NULL,
+  task_id INT UNSIGNED NULL,
+  kind VARCHAR(12) NOT NULL,              -- same, depends, kind, question, topics
+  fact_id INT UNSIGNED NOT NULL,
+  other_fact_id INT UNSIGNED NULL,        -- same: the duplicate merged into fact_id; depends: what fact_id relies on
+  data_json TEXT NULL,                    -- kind: {kind}; question: {title, statement}; topics: {topics}
+  reason_text TEXT NOT NULL,
+  status VARCHAR(10) NOT NULL DEFAULT 'proposed', -- proposed, accepted, rejected, obsolete
+  ai_model VARCHAR(120) NULL,
+  ai_user_id INT UNSIGNED NULL,
+  ai_generation_ms INT UNSIGNED NULL,
+  decided_by INT UNSIGNED NULL,
+  decided_at DATETIME NULL,
+  created_at DATETIME NOT NULL,
+  KEY idx_fact_suggestion (project_id, status),
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Members mark the facts they find interesting. Shared: everyone sees how many stars a fact has.

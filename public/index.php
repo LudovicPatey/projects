@@ -4,7 +4,7 @@ declare(strict_types=1);
 require __DIR__ . '/../src/bootstrap.php';
 
 use App\{Auth, Config, HttpError, Request, Response};
-use App\Controllers\{AgentController, AiTaskController, AuthController, BibController, CommentController, ConversationController, DashboardController,
+use App\Controllers\{AgentController, AiTaskController, AuthController, BibController, CommentController, ConsolidationController, ConversationController, DashboardController,
     DocumentController, ExportController, FactController, FeedbackController, HelpController, KeyController, AdminController, AuditController, NotationController, NotificationController, ProjectController, QuestionController, ReferenceController, SearchController};
 
 $routes = [
@@ -121,6 +121,12 @@ $routes = [
     ['POST',   '/api/facts/{id}/comment-links',           [FactController::class, 'linkComment']],
     ['DELETE', '/api/facts/{id}/reviews/{rid}',           [FactController::class, 'deleteReview']],
     ['POST',   '/api/facts/{id}/proofs',                  [FactController::class, 'proposeProof']],
+    ['POST',   '/api/facts/{id}/topics',                  [ConsolidationController::class, 'setTopics']],
+    ['GET',    '/api/projects/{id}/consolidation',        [ConsolidationController::class, 'list']],
+    ['POST',   '/api/projects/{id}/consolidation',        [ConsolidationController::class, 'suggest']],
+    ['POST',   '/api/projects/{id}/consolidation/bulk',   [ConsolidationController::class, 'bulk']],
+    ['POST',   '/api/fact-suggestions/{sid}/accept',      [ConsolidationController::class, 'accept']],
+    ['POST',   '/api/fact-suggestions/{sid}/reject',      [ConsolidationController::class, 'reject']],
     ['GET',    '/api/projects/{id}/admin',                [AdminController::class, 'show']],
     ['GET',    '/api/projects/{id}/audit-keys',           [AuditController::class, 'keys']],
     ['POST',   '/api/projects/{id}/audit-keys',           [AuditController::class, 'create']],

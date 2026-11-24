@@ -7,6 +7,7 @@ export const AI_KINDS = {
   derive: { label: 'Prove new facts', short: 'Proof search', icon: 'graph', hint: 'Waits until a member starts a proof search from their AI client, with their own time and usage limits. Results arrive unchecked.', needs: null },
   review: { label: 'Independent review', short: 'Review', icon: 'check-circle', hint: 'A model independent of the author checks the proof and records a verdict.', needs: 'fact' },
   notation: { label: 'Review the notation', short: 'Notation', icon: 'book', hint: 'Looks at the notation every fact defines for itself, and proposes making shared symbols global, with one meaning per symbol. People decide.', needs: null },
+  consolidate: { label: 'Consolidate the facts', short: 'Consolidation', icon: 'layers', hint: 'Reads the whole facts database and proposes what no single extraction sees: the same result in two sources, missing dependencies, remarks that are open questions, subject tags. Queued after each round of extractions. People decide.', needs: null },
   lean: { label: 'Lean proof', short: 'Lean', icon: 'code', hint: 'Writes a Lean proof, kept only if it compiles. A person must still compare the Lean statement with the fact.', needs: 'fact' },
 };
 
@@ -74,6 +75,7 @@ export function resultLinks(t) {
     if (view) out.push({ label: 'Open the answer', view, id: r.reply.target_id, query: { comment: r.reply.root } });
     if (r.reply.target_type === 'notation') out.push({ label: 'Open the answer', view: 'facts', id: null, query: { mode: 'notation', notation: r.reply.target_id, comment: r.reply.root } });
   }
+  if (t.kind === 'consolidate' && t.status === 'done') out.push({ label: 'Review the proposals', view: 'facts', id: null, query: { mode: 'consolidate' } });
   return out;
 }
 

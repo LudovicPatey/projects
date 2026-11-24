@@ -11,7 +11,7 @@ use App\{Access, Activity, Auth, BibTex, ClientProtocol, Db, HttpError, ModelOrd
  */
 final class AiTaskController
 {
-    public const KINDS = ['extract', 'ask', 'bib', 'derive', 'review', 'lean', 'notation'];
+    public const KINDS = ['extract', 'ask', 'bib', 'derive', 'review', 'lean', 'notation', 'consolidate'];
     private const LEASE_SECONDS = 900;
     private const MAX_ATTEMPTS = 3;
     private const MAX_REQUESTS_PER_DAY = 40;
@@ -42,6 +42,20 @@ final class AiTaskController
     public static function queueNotation(int $pid, int $factId, int $revision, string $hash): void
     {
         self::insertTask($pid, 'notation', 'fact', $factId, null, null, null, 'nota:' . $factId . ':' . $revision . ':' . substr($hash, 0, 12));
+    }
+
+    /**
+     * Once the last waiting extraction of a project is done, an AI reads the whole database again:
+     * duplicates across sources, missing dependencies, remarks that are open questions, subject tags.
+     * One task per state of the database, so that nothing is queued twice for the same facts.
+     */
+    public static function queueConsolidation(int $pid): ?int
+    {
+        if (Db::value("SELECT 1 FROM ai_tasks WHERE project_id = ? AND kind IN ('extract', 'consolidate') AND status IN ('pending', 'running')", [$pid])) return null;
+        $n = (int)Db::value('SELECT COUNT(*) FROM facts WHERE project_id = ? AND deleted_at IS NULL', [$pid]);
+        if ($n < 2) return null;
+        $last = (int)Db::value('SELECT COALESCE(MAX(id), 0) FROM facts WHERE project_id = ?', [$pid]);
+        return self::insertTask($pid, 'consolidate', null, null, null, null, null, "cons:$last:$n");
     }
 
     /** "@AI" in a message or a comment asks for the opinion of whichever AI client runs next. */
@@ -119,6 +133,7 @@ final class AiTaskController
         if ($sourceType !== null && self::sourceProject($sourceType, $sourceId) !== $pid) throw new HttpError(404, 'This subject is not in the project.');
         if ($kind === 'extract' && !in_array($sourceType, ['document', 'bib', 'conversation'], true)) throw new HttpError(422, 'Choose the file, reference or conversation to extract facts from.');
         if (in_array($sourceType, ['bib', 'conversation'], true) && $kind !== 'extract') throw new HttpError(422, 'Invalid subject.');
+        if ($kind === 'consolidate' && $sourceType !== null) throw new HttpError(422, 'Consolidation reads the whole facts database.');
         if ($kind === 'notation' && $sourceType !== null && $sourceType !== 'fact') throw new HttpError(422, 'Ask for a notation for the whole project, or for one fact.');
         if ($kind === 'notation' && $sourceType === 'fact' && NotationController::hash($pid) === sha1('')) throw new HttpError(422, 'Agree on at least one notation entry first.');
         if (in_array($kind, ['review', 'lean'], true)) {
@@ -527,7 +542,7 @@ final class AiTaskController
         // A client from before this feature would fail these tasks and use up their attempts.
         if (!in_array('extract_bib', (array)$r->input('features', []), true)) $where .= " AND (t.kind <> 'extract' OR t.source_type IS NULL OR t.source_type <> 'bib')";
         if (!in_array('extract_conversation', (array)$r->input('features', []), true)) $where .= " AND (t.kind <> 'extract' OR t.source_type IS NULL OR t.source_type <> 'conversation')";
-        foreach (['review', 'lean', 'notation'] as $newKind) if (!in_array($newKind, (array)$r->input('features', []), true)) $where .= " AND t.kind <> '$newKind'";
+        foreach (['review', 'lean', 'notation', 'consolidate'] as $newKind) if (!in_array($newKind, (array)$r->input('features', []), true)) $where .= " AND t.kind <> '$newKind'";
         $perKind = is_array($r->input('models')) ? $r->input('models') : [];
         // Tasks this model must leave to a stronger one are skipped, so they cannot hide the work behind them.
         for ($offset = 0; ; $offset += 100) {
@@ -598,6 +613,7 @@ final class AiTaskController
         Db::update('ai_tasks', ['status' => 'done', 'lease_hash' => null, 'lease_until' => null, 'ai_model' => $model, 'ai_user_id' => $stamp['ai_user_id'], 'ai_generation_ms' => $stamp['ai_generation_ms'],
             'summary_text' => $summary, 'error_text' => null,
             'result_json' => json_encode(['fact_ids' => $factIds, 'suggestion_ids' => $suggestionIds, 'reply' => $reply]), 'finished_at' => $now, 'updated_at' => $now], 'id = :id', ['id' => $t['id']]);
+        if ($t['kind'] === 'extract') self::queueConsolidation($pid);
         if ($t['requested_by'] && (int)$t['requested_by'] !== Auth::aiUserId()) {
             Notify::send((int)$t['requested_by'], $pid, 'ai_done', ['link' => self::resultLink($t, $reply), 'excerpt' => $summary ?? 'Your AI request is done.']);
         }
@@ -615,6 +631,7 @@ final class AiTaskController
         $spent = $final ? Provenance::milliseconds($r->input('generation_seconds')) : null;
         Db::update('ai_tasks', ($spent ? ['ai_generation_ms' => $spent, 'ai_user_id' => Auth::aiUserId()] : []) + ['status' => $final ? 'failed' : 'pending', 'lease_hash' => null, 'lease_until' => null, 'error_text' => $error,
             'not_before' => $final ? null : gmdate('Y-m-d H:i:s', time() + 120 * (int)$t['attempts']), 'finished_at' => $final ? $now : null, 'updated_at' => $now], 'id = :id', ['id' => $t['id']]);
+        if ($final && $t['kind'] === 'extract') self::queueConsolidation((int)$t['project_id']);
         Response::json(self::present(self::row((int)$t['id'])));
     }
 
@@ -783,6 +800,7 @@ final class AiTaskController
             $view = ['oquestion' => 'questions', 'conversation' => 'conversations', 'document' => 'files', 'bib' => 'bib', 'fact' => 'facts'][$reply['target_type']] ?? null;
             if ($view) return ['view' => $view, 'id' => $reply['target_id'], 'comment' => $reply['root']];
         }
+        if ($t['kind'] === 'consolidate') return ['view' => 'facts', 'query' => ['mode' => 'consolidate']];
         return ['view' => 'ai', 'id' => (int)$t['id']];
     }
 
@@ -808,6 +826,7 @@ final class AiTaskController
                 'source' => Db::value("SELECT COALESCE(b.cite_key, d.title) FROM fact_sources s LEFT JOIN bib_entries b ON s.source_type = 'bib' AND b.id = s.source_id LEFT JOIN documents d ON s.source_type = 'document' AND d.id = s.source_id WHERE s.fact_id = ? AND s.revision_no = ? AND s.covers <> 'context' LIMIT 1", [$f['id'], $f['current_revision']])],
                 Db::all('SELECT f.id, f.label, f.kind, f.title, f.current_revision, r.statement_html, r.glossary_json FROM facts f JOIN fact_revisions r ON r.fact_id = f.id AND r.revision_no = f.current_revision WHERE f.project_id = ? AND f.deleted_at IS NULL AND f.retracted_at IS NULL ORDER BY f.id LIMIT 400', [$pid]));
         }
+        if ($t['kind'] === 'consolidate') $ctx += ConsolidationController::context($pid);
         if ($t['kind'] === 'extract') {
             $ctx['comments'] = array_slice(array_map(function ($c) {
                 $a = json_decode((string)$c['anchor_json'], true);

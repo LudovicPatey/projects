@@ -21,7 +21,7 @@ final class ProjectAdmin
         'clear_notation' => ['Clear the project notation', true],
         'reset_facts' => ['Empty the facts database', true],
     ];
-    private const FACT_TASKS = "(kind IN ('extract', 'derive', 'review', 'lean', 'notation') OR source_type = 'fact')";
+    private const FACT_TASKS = "(kind IN ('extract', 'derive', 'review', 'lean', 'notation', 'consolidate') OR source_type = 'fact')";
 
     /** What the project holds, for the Admin page. */
     public static function summary(int $pid): array
@@ -122,6 +122,7 @@ final class ProjectAdmin
             $out['notation'] = Db::run('DELETE FROM notations WHERE project_id = ?', [$pid])->rowCount();
         }
         // Revisions, sources, dependencies, reviews, other proofs, Lean proofs, rewrites and the answers they back go with their fact.
+        $out['suggestions'] = Db::run('DELETE FROM fact_suggestions WHERE project_id = ?', [$pid])->rowCount();
         Db::run('DELETE FROM facts WHERE project_id = ?', [$pid]);
         return $out;
     }

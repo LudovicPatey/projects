@@ -169,6 +169,8 @@ final class Db
         $migrations[] = 'ALTER TABLE fact_reviews ADD COLUMN statement_verdict VARCHAR(8) NULL';
         $migrations[] = 'ALTER TABLE fact_rephrasings ADD COLUMN local_json TEXT NULL';
         $migrations[] = 'ALTER TABLE notations ADD COLUMN facts_json TEXT NULL';
+        $migrations[] = 'ALTER TABLE facts ADD COLUMN merged_into INT UNSIGNED NULL';
+        $migrations[] = 'ALTER TABLE facts ADD COLUMN topics_json TEXT NULL';
         foreach ($migrations as $m) {
             try { self::pdo()->exec($m); } catch (\PDOException) { /* already applied */ }
         }

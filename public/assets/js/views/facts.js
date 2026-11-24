@@ -6,6 +6,8 @@ import { factTitle, formatFactHtml, kindCounts, kindLabel, kindOf, parseExternal
 import { PROOF_STATE, proofTally, resultOnlyBody, stance } from '../fact-proofs.js';
 import { asMath, rephrasingState, shownRephrasing } from '../notation-model.js';
 import { NotationPanel } from './notation.js';
+import { ConsolidationPanel } from './consolidation.js';
+import { parseTopics, topicFilter } from '../consolidation-model.js';
 import { GRAPH_VIEWS, bestCenter, defaultView, keyGraph, neighborhood } from '../graph-views.js';
 
 const VERDICTS = {
@@ -57,7 +59,7 @@ const usedBy = (f) => f.used_by ?? f.dependents?.length ?? 0;
 const notationView = () => { try { return localStorage.getItem('oq-fact-notation') !== 'source'; } catch { return true; } };
 
 export const FactsView = {
-  components: { FactGraph, StatusTag, ByLine, LabelChips, ProofTag, NotationPanel },
+  components: { FactGraph, StatusTag, ByLine, LabelChips, ProofTag, NotationPanel, ConsolidationPanel },
   props: { pid: Number, id: Number, query: Object },
   data() {
     return {
@@ -65,11 +67,12 @@ export const FactsView = {
       fact: null, factError: null, tab: 'content', activeThread: null, backlinks: [],
       readable: readView(), fKind: 'all', outline: [], reviewVerdict: 'correct', checkForm: null, trace: null, retracting: null, revView: null, denying: null,
       reviewStatement: 'true', resultOnly: null, proposing: null, proofCheck: null, projectNotation: notationView(), unfaithful: null,
-      fStar: 'all', gView: null, gScope: 'all', gDepth: 2, matchIds: new Set(), listTag: null,
+      fStar: 'all', gView: null, gScope: 'all', gDepth: 2, matchIds: new Set(), listTag: null, fTopic: 'all', topicDraft: null,
     };
   },
   computed: {
-    mode() { return ['graph', 'notation'].includes(this.query?.mode) ? this.query.mode : 'list'; },
+    mode() { return ['graph', 'notation', 'consolidate'].includes(this.query?.mode) ? this.query.mode : 'list'; },
+    sidePanel() { return ['notation', 'consolidate'].includes(this.mode); },
     rephrasing() { return this.shownRevision ? null : shownRephrasing(this.fact, this.projectNotation); },
     currentRephrasing() { return (this.fact?.rephrasings || []).find((r) => r.current && !r.unchanged) || null; },
     notationState() { return this.fact ? rephrasingState(this.fact) : null; },
@@ -79,13 +82,14 @@ export const FactsView = {
     isOwner() { return store.project.my_role === 'owner'; },
     filtered() {
       const q = this.search.toLowerCase();
-      let list = this.results.filter((f) => (this.fKind === 'all' || kindOf(f) === this.fKind)
+      const onTopic = topicFilter(this.fTopic === 'all' ? [] : [this.fTopic]);
+      let list = this.results.filter((f) => (this.fKind === 'all' || kindOf(f) === this.fKind) && onTopic(f)
         && (this.fStatus === 'all' || f.status === this.fStatus)
         && (this.fOrigin === 'all' || f.proof_origin === this.fOrigin)
         && (this.fLabel === 'all' || f.labels.includes(this.fLabel))
         && (this.fLean === 'all' || (this.fLean === 'with' ? f.lean !== 'none' : f.lean === this.fLean))
         && (this.fStar === 'all' || (this.fStar === 'mine' ? f.starred : f.stars > 0))
-        && (!q || [f.label, f.title, f.statement_text, f.ai_model, f.author, f.kind, kindOf(f), f.method, f.tool, f.labels.join(' ')].some((x) => String(x || '').toLowerCase().includes(q)) || this.matchIds.has(f.id)));
+        && (!q || [f.label, f.title, f.statement_text, f.ai_model, f.author, f.kind, kindOf(f), f.method, f.tool, f.labels.join(' '), (f.topics || []).join(' ')].some((x) => String(x || '').toLowerCase().includes(q)) || this.matchIds.has(f.id)));
       if (this.lineage && this.id) {
         const keep = this.lineageOf(this.id);
         list = list.filter((f) => keep.has(f.id));
@@ -98,7 +102,7 @@ export const FactsView = {
       const ids = new Set(this.filtered.map((f) => f.id));
       return this.edges.filter(([a, b]) => ids.has(a) && ids.has(b));
     },
-    activeFilters() { return [this.fStatus, this.fOrigin, this.fLabel, this.fLean, this.fStar].filter((v) => v !== 'all').length; },
+    activeFilters() { return [this.fStatus, this.fOrigin, this.fLabel, this.fLean, this.fStar, this.fTopic].filter((v) => v !== 'all').length; },
     starCount() { return this.results.filter((f) => f.stars > 0).length; },
     graphView() { return this.gView || defaultView(this.results.length, this.starCount > 0); },
     center() { return this.id && this.filtered.some((f) => f.id === this.id) ? this.id : bestCenter(this.filtered); },
@@ -118,6 +122,13 @@ export const FactsView = {
       return c;
     },
     labelOptions() { return Object.keys(this.labelCounts).sort(); },
+    // Subject tags in use, most used first, written as most facts write them.
+    topicOptions() {
+      const c = new Map();
+      for (const f of this.results) for (const t of f.topics || []) { const k = t.toLowerCase(); const x = c.get(k) || { topic: t, n: 0 }; x.n += 1; c.set(k, x); }
+      if (this.fTopic !== 'all' && !c.has(this.fTopic.toLowerCase())) c.set(this.fTopic.toLowerCase(), { topic: this.fTopic, n: 0 });
+      return [...c.values()].sort((a, b) => b.n - a.n || a.topic.localeCompare(b.topic));
+    },
     endorsed() { return this.myReview?.verdict === 'correct'; },
     denied() { return stance(this.myReview)?.key === 'denied'; },
     resultOnlyOn() { return stance(this.myReview)?.key === 'result_only'; },
@@ -156,7 +167,7 @@ export const FactsView = {
     externalRefs() { return parseExternalRefs(this.fact?.external_refs); },
     headTitle() { return this.fact ? texLine(factTitle(this.fact.title, this.fact.statement_html, true)) : ''; },
     gridClass() {
-      if (this.mode === 'notation') return 'facts-notation';
+      if (this.sidePanel) return 'facts-notation';
       if (this.mode === 'list') return 'cols3';
       return this.fact || this.factError ? 'facts-graph has-detail' : 'facts-graph';
     },
@@ -177,7 +188,7 @@ export const FactsView = {
     fact() { this.refreshOutline(); },
     revView() { this.refreshOutline(); },
     projectNotation() { this.refreshOutline(); },
-    tab() { this.refreshOutline(); }, id: { immediate: true, handler() { this.onRoute(); } }, 'query.tab'(t) { if (t) { this.tab = t; if (t === 'trace') this.loadTrace(); } } },
+    tab() { this.refreshOutline(); }, id: { immediate: true, handler() { this.onRoute(); } }, 'query.tab'(t) { if (t) { this.tab = t; if (t === 'trace') this.loadTrace(); } }, 'query.topic': { immediate: true, handler(t) { if (t) { this.fTopic = t; this.showFilters = true; } } } },
   mounted() {
     this.loadList();
     this.timer = setInterval(() => { if (!this.checkForm && !this.retracting) this.loadList(); }, 30000);
@@ -185,9 +196,10 @@ export const FactsView = {
   unmounted() { clearInterval(this.timer); },
   template: `<div :class="gridClass">
   <notation-panel v-if="mode === 'notation'" :pid="pid" :focus="+(query?.notation || 0)" :comment="+(query?.comment || 0)" @mode="setMode"/>
+  <consolidation-panel v-if="mode === 'consolidate'" :pid="pid" @mode="setMode"/>
   <section v-if="mode === 'graph'" class="col fg-col">
     <header class="col-head"><h2>Facts <span class="count">{{ filtered.length }}<template v-if="filtered.length !== results.length"> / {{ results.length }}</template></span></h2>
-      <div class="row-gap"><div class="seg small mode-seg"><button @click="setMode('list')"><icon name="list" :size="13"/> List</button><button class="on"><icon name="graph" :size="13"/> Graph</button><button @click="setMode('notation')"><icon name="book" :size="13"/> Notation</button></div><mark-all-read type="fact"/></div></header>
+      <div class="row-gap"><div class="seg small mode-seg narrow-seg" role="group" aria-label="View"><button title="List" aria-label="List" @click="setMode('list')"><icon name="list" :size="13"/> <span class="ms-l">List</span></button><button class="on" aria-pressed="true"><icon name="graph" :size="13"/> <span class="ms-l">Graph</span></button><button title="Notation: the meaning agreed for each symbol" aria-label="Notation" @click="setMode('notation')"><icon name="book" :size="13"/> <span class="ms-l">Notation</span></button><button title="Consolidate: duplicates, links across sources, open questions and subject tags" aria-label="Consolidate" @click="setMode('consolidate')"><icon name="layers" :size="13"/> <span class="ms-l">Consolidate</span></button></div><mark-all-read type="fact"/></div></header>
     <div class="fg-filters">
       <div class="search"><icon name="search" :size="15"/><input v-model="search" placeholder="Search facts…"></div>
       <select v-model="fKind" aria-label="Filter by mathematical type"><option value="all">All types</option><option v-for="k in kinds" :key="k.key" :value="k.key">{{ k.label }} ({{ k.n }})</option></select>
@@ -195,6 +207,7 @@ export const FactsView = {
       <select v-model="fOrigin" aria-label="Filter by proof origin"><option value="all">Any proof origin</option><option value="human">Human proof</option><option value="ai">AI proof</option><option value="mixed">Human + AI proof</option><option value="none">No proof</option></select>
       <select v-model="fLabel" aria-label="Filter by label"><option value="all">All labels</option><option v-for="l in labelOptions" :key="l" :value="l">{{ pretty(l) }} ({{ labelCounts[l] }})</option></select>
       <select v-model="fStar" aria-label="Filter by star"><option value="all">Starred or not</option><option value="starred">Starred ({{ starCount }})</option><option value="mine">Starred by me</option></select>
+      <select v-if="topicOptions.length || fTopic !== 'all'" v-model="fTopic" aria-label="Filter by subject tag"><option value="all">All subjects</option><option v-for="t in topicOptions" :key="t.topic" :value="t.topic">{{ t.topic }} ({{ t.n }})</option></select>
       <label class="check" v-if="id"><input type="checkbox" v-model="lineage"> Only this fact's lineage</label>
     </div>
     <div v-if="loaded && !facts.length" class="placeholder"><icon name="graph" :size="40"/><p>No facts yet. Your AI client adds them with a personal API key.</p><a class="btn primary" href="#/profile"><icon name="key" :size="14"/> Get an API key</a></div>
@@ -216,7 +229,7 @@ export const FactsView = {
 
   <section v-if="mode === 'list'" class="col col-list">
     <header class="col-head"><h2>Facts</h2>
-      <div class="row-gap"><div class="seg small mode-seg"><button class="on"><icon name="list" :size="13"/> List</button><button @click="setMode('graph')"><icon name="graph" :size="13"/> Graph</button><button @click="setMode('notation')" title="The project's notation"><icon name="book" :size="13"/> Notation</button></div><mark-all-read type="fact"/></div></header>
+      <div class="row-gap"><div class="seg small mode-seg compact-seg" role="group" aria-label="View"><button class="on" aria-pressed="true"><icon name="list" :size="13"/> <span class="ms-l">List</span></button><button title="Graph" aria-label="Graph" @click="setMode('graph')"><icon name="graph" :size="13"/> <span class="ms-l">Graph</span></button><button title="Notation: the meaning agreed for each symbol" aria-label="Notation" @click="setMode('notation')"><icon name="book" :size="13"/> <span class="ms-l">Notation</span></button><button title="Consolidate: duplicates, links across sources, open questions and subject tags" aria-label="Consolidate" @click="setMode('consolidate')"><icon name="layers" :size="13"/> <span class="ms-l">Consolidate</span></button></div><mark-all-read type="fact"/></div></header>
     <div class="col-tools">
       <div class="search"><icon name="search" :size="15"/><input v-model="search" placeholder="Search label, statement, model…"></div>
       <button v-if="definitionCount" class="link-btn small definitions-link" @click="setMode('notation')"><icon name="book" :size="13"/> {{ definitionCount }} definition{{ definitionCount > 1 ? 's are' : ' is' }} in the project notation</button>
@@ -232,6 +245,7 @@ export const FactsView = {
         <select v-model="fOrigin" aria-label="Filter by proof origin"><option value="all">Any proof origin</option><option value="human">Human proof</option><option value="ai">AI proof</option><option value="mixed">Human + AI proof</option><option value="none">No proof</option></select>
         <select v-model="fLabel" aria-label="Filter by label"><option value="all">All labels</option><option v-for="l in labelOptions" :key="l" :value="l">{{ pretty(l) }} ({{ labelCounts[l] }})</option></select>
         <select v-model="fStar" aria-label="Filter by star"><option value="all">Starred or not</option><option value="starred">Starred ({{ starCount }})</option><option value="mine">Starred by me</option></select>
+        <select v-if="topicOptions.length || fTopic !== 'all'" v-model="fTopic" class="wide-filter" aria-label="Filter by subject tag"><option value="all">All subjects</option><option v-for="t in topicOptions" :key="t.topic" :value="t.topic">{{ t.topic }} ({{ t.n }})</option></select>
         <select v-model="fLean" aria-label="Filter by Lean"><option value="all">Any Lean</option><option value="with">With Lean</option><option value="compiled">Compiling</option><option value="none">No Lean</option></select>
       </div>
     </div>
@@ -244,6 +258,7 @@ export const FactsView = {
           <label-chips :labels="f.labels"/>
           <status-tag :status="f.status"/>
           <proof-tag :origin="f.proof_origin"/>
+          <span v-for="t in (f.topics || []).slice(0, 3)" :key="t" class="topic-chip sm">{{ t }}</span>
         </div>
         <div class="li-foot">
           <ai-meta compact :model="f.ai_model" :user="f.ai_user_name" :ms="f.ai_generation_ms"/>
@@ -258,7 +273,7 @@ export const FactsView = {
     </div>
   </section>
 
-  <section v-if="mode !== 'notation' && (mode === 'list' || fact || factError)" class="col col-main">
+  <section v-if="!sidePanel && (mode === 'list' || fact || factError)" class="col col-main">
     <template v-if="fact">
       <div class="doc-banner" :class="fact.origin"><icon :name="fact.origin === 'ai' ? 'bot' : 'user'" :size="16"/>
         <span><b>{{ banner.head }}</b> {{ banner.rest }}</span></div>
@@ -269,6 +284,10 @@ export const FactsView = {
           <div class="fact-id"><code class="key big">{{ fact.label }}</code><span class="kind-tag" :class="'k-' + kindOf(fact)">{{ kindLabel(kindOf(fact)) }}</span><span>{{ fact.method }}</span><span v-if="fact.tool">{{ fact.tool }}</span><span>revision {{ fact.current_revision }}</span></div>
           <h2 :title="fact.title"><math-text :text="headTitle"/></h2>
           <div class="fact-chips"><label-chips :labels="fact.labels"/><status-tag :status="fact.status"/><proof-tag :origin="fact.proof_origin"/><span class="lean-tag" :class="fact.lean" v-if="fact.lean !== 'none'">{{ leanLabels[fact.lean] }}</span></div>
+          <div class="fact-topics"><icon name="tag" :size="13"/>
+            <template v-if="topicDraft === null"><a v-for="t in fact.topics" :key="t" class="topic-chip" :href="link('facts', null, {topic: t})">{{ t }}</a><span v-if="!fact.topics.length" class="muted small">No subject tag</span><button class="link-btn small" @click="topicDraft = fact.topics.join(', ')">{{ fact.topics.length ? 'Edit' : 'Add tags' }}</button></template>
+            <template v-else><input v-model="topicDraft" class="topic-input" placeholder="Subjects, separated by commas" aria-label="Subject tags, separated by commas" @keydown.enter="saveTopics" @keydown.esc="topicDraft = null"><button class="btn xs primary" @click="saveTopics">Save</button><button class="btn xs ghost" @click="topicDraft = null">Cancel</button></template></div>
+          <div v-if="fact.merged_from" class="notation-banner t-info"><icon name="layers" :size="14"/><span>{{ fact.merged_from }} was merged into this fact, as the same result.</span></div>
           <div class="fact-byline"><ai-meta :model="fact.ai_model" :user="fact.ai_user_name" :ms="fact.ai_generation_ms"/><span class="muted small">added by {{ fact.author }} · updated {{ timeAgo(fact.updated_at) }}</span></div>
           <div v-if="fact.status === 'definition'" class="notation-banner t-info"><icon name="book" :size="14"/><span>A definition: it belongs to the project notation, and it is not checked like a result.</span><button class="btn xs" @click="setMode('notation')">Open the notation</button></div>
           <div v-if="fact.endorsed_by.length" class="endorsers"><icon name="check-circle" :size="14"/> Endorsed by
@@ -541,7 +560,7 @@ export const FactsView = {
     onActivity() { this.loadList(); if (!this.checkForm && !this.retracting) this.loadFact(); },
     sourceIcon(t) { return { document: 'files', bib: 'book', message: 'mail', comment: 'comment' }[t] || 'link'; },
     factLink(id) { return link('facts', id, this.mode === 'graph' ? { mode: 'graph' } : null); },
-    setMode(m) { go(`/p/${this.pid}/facts` + (this.id && m !== 'notation' ? `/${this.id}` : '') + (m === 'list' ? '' : `?mode=${m}`)); },
+    setMode(m) { go(`/p/${this.pid}/facts` + (this.id && !['notation', 'consolidate'].includes(m) ? `/${this.id}` : '') + (m === 'list' ? '' : `?mode=${m}`)); },
     selectNode(id) { if (id) location.hash = this.factLink(id); else if (this.id) this.closeFact(); },
     closeFact() { this.lineage = false; location.hash = link('facts', null, this.mode === 'graph' ? { mode: 'graph' } : null); },
     lineageOf(id) {
@@ -593,7 +612,16 @@ export const FactsView = {
       if (this.query?.proof) { this.tab = 'content'; this.$nextTick(() => this.$el.querySelector?.(`[data-proof="${+this.query.proof}"]`)?.scrollIntoView({ block: 'center' })); }
       if (this.tab === 'trace') this.loadTrace();
     },
-    clearFilters() { this.fStatus = this.fOrigin = this.fLabel = this.fLean = this.fStar = 'all'; },
+    clearFilters() { this.fStatus = this.fOrigin = this.fLabel = this.fLean = this.fStar = this.fTopic = 'all'; },
+    async saveTopics() {
+      const topics = parseTopics(this.topicDraft);
+      const r = await attempt(() => api.post(`api/facts/${this.fact.id}/topics`, { topics }), 'Tags saved');
+      if (!r) return;
+      this.fact = { ...this.fact, topics: r.topics };
+      this.topicDraft = null;
+      const row = this.facts.find((f) => f.id === this.fact.id);
+      if (row) row.topics = r.topics;
+    },
     async toggleStar(f) {
       const on = !f.starred;
       const r = await attempt(() => (on ? api.post(`api/facts/${f.id}/star`, {}) : api.del(`api/facts/${f.id}/star`)));

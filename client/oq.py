@@ -52,11 +52,11 @@ import webbrowser
 import zipfile
 import zlib
 
-VERSION = "1.10.2"
+VERSION = "1.11.0"
 API_LEVEL = 2  # raise with the server's AiTaskController::API_LEVEL when a client needs new server features
 GITHUB_REPO = "LudovicPatey/projects"
-KINDS = ["extract", "ask", "bib", "derive", "review", "lean", "notation"]
-KIND_NAMES = {"extract": "Extract facts", "ask": "Answer a question", "bib": "Suggest references", "derive": "Prove new facts", "review": "Independent review", "lean": "Lean proof", "notation": "Project notation"}
+KINDS = ["extract", "ask", "bib", "derive", "review", "lean", "notation", "consolidate"]
+KIND_NAMES = {"extract": "Extract facts", "ask": "Answer a question", "bib": "Suggest references", "derive": "Prove new facts", "review": "Independent review", "lean": "Lean proof", "notation": "Project notation", "consolidate": "Consolidate the facts"}
 FACT_KINDS = ["definition", "lemma", "proposition", "theorem", "corollary", "conjecture", "remark"]
 DANUS_LABELS = {"conclusion", "example", "counterexample", "proof_attempt", "plan", "dead_end",
                 "direction", "obstacle", "master_guidance", "verification", "elaboration"}
@@ -193,7 +193,7 @@ def codex_default_model():
 # ----- which model does which work -----
 
 # Aliases follow each new Claude release. Codex uses the model configured in the user's Codex.
-MODEL_AUTO = {"claude": {"extract": "sonnet", "ask": "sonnet", "bib": "sonnet", "derive": "opus", "review": "opus", "lean": "opus", "notation": "opus"}, "codex": {}}
+MODEL_AUTO = {"claude": {"extract": "sonnet", "ask": "sonnet", "bib": "sonnet", "derive": "opus", "review": "opus", "lean": "opus", "notation": "opus", "consolidate": "opus"}, "codex": {}}
 MODEL_ALIASES = ("fable", "opus", "sonnet", "haiku")
 MODEL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,79}")
 ALIAS_MEMORY_SECONDS = 86400
@@ -503,6 +503,34 @@ def process_notation(api, task, opts, workdir):
     return {**result, "summary": f"{created} notation entr{'y' if created == 1 else 'ies'} proposed" + (f", {known} set aside (already there or invalid)" if known else "") + f". {answer.get('summary') or ''}".strip()[:1000]}
 
 
+def process_consolidate(api, task, opts, workdir):
+    """Reads the whole facts database and proposes merges, dependencies, kinds, open questions and subject tags, for people to accept."""
+    wanted = opts.model or chosen_model(opts.provider, "consolidate")
+    answer, model, seconds = run_ai(opts.provider, build_prompt(task), SCHEMAS["consolidate"], workdir, wanted, False, opts.timeout)
+    remember_alias(wanted, model)
+    answer = scrub(answer, api.key)
+    items = []
+    for x in (answer.get("suggestions") or [])[:200]:
+        if not isinstance(x, dict) or not x.get("fact"):
+            continue
+        item = {"kind": x.get("kind"), "fact": str(x["fact"]), "reason": x.get("reason") or ""}
+        if x.get("other_fact"):
+            item["other_fact"] = str(x["other_fact"])
+        if x.get("new_kind"):
+            item["new_kind"] = x["new_kind"]
+        if x.get("title"):
+            item["title"] = x["title"]
+        if x.get("topics"):
+            item["topics"] = [str(t) for t in x["topics"]][:8]
+        items.append(item)
+    created, skipped = 0, 0
+    if items:
+        r = api.post(f"/api/projects/{task['project_id']}/consolidation", {"task_id": task["id"], "ai_model": model, "generation_seconds": seconds, "suggestions": items})
+        created, skipped = len(r.get("created") or []), len(r.get("skipped") or [])
+    summary = f"{created} change{'' if created == 1 else 's'} proposed" + (f", {skipped} set aside (already proposed, rejected or invalid)" if skipped else "")
+    return {"lease": task["lease"], "ai_model": model, "generation_seconds": seconds, "summary": f"{summary}. {answer.get('summary') or ''}".strip()[:1000]}
+
+
 def process_review(api, task, opts, workdir):
     fact = task["context"].get("fact") or {}
     wanted = task.get("ai_model")
@@ -716,7 +744,6 @@ COMMENT_LINK = {"id": {"type": "integer"}, "quote": {"type": "string"}, "role": 
 EXTRACT_FACT_SCHEMA = strict({**FACT_SCHEMA["properties"], "message_id": nullable("integer"), "comments": {"type": "array", "items": strict(COMMENT_LINK)}})
 SCHEMAS = {
     "extract": strict({"summary": {"type": "string"}, "facts": {"type": "array", "items": EXTRACT_FACT_SCHEMA},
-                       "definitions": {"type": "array", "items": strict({"symbol": {"type": "string"}, "meaning": {"type": "string"}, "quote": {"type": "string"}, "page": nullable("integer")})},
                        "existing_facts": {"type": "array", "items": strict({"fact_id": {"type": "integer"}, **COMMENT_LINK})}}),
     "derive": strict({"summary": {"type": "string"}, "facts": {"type": "array", "items": FACT_SCHEMA}}),
     "ask": strict({"summary": {"type": "string"}, "reply": {"type": "string"}}),
@@ -730,6 +757,10 @@ SCHEMAS = {
         "local_notation": {"type": "array", "items": strict({"symbol": {"type": "string"}, "meaning": {"type": "string"}})},
         "uses": {"type": "array", "items": strict({"symbol": {"type": "string"}, "meaning_here": {"type": "string"}, "project_symbol": {"type": "string"}})}}),
     "lean_match": strict({"relation": {"type": "string", "enum": ["same", "stronger", "weaker", "different", "negation"]}, "explanation": {"type": "string"}}),
+    "consolidate": strict({"summary": {"type": "string"}, "suggestions": {"type": "array", "items": strict({
+        "kind": {"type": "string", "enum": ["same", "depends", "kind", "question", "topics"]}, "fact": {"type": "string"}, "other_fact": nullable(),
+        "new_kind": {"type": ["string", "null"], "enum": FACT_KINDS + [None]}, "title": nullable(), "topics": {"type": "array", "items": {"type": "string"}},
+        "reason": {"type": "string"}})}}),
     "bib": strict({"summary": {"type": "string"}, "suggestions": {"type": "array", "items": strict({
         "title": {"type": "string"}, "authors": nullable(), "year": nullable(), "venue": nullable(), "doi": nullable(),
         "arxiv": nullable(), "url": nullable(), "reason": {"type": "string"}})}}),
@@ -742,8 +773,8 @@ Your final answer must be only the JSON object requested."""
 INSTRUCTIONS = {
     "extract": """TASK: extract the mathematical results stated in the document (document.txt when present, otherwise paper.pdf).
 Keep lemmas, propositions, theorems, corollaries and conjectures that matter to the project.
-Definitions and notations are not facts: put each one in "definitions", with "symbol" in LaTeX without dollars, "meaning", an EXACT short "quote" and its "page".
-Only definitions used beyond one result belong there: an abbreviation local to one proof stays written in its fact.
+Definitions and notations are not facts, and extraction proposes no project notation: put the definition of each symbol a fact uses
+in that fact's "local_notation". Notation shared across facts is decided later, by a review of the whole project.
 Each fact must be readable alone: in "local_notation", define every symbol it uses that is not in the project's notation ("notation" in task.json),
 with its meaning in this fact. Do not repeat the project's symbols there.
 Skip results already listed in task.json under "facts". For each result give an EXACT short "quote" copied from the document,
@@ -759,7 +790,8 @@ The project's agreed notation is in "notation" in task.json. Write "statement" a
 or writes an agreed notion with another symbol, rewrite it so that the meaning is unchanged. Only "quote" keeps the document's own notation.""",
     "extract_conversation": """TASK: extract the mathematical results stated in the discussion in "conversation" in task.json. Its "messages" are in order.
 Keep lemmas, propositions, theorems, corollaries and conjectures that matter to the project. Skip results already listed under "facts".
-Definitions and notations are not facts: put each one in "definitions", with "symbol" in LaTeX without dollars, "meaning", and an EXACT short "quote" from the message that gives it. Leave "page" null.
+Definitions and notations are not facts, and extraction proposes no project notation: put the definition of each symbol a fact uses
+in that fact's "local_notation". Notation shared across facts is decided later, by a review of the whole project.
 Each fact must be readable alone: in "local_notation", define every symbol it uses that is not in the project's notation ("notation" in task.json),
 with its meaning in this fact. Do not repeat the project's symbols there.
 A discussion is informal: keep only what a participant really states. A guess, a question or an idea to try is a "conjecture" or is left out, never a theorem.
@@ -783,8 +815,11 @@ or that matter to the project, and propose one entry for each: "symbol" in LaTeX
 "note" saying how the sources differ and naming them (or null), "variants" listing the other meanings or spellings found, each with "where",
 and "definition_fact_id", the id of a fact that defines it, or null. When two meanings both matter, give them two different symbols, for example
 FS(X) including 0 and NS(X) for FS(X) without 0. Prefer the most common convention of the literature.
-Propose only notations that several facts or sources use, or standard notions. A notation local to one argument, such as $B \cup C$ written
-for a union where $\max B < \min C$, is not a project symbol: leave it out, it stays defined within its fact.
+Aim for a short list, a few dozen entries at most: the notions that several facts or sources share and that readers could confuse.
+Do not propose notation that is standard in the field and that every reader knows, nor the machinery of one paper's proofs, nor names of
+variables. A notation local to one argument, such as $B \cup C$ written for a union where $\max B < \min C$, stays defined within its fact.
+One notion written in several ways, such as FS(X), FS(H) and \\mathrm{FS}(S), is one entry: list the other spellings in "variants", and
+use "relation": "clash" when one of them means something else, for example when it includes 0.
 Some notions are defined differently in different settings but are one general notion: an IP set or a full-match makes sense in any semigroup,
 and papers define it in $(\mathbb{N}, +)$ for Hindman's theorem or in $(\mathrm{FIN}, \cup)$ for the finite union theorem. Propose its general
 definition, for an arbitrary semigroup or structure, and list each setting in "variants" with "relation": "instance".
@@ -808,6 +843,22 @@ The mathematical content must stay exactly the same: do not correct, strengthen 
 remove hypotheses or steps. If nothing has to change, set "unchanged" to true and copy the text. The fact must be readable alone: in "local_notation", define every symbol
 of the rewritten fact that is not a project symbol, including the local entries you defined. In "uses", list each symbol whose meaning matters:
 "symbol" as the fact writes it, "meaning_here", and "project_symbol", the agreed symbol now used. Fill "proof" only if the fact has a proof.""",
+    "consolidate": """TASK: consolidate the facts database of this project. Facts were extracted one source at a time, so no extraction
+saw the others. "fact_texts" in task.json lists every fact in short: its id, label, kind, title, statement, whether it has a proof, its source,
+the ids it "depends_on" and its "topics". Read them all and propose, in "suggestions", the changes that only the whole database shows:
+- "same": "fact" and "other_fact" state the same result, for example a theorem proved in one paper and cited in another. Put the fact to keep
+  in "fact", usually the one with a proof, and the duplicate in "other_fact". Only when the statements are equivalent as written, not when one
+  is a special case, a strengthening or a variant of the other.
+- "depends": the proof of "fact" uses "other_fact", although this is not recorded, for example a result cited from another source.
+- "kind": "fact" has the wrong kind; give the right one in "new_kind". A remark that states a result with a proof is a lemma or a proposition.
+- "question": "fact" is a remark that asks a question that is still open, and is not a result. Give the question a short "title".
+  Do not propose this for a remark that other facts depend on.
+- "topics": free subject tags for "fact", in "topics", a few words each, such as the area, the method or the object studied. Reuse the tags of
+  "topics" in task.json whenever they fit, so that the same subject has one name, and add a new tag only when none fits. Give each fact 1 to 4 tags.
+Name facts by their id or label. In "reason", say in one or two sentences why, quoting the statements when it helps.
+"earlier_suggestions" lists proposals already waiting or that people rejected: never propose them again.
+Be conservative: a wrong merge loses a result, so propose "same" only when you are sure. Propose at most 200 changes, the most useful first.
+People accept or reject each one.""",
     "ask": """TASK: answer the last message of the "thread" in task.json, which asks for the opinion of the AI.
 Be precise and concise, separate what is proved from what is your opinion, and state your uncertainty.
 You may cite project objects as @{fact:ID}, @{question:ID} or @{bib:ID}, using only ids listed in task.json.
@@ -909,7 +960,7 @@ def fact_items(task, answer, source_text):
     items, dropped = [], []
     for f in answer.get("facts") or []:
         if task["kind"] == "extract" and f.get("kind") == "definition":
-            continue  # a convention, proposed for the project's notation instead (propose_definitions)
+            continue  # a convention: it belongs in the local notation of the facts that use it
         ref = re.sub(r"[^\w:.-]+", "-", str(f.get("ref") or "")).strip("-")[:32]
         if not ref or not f.get("title") or not f.get("statement"):
             dropped.append((ref or "?", "incomplete"))
@@ -951,31 +1002,6 @@ def fact_items(task, answer, source_text):
     for i in items:
         i["depends_on"] = [d for d in i["depends_on"] if d in known or d in existing]
     return items, dropped
-
-
-def propose_definitions(api, task, items, source_text, model):
-    """Definitions are conventions: they go to the project's notation, where people agree on one meaning per symbol.
-    A symbol the project already has with another meaning is recorded there as a clash."""
-    ctx = task["context"]
-    where = (ctx.get("reference") or {}).get("cite_key") or (ctx.get("document") or {}).get("title") or (ctx.get("conversation") or {}).get("subject") or "a source"
-    said = " ".join(" ".join(str(m.get("text") or "").lower().split()) for m in (ctx.get("conversation") or {}).get("messages") or [])
-    proposed = 0
-    for d in (items or [])[:30]:
-        symbol, meaning, quote = (str(d.get(k) or "").strip() for k in ("symbol", "meaning", "quote"))
-        if not symbol or not meaning or not quote:
-            continue
-        if ctx.get("conversation"):
-            if " ".join(quote.lower().split()) not in said:
-                continue
-        elif source_text is not None and not quote_found(quote, source_text):
-            continue
-        place = where + (f", p. {d['page']}" if d.get("page") else "")
-        try:
-            api.post(f"/api/projects/{task['project_id']}/notation", {"symbol": symbol, "meaning_text": meaning, "note_text": f'As defined in {place}: "{quote}"', "where": place, "ai_model": model})
-            proposed += 1
-        except ApiError:
-            pass  # already there with this meaning, or a platform without project notation
-    return proposed
 
 
 def valid_comment_links(task, links):
@@ -1052,10 +1078,10 @@ def process(api, task, opts):
     kind = task["kind"]
     with tempfile.TemporaryDirectory(prefix="oq-task-") as tmp:
         workdir = pathlib.Path(os.path.realpath(tmp))
-        if kind in ("review", "lean", "notation"):
+        if kind in ("review", "lean", "notation", "consolidate"):
             public = {k: task.get(k) for k in ("id", "kind", "source_type", "source_id", "prompt_text")}
             (workdir / "task.json").write_text(json.dumps({"task": public, **task["context"]}, ensure_ascii=False, indent=1), encoding="utf-8")
-            return {"review": process_review, "lean": process_lean, "notation": process_notation}[kind](api, task, opts, workdir)
+            return {"review": process_review, "lean": process_lean, "notation": process_notation, "consolidate": process_consolidate}[kind](api, task, opts, workdir)
         source_text = None
         doc = task["context"].get("document")
         in_conversation = kind == "extract" and task.get("source_type") == "conversation"  # its text is in task.json
@@ -1091,7 +1117,6 @@ def process(api, task, opts):
         ids, refused = submit_facts(api, task, items, model)
         result["fact_ids"] = ids
         linked = link_existing_comments(api, task, answer.get("existing_facts")) if kind == "extract" else 0
-        notions = propose_definitions(api, task, answer.get("definitions"), source_text, model) if kind == "extract" else 0
         if kind == "derive" and task.get("source_type") == "question":
             for fid in ids:
                 try:
@@ -1099,7 +1124,7 @@ def process(api, task, opts):
                 except ApiError:
                     pass
         left = len(dropped) + len(refused)
-        summary = f"{len(ids)} fact(s) added" + (f", {left} set aside because they could not be verified or were invalid" if left else "") + (f", {linked} comment(s) linked to existing facts" if linked else "") + (f", {notions} definition(s) proposed for the project notation" if notions else "") + f". {summary}"
+        summary = f"{len(ids)} fact(s) added" + (f", {left} set aside because they could not be verified or were invalid" if left else "") + (f", {linked} comment(s) linked to existing facts" if linked else "")  + f". {summary}"
         omitted = (task["context"].get("conversation") or {}).get("omitted_older_messages") or 0
         if omitted:
             summary = f"{omitted} older message(s) were too long to read. {summary}"
@@ -1247,7 +1272,7 @@ def work_once(api, opts, name, stop=None):
     models = claim_models(opts, kinds)
     if "review" in kinds:
         models["review"] = review_models(opts)
-    body = {"kinds": kinds, "client_name": name, "ai_model": opts.model or opts.provider, "models": models, "features": ["extract_bib", "extract_comments", "extract_conversation", "review", "lean", "notation"]}
+    body = {"kinds": kinds, "client_name": name, "ai_model": opts.model or opts.provider, "models": models, "features": ["extract_bib", "extract_comments", "extract_conversation", "review", "lean", "notation", "consolidate"]}
     task, opts.hold = claim_task(api, opts, body)
     if not task:
         return False
@@ -1636,7 +1661,7 @@ def danus_serve(api, graph, a):
 DEFAULT_LIMITS = {
     "max_session_percent": 50, "max_weekly_percent": 50,  # share of the subscription this client may reach
     "tasks_per_day": 20, "minutes_per_day": 120, "tokens_per_day": 2000000,  # 0 = no cap
-    "task_minutes": 30, "hours": "", "kinds": ["extract", "ask", "bib", "review", "notation"], "review_offered": True, "notation_offered": True, "paused": False,  # derivation is the costliest: opt-in
+    "task_minutes": 30, "hours": "", "kinds": ["extract", "ask", "bib", "review", "notation", "consolidate"], "review_offered": True, "notation_offered": True, "consolidate_offered": True, "paused": False,  # derivation is the costliest: opt-in
     "danus_enabled": False, "danus_workers": 1, "danus_minutes": 60,
     "ai_billing": "subscription",  # "api" must be chosen explicitly, because it is charged per use
 }
@@ -1704,11 +1729,11 @@ def clean_limits(raw):
 def load_limits():
     try:
         raw = json.loads((data_dir() / "limits.json").read_text(encoding="utf-8"))
-        for kind in ("review", "notation"):  # offered once to existing users, who can then turn it off
+        for kind in ("review", "notation", "consolidate"):  # offered once to existing users, who can then turn it off
             if not raw.get(f"{kind}_offered"):
                 raw["kinds"] = list(dict.fromkeys(list(raw.get("kinds", DEFAULT_LIMITS["kinds"])) + [kind]))
         out = clean_limits(raw)
-        out["review_offered"] = out["notation_offered"] = True
+        out["review_offered"] = out["notation_offered"] = out["consolidate_offered"] = True
         return out
     except (OSError, ValueError, Stop):
         return dict(DEFAULT_LIMITS)
@@ -1716,7 +1741,7 @@ def load_limits():
 
 def save_limits(raw):
     merged = {**load_limits(), **raw}
-    clean = {**clean_limits(merged), "review_offered": True, "notation_offered": True}
+    clean = {**clean_limits(merged), "review_offered": True, "notation_offered": True, "consolidate_offered": True}
     data_dir().mkdir(parents=True, exist_ok=True)
     (data_dir() / "limits.json").write_text(json.dumps(clean, indent=2), encoding="utf-8")
     return clean
@@ -4649,7 +4674,7 @@ const updateBanner=()=>{const u=S.update;if(!u?.available&&!u?.required)return''
 const versionBox=()=>{const u=S.update||{};const label=u.available?`Version ${u.latest} available`:u.error?'Check failed':u.checked_at?'Up to date':'Not checked yet';return`<small>Version ${e(S.version)}</small><small>${e(label)}</small><button data-a=updatecheck ${checking?'disabled':''}>${checking?'Checking…':'Check for updates'}</button><a href="https://github.com/LudovicPatey/projects" target=_blank rel="noopener noreferrer">Source code (AGPL-3.0)</a>`};
 const home=()=>`<h1>Home</h1><p class=sub>Your computer helps your research projects, within the limits you set.</p>${updateBanner()}${hero()}<div class=grid>${usage()}<section class=panel><h2>Your projects</h2>${S.projects.map(p=>`<div class="row ${p.paused?'off':''}"><div><b>${e(p.title)}</b><small>${p.unavailable?'Could not read its work queue':p.waiting+' waiting'}${p.review?' · '+p.review+' reference(s) to validate':''}</small></div><button class=toggle role=switch aria-checked=${!p.paused} aria-label="${e(p.title)}: ${p.paused?'paused':'active'}" data-pswitch=${p.id}>${p.paused?'Paused':'Active'}<i></i></button></div>`).join('')||'<div class=empty>No project yet.</div>'}</section></div><section class=panel style="margin-top:14px"><h2>Activity</h2><div class=log tabindex=0>${S.log.slice().reverse().map(x=>`<div><span>${e(x.at)}</span>${e(x.text)}</div>`).join('')||'<div class=empty>Nothing yet.</div>'}</div></section>`;
 const num=(k,l,h,min,max,unit)=>`<label class=f>${e(l)}<small>${e(h)}</small><input type=number data-l=${k} min=${min} max=${max} value="${e(draft[k])}"></label>`;
-let MD=null,MO={},MP=null;const modelTool=()=>MP||(S.provider==='codex'?'codex':'claude');const pickModel=(k,val,list)=>MO[k]?`<input type=text data-md=${k} placeholder="Exact model name" value="${e(val==='auto'?'':val)}">`:`<select data-msel=${k}>${[...list,...(list.some(o=>o.id===val)?[]:[{id:val,label:val}]),{id:'__other',label:'Other model…'}].map(o=>`<option value="${e(o.id)}" ${o.id===val?'selected':''}>${e(o.label)}</option>`).join('')}</select>`;const modelsPanel=()=>{const m=S.models;if(!m)return'';const p=modelTool(),c=m.choices[p]||{},v=k=>MD?.[k]??(c[k]||'auto'),hint=k=>m.auto[p]?.[k]||'your '+toolName(p)+' default';return`<section class=panel style="margin-bottom:14px"><h2>AI models</h2><p class=sub>Automatic follows new releases. A weaker model never repeats an extraction that a stronger one finished.</p><p class=actions role=group aria-label="AI tool">${[['claude','Claude'],['codex','ChatGPT']].map(([x,l])=>`<button class="btn ${x===p?'primary':''}" data-mp=${x} aria-pressed=${x===p}>${l}</button>`).join('')}</p><div class=grid>${[['extract','Extract facts'],['ask','Answer @AI'],['bib','Find references'],['review','Independent review'],['lean','Lean proofs'],['notation','Project notation'],['derive','Automatic proving']].map(([k,l])=>`<label class=f>${l}<small>Automatic: ${e(hint(k))}</small>${pickModel(k,v(k),m.suggest[p])}</label>`).join('')}<label class=f>Proof search (Prove new facts)<small>Automatic: ${e(m.danus_default)}</small>${pickModel('danus',MD?.danus??(m.danus||'auto'),m.suggest[m.danus_tool])}</label></div><p><button class=btn data-a=modelsave>Save models</button></p></section>`};const limits=()=>`<h1>Usage limits</h1><p class=sub>Keep your AI subscription for your own work. These limits apply to all your active projects together.</p>${modelsPanel()}<div class=grid><section class=panel><h2>Share of your subscription</h2><label class=f>Stop at this share of the session limit: ${draft.max_session_percent}%<small>ChatGPT reports this directly.</small><input type=range min=5 max=100 step=5 data-l=max_session_percent value="${draft.max_session_percent}"></label><label class=f>Stop at this share of the weekly limit: ${draft.max_weekly_percent}%<input type=range min=5 max=100 step=5 data-l=max_weekly_percent value="${draft.max_weekly_percent}"></label><label class=f>Working hours<small>For example 22-7 for nights. Empty means all day.</small><input type=text data-l=hours value="${e(draft.hours)}" placeholder="All day"></label></section><section class=panel><h2>Daily caps</h2>${num('tasks_per_day','Tasks per day','0 means no cap.',0,1000)}${num('minutes_per_day','Computing minutes per day','0 means no cap.',0,1440)}${num('tokens_per_day','Tokens per day','0 means no cap.',0,10000000000)}${num('task_minutes','Maximum minutes per task','A longer task is stopped.',1,720)}</section></div><section class=panel style="margin-top:14px"><h2>What this computer may do</h2>${[['extract','Extract facts from new files, and from references and conversations when a member asks'],['ask','Answer @AI questions'],['bib','Suggest references'],['review','Review facts independently, when a member asks'],['lean','Write and compile Lean proofs, when a member asks (needs Lean)'],['notation','Propose a common notation and rewrite facts in it, when a member asks'],['derive','Prove new facts automatically, without pressing Start (uses more of your subscription)']].map(([k,l])=>`<label class=check><input type=checkbox data-k=${k} ${draft.kinds.includes(k)?'checked':''}> ${l}</label>`).join('')}<p><button class="btn primary" data-a=save>Save limits</button></p></section>${leanPanel()}`;const leanPanel=()=>{const l=S.lean||{},j=S.jobs.lean?.running;if(!l.available)return'';return`<section class=panel style="margin-top:14px"><h2>Lean proofs</h2><div class=row><div><b>${l.ready?'Lean '+e(l.version)+' is ready':j?'Installing Lean':'Not installed'}</b><small>${l.ready?'Proofs compile with no network and no access to your files.':'Needs about '+l.min_free_gb+' GB of free disk space, mostly for Mathlib.'}</small></div>${l.ready?'':`<button class=btn data-a=leansetup ${j?'disabled':''}>${j?'Installing…':'Install Lean'}</button>`}</div></section>`};
+let MD=null,MO={},MP=null;const modelTool=()=>MP||(S.provider==='codex'?'codex':'claude');const pickModel=(k,val,list)=>MO[k]?`<input type=text data-md=${k} placeholder="Exact model name" value="${e(val==='auto'?'':val)}">`:`<select data-msel=${k}>${[...list,...(list.some(o=>o.id===val)?[]:[{id:val,label:val}]),{id:'__other',label:'Other model…'}].map(o=>`<option value="${e(o.id)}" ${o.id===val?'selected':''}>${e(o.label)}</option>`).join('')}</select>`;const modelsPanel=()=>{const m=S.models;if(!m)return'';const p=modelTool(),c=m.choices[p]||{},v=k=>MD?.[k]??(c[k]||'auto'),hint=k=>m.auto[p]?.[k]||'your '+toolName(p)+' default';return`<section class=panel style="margin-bottom:14px"><h2>AI models</h2><p class=sub>Automatic follows new releases. A weaker model never repeats an extraction that a stronger one finished.</p><p class=actions role=group aria-label="AI tool">${[['claude','Claude'],['codex','ChatGPT']].map(([x,l])=>`<button class="btn ${x===p?'primary':''}" data-mp=${x} aria-pressed=${x===p}>${l}</button>`).join('')}</p><div class=grid>${[['extract','Extract facts'],['ask','Answer @AI'],['bib','Find references'],['review','Independent review'],['lean','Lean proofs'],['notation','Project notation'],['consolidate','Consolidate the facts'],['derive','Automatic proving']].map(([k,l])=>`<label class=f>${l}<small>Automatic: ${e(hint(k))}</small>${pickModel(k,v(k),m.suggest[p])}</label>`).join('')}<label class=f>Proof search (Prove new facts)<small>Automatic: ${e(m.danus_default)}</small>${pickModel('danus',MD?.danus??(m.danus||'auto'),m.suggest[m.danus_tool])}</label></div><p><button class=btn data-a=modelsave>Save models</button></p></section>`};const limits=()=>`<h1>Usage limits</h1><p class=sub>Keep your AI subscription for your own work. These limits apply to all your active projects together.</p>${modelsPanel()}<div class=grid><section class=panel><h2>Share of your subscription</h2><label class=f>Stop at this share of the session limit: ${draft.max_session_percent}%<small>ChatGPT reports this directly.</small><input type=range min=5 max=100 step=5 data-l=max_session_percent value="${draft.max_session_percent}"></label><label class=f>Stop at this share of the weekly limit: ${draft.max_weekly_percent}%<input type=range min=5 max=100 step=5 data-l=max_weekly_percent value="${draft.max_weekly_percent}"></label><label class=f>Working hours<small>For example 22-7 for nights. Empty means all day.</small><input type=text data-l=hours value="${e(draft.hours)}" placeholder="All day"></label></section><section class=panel><h2>Daily caps</h2>${num('tasks_per_day','Tasks per day','0 means no cap.',0,1000)}${num('minutes_per_day','Computing minutes per day','0 means no cap.',0,1440)}${num('tokens_per_day','Tokens per day','0 means no cap.',0,10000000000)}${num('task_minutes','Maximum minutes per task','A longer task is stopped.',1,720)}</section></div><section class=panel style="margin-top:14px"><h2>What this computer may do</h2>${[['extract','Extract facts from new files, and from references and conversations when a member asks'],['ask','Answer @AI questions'],['bib','Suggest references'],['review','Review facts independently, when a member asks'],['lean','Write and compile Lean proofs, when a member asks (needs Lean)'],['notation','Propose a common notation and rewrite facts in it, when a member asks'],['consolidate','Consolidate the facts database after extractions: duplicates, links, open questions, subject tags'],['derive','Prove new facts automatically, without pressing Start (uses more of your subscription)']].map(([k,l])=>`<label class=check><input type=checkbox data-k=${k} ${draft.kinds.includes(k)?'checked':''}> ${l}</label>`).join('')}<p><button class="btn primary" data-a=save>Save limits</button></p></section>${leanPanel()}`;const leanPanel=()=>{const l=S.lean||{},j=S.jobs.lean?.running;if(!l.available)return'';return`<section class=panel style="margin-top:14px"><h2>Lean proofs</h2><div class=row><div><b>${l.ready?'Lean '+e(l.version)+' is ready':j?'Installing Lean':'Not installed'}</b><small>${l.ready?'Proofs compile with no network and no access to your files.':'Needs about '+l.min_free_gb+' GB of free disk space, mostly for Mathlib.'}</small></div>${l.ready?'':`<button class=btn data-a=leansetup ${j?'disabled':''}>${j?'Installing…':'Install Lean'}</button>`}</div></section>`};
 const account=()=>{const t=n=>{const x=S.tools[n],j=S.jobs['install-'+n]?.running,g=S.jobs['login-'+n]?.running;return`<div class=row><div><b>${toolName(n)}</b><small>${x.installed?(x.signed_in?'Installed and signed in':'Installed, sign-in needed'):'Not installed'}${x.via_app?' · from Claude for Mac':''}</small></div>${!x.installed?`<button class=btn data-tool=install data-n=${n} ${j?'disabled':''}>${j?'Installing…':'Install'}</button>`:!x.signed_in?`<button class="btn primary" data-tool=login data-n=${n} ${g?'disabled':''}>${g?'Check your browser…':'Sign in'}</button>`:`<button class=btn data-use=${n} ${S.provider===n?'disabled':''}>${S.provider===n?'In use':'Use this'}</button>`}</div>`};
  return`<h1>Accounts</h1><p class=sub>The app uses your own AI account, on this computer.</p><section class=panel><h2>1. Choose your AI</h2>${t('claude')}${t('codex')}</section><section class=panel><h2>2. Connect to the platform</h2>${S.connected?`<div class=row><div><b>Connected</b><small>${e(S.url)}</small></div><button class="btn danger" data-a=disconnect>Disconnect</button></div>`:`<label class=f>Platform address<input type=text id=url data-c=url value="${e(CF.url??(S.url||'https://projects.ludovicpatey.com'))}"></label><label class=f>Personal key<small>Create it on your profile page on the platform, then paste it here.</small><input type=password id=key data-c=key autocomplete=off placeholder="ouk_…" value="${e(CF.key||'')}"></label>${connectErr||S.error?`<div class=err id=cerr role=alert>${e(connectErr||S.error)}</div>`:''}<button class="btn primary" data-a=connect ${connecting?'disabled':''}>${connecting?'Connecting…':'Connect'}</button>`}</section><section class=panel><h2>3. How AI use is paid</h2><label class=check><input type=radio name=billing data-billing=subscription ${S.limits.ai_billing==='subscription'?'checked':''}> <span><b>My subscription only</b> (recommended). API keys on this computer are ignored.</span></label><label class=check><input type=radio name=billing data-billing=api ${S.limits.ai_billing==='api'?'checked':''}> <span><b>Allow a paid API key.</b> The provider charges each use.</span></label><div class=note>If you turned on <b>usage credits</b> in your Claude settings, background work can spend them after your plan limit. Keep them off, or set a monthly cap.</div></section>`};
 const fmtMin=m=>{m=Math.round(m);return m>=60?`${Math.floor(m/60)} h ${String(m%60).padStart(2,'0')}`:`${m} min`};

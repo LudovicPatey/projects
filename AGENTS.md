@@ -25,7 +25,7 @@ Run before reporting a feature as done:
 npm test
 ```
 
-**Visual check.** After any change to the interface, open each affected view in a browser at widths 1440, 1024, 800 and 375, including the dialogs it opens, and run `scripts/visual-audit.js` in the page (paste it in the console, or evaluate it from a test browser). It must return an empty list. It reports a page wider than the window, text squeezed letter by letter, controls off screen, dropdowns without the custom arrow or cutting their text, rows whose dropdown and buttons differ in height, and menus opening outside the window. Then look at a screenshot: the audit does not judge taste. Use `select.sm` beside `btn sm`, and never set `background:` or a small right padding on a `select`.
+**Visual check.** After any change to the interface, open each affected view in a browser at widths 1440, 1024, 800 and 375, including the dialogs it opens, and run `scripts/visual-audit.js` in the page (paste it in the console, or evaluate it from a test browser). It must return an empty list. It reports a page wider than the window, text squeezed letter by letter, controls off screen or spilling out of their column, dropdowns without the custom arrow or cutting their text, rows whose dropdown and buttons differ in height, and menus opening outside the window. Then look at a screenshot: the audit does not judge taste. Use `select.sm` beside `btn sm`, and never set `background:` or a small right padding on a `select`.
 
 ## Conventions
 

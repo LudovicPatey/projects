@@ -151,7 +151,7 @@ test('a fact is rewritten in the agreed notation without touching its reviewed t
   await clear();
 });
 
-test('the client proposes entries, rewrites a fact, and sends definitions to the notation', async () => {
+test('the client proposes entries, rewrites a fact, and extraction keeps definitions in each fact', async () => {
   await clear();
   await app.call(ann, 'POST', `/api/projects/${pid}/ai/tasks`, { kind: 'notation' });
   fakeClaude(`{"summary": "Compared.", "entries": [{"symbol": "\\\\mathrm{IP}(X)", "meaning": "The IP set of $X$.", "note": None, "variants": [], "definition_fact_id": None}, {"symbol": "\\\\mathrm{NS}(X)", "meaning": "$\\\\mathrm{FS}(X) \\\\setminus \\\\{0\\\\}$.", "note": None, "variants": [], "definition_fact_id": None}]} if "review the notation of the whole project" in prompt else None`);
@@ -175,15 +175,17 @@ test('the client proposes entries, rewrites a fact, and sends definitions to the
   await fetch(`${app.base}/api/bib/${ref}/pdf`, { method: 'POST', headers: { Cookie: ann.cookie, 'X-CSRF-Token': ann.csrf }, body: form });
   await clear();
   await app.call(ann, 'POST', `/api/projects/${pid}/ai/tasks`, { kind: 'extract', source_type: 'bib', source_id: ref });
-  fakeClaude(`{"summary": "Read.", "facts": [{"ref": "def", "title": "FS", "kind": "definition", "statement": "FS(X) is the set of non-empty finite sums.", "proof": None, "quote": "FS(X) is the set of non-empty finite sums of X", "page": 1, "covers": "statement", "depends_on": [], "message_id": None, "comments": []}], "definitions": [{"symbol": "\\\\mathrm{FS}(X)", "meaning": "Sums of finitely many, at least one, elements of $X$.", "quote": "FS(X) is the set of non-empty finite sums of X", "page": 1}, {"symbol": "\\\\mathrm{Bad}", "meaning": "Invented.", "quote": "a sentence that is not in the paper", "page": 1}], "existing_facts": []} if "notation" in task else None`);
+  const before_ = (await notation()).entries.length;
+  fakeClaude(`{"summary": "Read.", "facts": [{"ref": "def", "title": "FS", "kind": "definition", "statement": "FS(X) is the set of non-empty finite sums.", "proof": None, "quote": "FS(X) is the set of non-empty finite sums of X", "page": 1, "covers": "statement", "depends_on": [], "message_id": None, "comments": [], "local_notation": []}, {"ref": "t2", "title": "Monochromatic sums", "kind": "theorem", "statement": "Every coloring has a monochromatic $\\\\mathrm{FS}(X)$.", "proof": None, "quote": "Every coloring has a monochromatic FS(X)", "page": 1, "covers": "statement", "depends_on": [], "message_id": None, "comments": [], "local_notation": [{"symbol": "\\\\mathrm{FS}(X)", "meaning": "The non-empty finite sums of elements of $X$."}]}], "existing_facts": []} if "notation" in task else None`);
   r = runClient('extract');
   assert.equal(r.status, 0, r.stderr);
-  const after_ = await notation();
-  const fsEntry = after_.entries.find((x) => x.symbol === '\\mathrm{FS}(X)' && x.status === 'agreed');
-  assert.ok(fsEntry.variants.some((v) => v.where.startsWith('h74')), 'the paper\'s meaning is recorded as a clash');
-  assert.equal(after_.entries.some((x) => x.symbol === '\\mathrm{Bad}'), false, 'an unquoted definition is set aside');
+  assert.equal((await notation()).entries.length, before_, 'extraction proposes no project notation');
   const graph = (await app.call(ann, 'GET', `/api/projects/${pid}/facts`)).data.facts;
   assert.equal(graph.some((f) => f.title === 'FS' && f.kind === 'definition'), false, 'no definition fact is created');
+  const t2 = graph.find((f) => f.title === 'Monochromatic sums');
+  assert.ok(t2, 'the theorem is saved');
+  const full = (await app.call(ann, 'GET', `/api/facts/${t2.id}`)).data;
+  assert.match(String(full.glossary['\\mathrm{FS}(X)'] ?? JSON.stringify(full.glossary)), /non-empty finite sums/, 'the symbol is defined in the fact itself');
 });
 
 test('members discuss a notation entry, and the AI reads the discussion', async () => {
@@ -276,4 +278,25 @@ spec = importlib.util.spec_from_file_location("oq", sys.argv[1]); oq = importlib
 print(oq.danus_notation([{"symbol": "full-match (HT)", "meaning": "m"}, {"symbol": "\\\\mathrm{NS}(X)", "meaning": "n"}]))
 `, CLIENT], { encoding: 'utf8' });
   assert.match(out.stdout, /^- full-match \(HT\): m$/m); assert.match(out.stdout, /^- \$\\mathrm\{NS\}\(X\)\$: n$/m);
+});
+
+test('one notion written in several ways is offered once, and proof variables are not offered', async () => {
+  const mk = (ref, glossary) => ({ ref, title: `Spelling ${ref}`, kind: 'lemma', labels: ['conclusion'], method: 'deduced', statement_text: 'S.', proof_text: 'P.', glossary });
+  await facts([mk('s1', { 'FS(Y)': 'Non-empty finite sums of Y.', x_n: 'The n-th element.' }), mk('s2', { '\\mathrm{FS}(Z)': 'Non-empty finite sums of Z.', x_n: 'Another element.' }),
+    mk('s3', { '\\mathrm{FS}(Y)': 'Finite sums of Y.', '(\\mu)': 'A measure.' }), mk('s4', { '(\\mathcal U)': 'An ultrafilter.', '(\\mu)': 'A measure.' })]);
+  const shared = (await notation()).shared;
+  const fs_ = shared.filter((s) => /FS/.test(s.symbol));
+  assert.equal(fs_.length, 1, JSON.stringify(fs_.map((s) => s.symbol)));
+  assert.ok(fs_[0].spellings.includes('FS(Y)') && fs_[0].spellings.includes('\\mathrm{FS}(Z)'));
+  assert.equal(shared.some((s) => s.symbol === 'x_n'), false, 'a variable of one proof is not a notation');
+  assert.ok(shared.some((s) => s.symbol === '(\\mu)'), 'a named principle in parentheses stays its own notion');
+  assert.equal(shared.some((s) => s.symbol === '(\\mathcal U)'), false, 'and is not confused with another');
+  // An AI proposal meeting the same notion under another spelling, with another meaning, records a variant on it.
+  const before_ = (await notation()).entries;
+  assert.ok(before_.some((x) => /FS\}?\(X\)/.test(x.symbol)), 'an entry for FS exists');
+  const r = await app.call(key, 'POST', `/api/projects/${pid}/notation`, { symbol: 'FS(H)', meaning_text: 'Finite sums, with 0.', ai_model: 'claude-opus-5-5' });
+  assert.ok(r.status < 300 || r.status === 409, JSON.stringify(r.data));
+  const after_ = (await notation()).entries;
+  assert.equal(after_.some((x) => x.symbol === 'FS(H)'), false, 'no second entry for the same notion');
+  assert.ok(after_.some((x) => x.variants.some((v) => v.symbol === 'FS(H)')), 'recorded as a variant');
 });

@@ -24,6 +24,15 @@
     const r = el.getBoundingClientRect();
     let clipped = false; for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) { const o = getComputedStyle(p).overflowX; if (o !== 'visible') { clipped = true; break; } }
     if (!clipped && (r.right > vw + 1 || r.left < -1)) problems.push(`off screen: ${name(el)} spans ${Math.round(r.left)}–${Math.round(r.right)}px`);
+    // A control that spills out of its column or of a container hiding its overflow: a header too narrow for its buttons.
+    // The next column then covers it, or it is cut.
+    for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) {
+      const o = getComputedStyle(p).overflowX;
+      const column = p.parentElement && getComputedStyle(p.parentElement).display.includes('grid');
+      if (o === 'visible' && !column) continue;
+      if (o === 'visible' || o === 'hidden' || o === 'clip') { const c = p.getBoundingClientRect(); if (r.right > c.right + 1 || r.left < c.left - 1) problems.push(`cut by its container: ${name(el)}`); }
+      break;
+    }
   }
   // Dropdowns: one style, room for the arrow, text not cut, same height as the controls beside them.
   for (const s of document.querySelectorAll('select')) {

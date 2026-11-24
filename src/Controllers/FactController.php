@@ -37,7 +37,7 @@ final class FactController
 
     /** What the interface shows in the list and the graph. The full statement is loaded with each fact. */
     private const COMPACT = ['id', 'label', 'title', 'kind', 'display_kind', 'status', 'chain', 'origin', 'proof_origin', 'method', 'tool', 'lean', 'labels', 'ai_model',
-        'author', 'ai_user_name', 'ai_generation_ms', 'updated_at', 'stars', 'starred', 'comment_count', 'retracted_at', 'created_by', 'current_revision', 'endorsed_by'];
+        'author', 'ai_user_name', 'ai_generation_ms', 'updated_at', 'stars', 'starred', 'comment_count', 'retracted_at', 'created_by', 'current_revision', 'endorsed_by', 'topics'];
     private const EXCERPT = 160;
 
     /**
@@ -122,7 +122,7 @@ final class FactController
     public static function graph(int $pid): array
     {
         $facts = Db::all(
-            "SELECT f.id, f.label, f.kind, f.title, f.origin, f.proof_origin, f.labels_json, f.method, f.tool, f.external_id, f.ai_model, f.current_revision, f.retracted_at, f.created_by,
+            "SELECT f.id, f.label, f.kind, f.title, f.origin, f.proof_origin, f.labels_json, f.method, f.tool, f.external_id, f.ai_model, f.current_revision, f.retracted_at, f.created_by, f.topics_json,
                     f.created_at, f.updated_at, u.name AS author, u.kind AS author_kind, r.statement_html, r.author_id AS revision_author,
                     r.ai_user_id, r.ai_generation_ms, au.name AS ai_user_name,
                     (SELECT COUNT(*) FROM comments c WHERE c.target_type = 'fact' AND c.target_id = f.id) AS comment_count
@@ -170,7 +170,8 @@ final class FactController
             $f['review_counts'] = array_count_values(array_column($reviews[$id] ?? [], 'verdict'));
             $f['lean'] = self::leanState($lean[$id] ?? []);
             $f['labels'] = json_decode((string)$f['labels_json'], true) ?: [];
-            unset($f['labels_json']);
+            $f['topics'] = json_decode((string)$f['topics_json'], true) ?: [];
+            unset($f['labels_json'], $f['topics_json']);
             $people = fn(array $rows) => array_values(array_map(fn($v) => ['id' => (int)$v['reviewer_id'], 'name' => $v['reviewer_name']],
                 array_values(array_column(array_filter($rows, fn($v) => $v['reviewer_kind'] === 'human'), null, 'reviewer_id'))));
             $altReviews = array_merge([], ...array_map(fn($p) => $p['reviews'], array_values($proofs[$id] ?? [])));
@@ -262,8 +263,23 @@ final class FactController
 
     public static function show(Request $r): never
     {
-        $f = Access::fact($r->int('id'));
-        Response::json(self::present($f));
+        // A fact merged into another as the same result opens the one it was merged into.
+        $id = $r->int('id');
+        $from = null;
+        for ($i = 0; $i < 10; $i++) {
+            $next = Db::value('SELECT merged_into FROM facts WHERE id = ? AND deleted_at IS NOT NULL', [$id]);
+            if (!$next) break;
+            $from ??= Db::value('SELECT label FROM facts WHERE id = ?', [$id]);
+            $id = (int)$next;
+        }
+        $f = Access::fact($id);
+        Response::json(self::present($f) + ($from !== null ? ['merged_from' => $from] : []));
+    }
+
+    /** @return list<string> */
+    public static function kinds(): array
+    {
+        return self::KINDS;
     }
 
     /** Where a fact comes from: its own sources, then everything it is built on. */

@@ -46,7 +46,7 @@ test('small dropdowns sit beside small buttons', () => {
 test('the layout auditor is valid and checks what AGENTS.md promises', () => {
   const code = fs.readFileSync('scripts/visual-audit.js', 'utf8');
   assert.doesNotThrow(() => new Function(code));
-  for (const check of ['page is', 'squeezed text', 'off screen', 'native dropdown', 'dropdown without its arrow', 'run under its arrow', 'dropdown cuts', 'uneven row', 'menu outside the window']) assert.ok(code.includes(check), check);
+  for (const check of ['page is', 'squeezed text', 'off screen', 'native dropdown', 'dropdown without its arrow', 'run under its arrow', 'dropdown cuts', 'uneven row', 'menu outside the window', 'cut by its container']) assert.ok(code.includes(check), check);
   const agents = fs.readFileSync('AGENTS.md', 'utf8');
   assert.match(agents, /scripts\/visual-audit\.js/);
 });

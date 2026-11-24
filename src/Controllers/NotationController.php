@@ -31,7 +31,10 @@ final class NotationController
         Access::member($pid);
         $data = self::fields($r, $pid, null);
         $model = Provenance::agentModel($r);
-        $same = Db::one("SELECT * FROM notations WHERE project_id = ? AND symbol_key = ? AND status <> 'rejected' ORDER BY status = 'agreed' DESC, id LIMIT 1", [$pid, $data['symbol_key']]);
+        $same = null;
+        foreach (Db::all("SELECT * FROM notations WHERE project_id = ? AND status <> 'rejected' ORDER BY status = 'agreed' DESC, id", [$pid]) as $n) {
+            if (self::notionKey($n['symbol']) === self::notionKey($data['symbol'])) { $same = $n; break; } // the same notion, perhaps spelled otherwise
+        }
         if ($same && Auth::isAi()) {
             // An AI met a symbol the project already has: if a source gives it another meaning, that is a clash to record, not a new entry.
             $meaning = Sanitizer::toText((string)$data['meaning_html']);
@@ -279,12 +282,14 @@ final class NotationController
             if (isset($local[(int)$x['fact_id']])) $local[(int)$x['fact_id']] = self::localNotation(json_decode((string)$x['local_json'], true) ?: []);
         }
         $entries = [];
-        foreach (Db::all("SELECT id, symbol_key, status FROM notations WHERE project_id = ? AND status <> 'rejected'", [$pid]) as $n) $entries[$n['symbol_key']] = ['id' => (int)$n['id'], 'status' => $n['status']];
+        foreach (Db::all("SELECT id, symbol, status FROM notations WHERE project_id = ? AND status <> 'rejected'", [$pid]) as $n) $entries[self::notionKey($n['symbol'])] ??= ['id' => (int)$n['id'], 'status' => $n['status']];
         $by = [];
         foreach ($local as $fid => $defs) {
             foreach ($defs as $symbol => $meaning) {
-                $k = self::key($symbol);
-                $by[$k] ??= ['symbol' => $symbol, 'facts' => [], 'meanings' => []];
+                if (self::isProofVariable($symbol)) continue; // A_i, f, q: names of one argument, not notation
+                $k = self::notionKey($symbol);
+                $by[$k] ??= ['symbol' => $symbol, 'spellings' => [], 'facts' => [], 'meanings' => []];
+                $by[$k]['spellings'][$symbol] = ($by[$k]['spellings'][$symbol] ?? 0) + 1;
                 $by[$k]['facts'][$fid] = true;
                 $mk = mb_strtolower(preg_replace('/[\s.]+/u', '', $meaning) ?? '');
                 $by[$k]['meanings'][$mk] ??= ['meaning' => $meaning, 'facts' => []];
@@ -296,10 +301,34 @@ final class NotationController
             if (count($s['facts']) < $min) continue;
             $meanings = array_values($s['meanings']);
             usort($meanings, fn($a, $b) => count($b['facts']) <=> count($a['facts']));
-            $out[] = ['symbol' => $s['symbol'], 'facts' => count($s['facts']), 'meanings' => array_map(fn($m) => ['meaning' => $m['meaning'], 'facts' => array_slice($m['facts'], 0, 50)], array_slice($meanings, 0, 8)), 'entry' => $entries[$k] ?? null];
+            arsort($s['spellings']);
+            $out[] = ['symbol' => (string)array_key_first($s['spellings']), 'spellings' => array_keys($s['spellings']), 'facts' => count($s['facts']), 'meanings' => array_map(fn($m) => ['meaning' => $m['meaning'], 'facts' => array_slice($m['facts'], 0, 50)], array_slice($meanings, 0, 8)), 'entry' => $entries[$k] ?? null];
         }
         usort($out, fn($a, $b) => [$b['entry'] === null, $b['facts']] <=> [$a['entry'] === null, $a['facts']]);
         return array_slice($out, 0, $limit);
+    }
+
+    /**
+     * The notion a symbol writes, whatever its arguments are called: FS(X), FS(H) and \mathrm{FS}(S) are one notion.
+     * A setting in parentheses, such as full-match (HT), stays part of it.
+     */
+    public static function notionKey(string $symbol): string
+    {
+        // \mathrm{FS} and FS are the same name.
+        $s = preg_replace('/\\\\(?:mathrm|mathsf|mathbf|mathit|mathcal|operatorname|textrm|text)\s*\{([^{}]*)\}/u', '$1', trim($symbol)) ?? $symbol;
+        $s = preg_replace('/\s+/u', '', $s) ?? $s;
+        // An argument that is one letter, possibly indexed, or a sequence such as (x_i)_{i\in N}, is a placeholder.
+        $letter = '(?:\\\\[a-zA-Z]+|[A-Za-z])(?:_\{?[A-Za-z0-9]+\}?)?';
+        $s = preg_replace('/(?<=.)\((?:' . $letter . '|\(' . $letter . '\)(?:_\{[^{}]*\}|_[A-Za-z0-9])?)\)/u', '(·)', $s) ?? $s; // after a name only: (\mu) is a name
+        return mb_strtolower(str_replace(['{', '}'], '', $s));
+    }
+
+    /** One letter, Latin or Greek, possibly indexed: a variable of one argument, never a notation of the project. */
+    public static function isProofVariable(string $symbol): bool
+    {
+        $s = trim($symbol);
+        if (preg_match('/^\\\\(?:mathbb|mathcal|mathrm|mathsf|mathbf|mathfrak)/', $s)) return false; // a named object, such as \mathbb{N}
+        return (bool)preg_match('/^(?:[A-Za-z]|\\\\[a-zA-Z]+)(?:[_^](?:\{[A-Za-z0-9,+\-]*\}|[A-Za-z0-9]))*$/u', $s);
     }
 
     private static function sameText(string $a, string $b): bool
