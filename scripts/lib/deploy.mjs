@@ -103,6 +103,52 @@ export function installerFiles(root = '.') {
   return out;
 }
 
+/**
+ * Downloads into client/desktop/dist the installers of the GitHub release vX.Y.Z of the current client (built by the Client
+ * installers workflow) that are missing there or older than the client. A local build that is up to date is kept.
+ * A published release needs no token; a draft needs one with read access (GITHUB_TOKEN or GH_TOKEN), which is never printed.
+ * @return {Promise<{release: ?string, draft: boolean, fetched: string[], kept: string[], missing: string[]}>}
+ */
+export async function fetchInstallers(root = '.', { token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN || '', fetch = globalThis.fetch, log = () => {} } = {}) {
+  const client = fs.readFileSync(path.join(root, 'client/oq.py'), 'utf8');
+  const version = client.match(/^VERSION = "([^"]+)"/m)?.[1];
+  const repo = client.match(/^GITHUB_REPO = "([^"]+)"/m)?.[1];
+  if (!version || !repo) throw new Error('client/oq.py gives no VERSION or GITHUB_REPO');
+  const tag = `v${version}`;
+  const auth = token ? { Authorization: `Bearer ${token}` } : {};
+  const api = (url, accept = 'application/vnd.github+json') => fetch(url, { headers: { Accept: accept, 'User-Agent': 'open-questions-deploy', ...auth } });
+  // A draft is only listed, to someone who may see it; a published release is found by its tag.
+  let release = null;
+  if (token) {
+    const r = await api(`https://api.github.com/repos/${repo}/releases?per_page=30`);
+    if (r.ok) release = (await r.json()).find((x) => x.tag_name === tag) || null;
+  }
+  if (!release) {
+    const r = await api(`https://api.github.com/repos/${repo}/releases/tags/${tag}`);
+    if (r.ok) release = await r.json();
+  }
+  const dist = path.join(root, 'client/desktop/dist');
+  const newest = Math.max(fs.statSync(path.join(root, 'client/oq.py')).mtimeMs, fs.statSync(path.join(root, 'client/desktop/package.json')).mtimeMs);
+  const fresh = (name) => fs.existsSync(path.join(dist, name)) && fs.statSync(path.join(dist, name)).mtimeMs >= newest;
+  const out = { release: release ? tag : null, draft: !!release?.draft, fetched: [], kept: [], missing: [] };
+  for (const name of INSTALLERS) {
+    if (fresh(name)) { out.kept.push(name); continue; }
+    const asset = (release?.assets || []).find((a) => a.name === name);
+    if (!asset) { out.missing.push(name); continue; }
+    log(`Downloading ${name} from the ${release.draft ? 'draft ' : ''}release ${tag}…`);
+    const r = await api(asset.url, 'application/octet-stream');
+    if (!r.ok) throw new Error(`${name}: GitHub answered ${r.status}`);
+    const data = Buffer.from(await r.arrayBuffer());
+    if (data.length !== asset.size) throw new Error(`${name}: ${data.length} bytes received, ${asset.size} expected`);
+    const want = String(asset.digest || '').replace(/^sha256:/, '');
+    if (want && crypto.createHash('sha256').update(data).digest('hex') !== want) throw new Error(`${name}: the checksum does not match the release`);
+    fs.mkdirSync(dist, { recursive: true });
+    fs.writeFileSync(path.join(dist, name), data);
+    out.fetched.push(name);
+  }
+  return out;
+}
+
 export const changedFiles = (files, manifest = {}) => files.filter((f) => manifest[f.remote] !== f.hash);
 
 export function updatedManifest(manifest, uploaded) {

@@ -3,12 +3,13 @@
 // deployment. Nothing is ever deleted on the server, and its config/config.php and
 // data (projects-data/, outside the web root) are not touched.
 //
-//   npm run deploy -- [--dry-run] [--all] [--config] [--installers] [--protocol sftp|ftp] [--host H] [--user U] [--dir projects] [--no-tls]
+//   npm run deploy -- [--dry-run] [--all] [--config] [--installers [--local-installers]] [--protocol sftp|ftp] [--host H] [--user U] [--dir projects] [--no-tls]
 //
 //   --dry-run  list what would be uploaded, upload nothing
 //   --all      upload every file, not only those changed since the last deployment
 //   --config   also upload cache/config.prod.php as config/config.php
-//   --installers  also upload the installers built in client/desktop/dist
+//   --installers  also upload the installers of this client version: those GitHub built (the release vX.Y.Z, downloaded into
+//                 client/desktop/dist; a draft release needs GITHUB_TOKEN) and those built here. --local-installers: only those built here
 //
 // Settings are read from cache/deploy.json (git-ignored), e.g.
 //   { "protocol": "sftp", "host": "ftp.clusterXXX.hosting.ovh.net", "user": "LOGIN", "dir": "projects" }
@@ -19,12 +20,12 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { changedFiles, curlConfig, deployFiles, installerFiles, sftpBatch, updatedManifest } from './lib/deploy.mjs';
+import { changedFiles, curlConfig, deployFiles, fetchInstallers, installerFiles, sftpBatch, updatedManifest } from './lib/deploy.mjs';
 import { compareProtocol, currentProtocol, readRecord, serverMinimum, unreviewedMessage } from './lib/protocol.mjs';
 
 const SITE = 'https://projects.ludovicpatey.com';
 process.chdir(path.resolve(import.meta.dirname, '..'));
-const usage = 'npm run deploy -- [--dry-run] [--all] [--config] [--installers] [--protocol sftp|ftp] [--host H] [--user U] [--dir projects] [--no-tls]';
+const usage = 'npm run deploy -- [--dry-run] [--all] [--config] [--installers [--local-installers]] [--protocol sftp|ftp] [--host H] [--user U] [--dir projects] [--no-tls]';
 
 // ---- options -------------------------------------------------------------------
 const argv = process.argv.slice(2);
@@ -32,7 +33,7 @@ const flags = new Set();
 const values = new Map();
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i];
-  if (['--dry-run', '--all', '--config', '--installers', '--no-tls'].includes(a)) flags.add(a);
+  if (['--dry-run', '--all', '--config', '--installers', '--local-installers', '--no-tls'].includes(a)) flags.add(a);
   else if (['--protocol', '--host', '--user', '--dir'].includes(a) && i + 1 < argv.length) values.set(a, argv[++i]);
   else fail(`Unknown option ${a}\nUsage: ${usage}`);
 }
@@ -70,6 +71,15 @@ try {
 
 const files = deployFiles('.');
 if (flags.has('--installers')) {
+  // The installers GitHub built for this version, unless --local-installers keeps to client/desktop/dist.
+  if (!flags.has('--local-installers')) {
+    try {
+      const got = await fetchInstallers('.', { log: (m) => console.log(m) });
+      if (!got.release) console.warn('! No GitHub release for this client version (a draft needs GITHUB_TOKEN): only local installers are uploaded.');
+      if (got.missing.length) console.warn(`! Not in the release nor built here: ${got.missing.join(', ')}.`);
+      if (got.draft && got.fetched.length) console.warn('! These come from a draft release: publish it on GitHub so that clients see the update.');
+    } catch (e) { fail(`${e.message}. Nothing uploaded.`); }
+  }
   try { files.push(...installerFiles('.')); } catch (e) { fail(`${e.message}. Nothing uploaded.`); }
 }
 for (const f of files) {

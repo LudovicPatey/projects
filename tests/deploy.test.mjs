@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { changedFiles, curlConfig, deployFiles, installerFiles, sftpBatch, updatedManifest, uploadRank } from '../scripts/lib/deploy.mjs';
+import { changedFiles, curlConfig, deployFiles, fetchInstallers, installerFiles, sftpBatch, updatedManifest, uploadRank } from '../scripts/lib/deploy.mjs';
 
 const files = deployFiles('.');
 const remotes = files.map((f) => f.remote);
@@ -80,4 +81,43 @@ test('ftp requires TLS by default', () => {
   assert.match(c, /ssl-reqd/);
   assert.match(c, /ftp:\/\/h\/projects\/a%20b\.js/);
   assert.match(c, /user = "u:p\\"w"/);
+});
+
+test('the installers GitHub built for this version are downloaded; an up-to-date local build is kept', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'oq-fetch-'));
+  try {
+    for (const d of ['client/desktop/dist']) fs.mkdirSync(path.join(root, d), { recursive: true });
+    fs.writeFileSync(path.join(root, 'client/oq.py'), 'VERSION = "2.0.0"\nGITHUB_REPO = "me/repo"\n');
+    fs.writeFileSync(path.join(root, 'client/desktop/package.json'), '{"version":"2.0.0"}');
+    const local = path.join(root, 'client/desktop/dist/open-questions-ai-mac-arm64.dmg');
+    fs.writeFileSync(local, 'built here'); const future = new Date(Date.now() + 5000); fs.utimesSync(local, future, future);
+    const exe = Buffer.from('windows'); const sha = (b) => crypto.createHash('sha256').update(b).digest('hex');
+    const assets = [
+      { name: 'open-questions-ai-windows.exe', url: 'https://api/assets/1', size: exe.length, digest: `sha256:${sha(exe)}` },
+      { name: 'open-questions-ai-mac-arm64.dmg', url: 'https://api/assets/2', size: 3, digest: null },
+    ];
+    const calls = [];
+    const fake = (draft, body = exe) => async (url, opts) => {
+      calls.push([url, opts.headers.Authorization || null]);
+      if (url.includes('/releases?')) return { ok: true, json: async () => [{ tag_name: 'v2.0.0', draft, assets }] };
+      if (url.includes('/releases/tags/')) return draft ? { ok: false, status: 404 } : { ok: true, json: async () => ({ tag_name: 'v2.0.0', draft: false, assets }) };
+      if (url === 'https://api/assets/1') return { ok: true, arrayBuffer: async () => body };
+      throw new Error(`unexpected ${url}`);
+    };
+    let r = await fetchInstallers(root, { token: '', fetch: fake(false) });
+    assert.deepEqual([r.release, r.draft, r.fetched, r.kept], ['v2.0.0', false, ['open-questions-ai-windows.exe'], ['open-questions-ai-mac-arm64.dmg']]);
+    assert.deepEqual(r.missing, ['open-questions-ai-mac-x64.dmg', 'open-questions-ai-linux.AppImage']);
+    assert.equal(fs.readFileSync(path.join(root, 'client/desktop/dist/open-questions-ai-windows.exe'), 'utf8'), 'windows');
+    assert.equal(fs.readFileSync(local, 'utf8'), 'built here', 'an up-to-date local build is kept');
+    assert.ok(calls.every(([, a]) => a === null), 'no token, none sent');
+    fs.rmSync(path.join(root, 'client/desktop/dist/open-questions-ai-windows.exe'));
+    r = await fetchInstallers(root, { token: '', fetch: fake(true) });
+    assert.equal(r.release, null, 'a draft is invisible without a token');
+    calls.length = 0;
+    r = await fetchInstallers(root, { token: 't0k', fetch: fake(true) });
+    assert.equal(r.draft, true); assert.deepEqual(r.fetched, ['open-questions-ai-windows.exe']); assert.ok(calls.every(([, a]) => a === 'Bearer t0k'));
+    fs.rmSync(path.join(root, 'client/desktop/dist/open-questions-ai-windows.exe'));
+    await assert.rejects(fetchInstallers(root, { token: '', fetch: fake(false, Buffer.from('wind0ws')) }), /checksum/);
+    assert.ok(!fs.existsSync(path.join(root, 'client/desktop/dist/open-questions-ai-windows.exe')), 'nothing written when the file does not match');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
