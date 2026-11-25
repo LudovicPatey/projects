@@ -193,6 +193,8 @@ final class Db
             $migrations[] = "ALTER TABLE fact_suggestions ADD COLUMN $c";
         }
         $migrations[] = 'ALTER TABLE projects ADD COLUMN consolidation_auto TINYINT(1) NOT NULL DEFAULT 1';
+        foreach (['highlight_reason TEXT NULL', 'highlight_at DATETIME NULL', 'highlight_model VARCHAR(120) NULL', 'highlight_activity INT UNSIGNED NULL'] as $c) $migrations[] = "ALTER TABLE facts ADD COLUMN $c";
+        $migrations[] = "ALTER TABLE prover_campaigns ADD COLUMN lead_mode VARCHAR(12) NOT NULL DEFAULT 'periodic'";
         // MySQL cut kinds longer than 10 characters, such as "consolidate": room for procedure names, and the cut rows repaired.
         if (!self::isSqlite()) $migrations[] = 'ALTER TABLE ai_tasks MODIFY kind VARCHAR(40) NOT NULL';
         foreach ($migrations as $m) {

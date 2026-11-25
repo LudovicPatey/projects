@@ -242,6 +242,10 @@ CREATE TABLE IF NOT EXISTS facts (
   deleted_at DATETIME NULL,
   merged_into INT UNSIGNED NULL,          -- the fact this one was merged into, as the same result
   topics_json TEXT NULL,                  -- free subject tags, e.g. ["computable instances"]
+  highlight_reason TEXT NULL,             -- the consolidation flagged it as real progress, worth a person's reading
+  highlight_at DATETIME NULL,
+  highlight_model VARCHAR(120) NULL,
+  highlight_activity INT UNSIGNED NULL,   -- the activity that flagged it: opened since, it is read
   UNIQUE KEY uq_fact_label (project_id, label),
   UNIQUE KEY uq_fact_external (project_id, external_id),
   FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
@@ -768,6 +772,7 @@ CREATE TABLE IF NOT EXISTS prover_campaigns (
   question_id INT UNSIGNED NULL,
   goal_text TEXT NULL,
   status VARCHAR(10) NOT NULL DEFAULT 'active', -- active, paused, done
+  lead_mode VARCHAR(12) NOT NULL DEFAULT 'periodic', -- periodic: one answer every 30 minutes; continuous: a lead session runs all the time
   guidance_json MEDIUMTEXT NULL,          -- the last lead round: summary, elaboration, guidance, lanes
   strategy_id INT UNSIGNED NULL,          -- the strategy of the question it keeps revised
   lead_at DATETIME NULL,
@@ -814,4 +819,13 @@ CREATE TABLE IF NOT EXISTS prover_notes (
   created_at DATETIME NOT NULL,
   KEY idx_note_campaign (campaign_id, id),
   FOREIGN KEY (campaign_id) REFERENCES prover_campaigns(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- A reader set aside a fact flagged as worth reading: it leaves their suggestions.
+CREATE TABLE IF NOT EXISTS fact_highlight_dismissals (
+  user_id INT UNSIGNED NOT NULL,
+  fact_id INT UNSIGNED NOT NULL,
+  created_at DATETIME NOT NULL,
+  PRIMARY KEY (user_id, fact_id),
+  FOREIGN KEY (fact_id) REFERENCES facts(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

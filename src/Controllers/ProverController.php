@@ -21,7 +21,8 @@ use App\Sanitizer;
 final class ProverController
 {
     public const NOTE_KINDS = ['conclusion', 'example', 'counterexample', 'proof_attempt', 'plan', 'dead_end', 'direction', 'obstacle', 'verification'];
-    public const LEAD_EVERY = 1800;       // seconds between lead rounds
+    public const LEAD_EVERY = 1800;       // seconds between lead rounds, in the periodic mode
+    public const LEAD_MODES = ['periodic', 'continuous'];
     private const ROUND_LIMIT = 4 * 3600; // a round still running after this is abandoned
     private const MAX_LANES = 8;
 
@@ -36,11 +37,17 @@ final class ProverController
         if ($qid && !Db::value('SELECT 1 FROM open_questions WHERE id = ? AND project_id = ? AND deleted_at IS NULL', [$qid, $pid])) throw new HttpError(422, 'This question is not in the project.');
         $c = Db::one('SELECT * FROM prover_campaigns WHERE project_id = ? AND ' . ($qid ? 'question_id = ?' : 'question_id IS NULL') . " AND status = 'active' ORDER BY id DESC LIMIT 1",
             $qid ? [$pid, $qid] : [$pid]);
+        $mode = $r->str('lead_mode');
+        if ($mode !== '' && !in_array($mode, self::LEAD_MODES, true)) throw new HttpError(422, 'lead_mode must be periodic or continuous.');
         if (!$c) {
             $now = Db::now();
             $id = Db::insert('prover_campaigns', ['project_id' => $pid, 'question_id' => $qid, 'goal_text' => mb_substr(trim($r->str('goal')), 0, 4000) ?: null,
-                'status' => 'active', 'created_by' => Auth::id(), 'created_at' => $now, 'updated_at' => $now]);
+                'status' => 'active', 'lead_mode' => $mode ?: 'periodic', 'created_by' => Auth::id(), 'created_at' => $now, 'updated_at' => $now]);
             $c = Db::one('SELECT * FROM prover_campaigns WHERE id = ?', [$id]);
+        } elseif ($mode !== '' && $mode !== $c['lead_mode']) {
+            // Joining with another mode changes it for everyone: the campaign has one lead.
+            Db::update('prover_campaigns', ['lead_mode' => $mode, 'updated_at' => Db::now()], 'id = :id', ['id' => $c['id']]);
+            $c['lead_mode'] = $mode;
         }
         Response::json(self::present($c), 201);
     }
@@ -64,15 +71,21 @@ final class ProverController
     {
         if (Auth::isAi()) throw new HttpError(403, 'Only a person can do this.');
         $c = self::campaign($r->int('id'));
-        $status = $r->str('status');
+        $status = $r->str('status', $c['status']);
         if (!in_array($status, ['active', 'paused', 'done'], true)) throw new HttpError(422, 'Choose active, paused or done.');
-        Db::update('prover_campaigns', ['status' => $status, 'updated_at' => Db::now()], 'id = :id', ['id' => $c['id']]);
+        $mode = $r->str('lead_mode', $c['lead_mode']);
+        if (!in_array($mode, self::LEAD_MODES, true)) throw new HttpError(422, 'lead_mode must be periodic or continuous.');
+        Db::update('prover_campaigns', ['status' => $status, 'lead_mode' => $mode, 'updated_at' => Db::now()], 'id = :id', ['id' => $c['id']]);
         Response::json(self::present(Db::one('SELECT * FROM prover_campaigns WHERE id = ?', [$c['id']])));
     }
 
     // ----- rounds -----
 
-    /** The next round for a client: the lead when one is due, otherwise a worker on the lane worked least recently. */
+    /**
+     * The next round for a client: the lead when one is due, otherwise a worker on the lane worked least recently.
+     * Continuous mode: a client that offers to lead takes a lead session whenever none runs, so that one always does.
+     * Without such a client, a periodic lead still runs every 30 minutes. `session` tells the client which kind of lead to run.
+     */
     public static function claim(Request $r): never
     {
         $c = self::campaign($r->int('id'));
@@ -88,7 +101,8 @@ final class ProverController
             $leadRunning = Db::value("SELECT 1 FROM prover_rounds WHERE campaign_id = ? AND kind = 'lead' AND status = 'running'", [$cid]);
             $due = !$c['lead_at'] || strtotime((string)$c['lead_at']) < time() - self::LEAD_EVERY;
             $lanes = count(self::guidance($c)['lanes'] ?? []) ?: 1;
-            if ($due && !$leadRunning) { $kind = 'lead'; $lane = null; }
+            $session = $c['lead_mode'] === 'continuous' && $r->input('offer_lead') === true;
+            if (!$leadRunning && ($session || $due)) { $kind = 'lead'; $lane = null; }
             else {
                 $kind = 'worker';
                 $last = [];
@@ -100,7 +114,7 @@ final class ProverController
             $id = Db::insert('prover_rounds', ['ai_user_id' => Provenance::stamp($model, null)['ai_user_id'], 'campaign_id' => $cid, 'kind' => $kind, 'lane' => $lane, 'engine' => $engine, 'ai_model' => $model,
                 'user_id' => Auth::id(), 'client_name' => mb_substr($r->str('client_name'), 0, 120) ?: null, 'status' => 'running', 'started_at' => $now]);
             if ($kind === 'lead') Db::update('prover_campaigns', ['lead_at' => $now], 'id = :id', ['id' => $cid]);
-            return ['id' => $id, 'kind' => $kind, 'lane' => $lane];
+            return ['id' => $id, 'kind' => $kind, 'lane' => $lane, 'session' => $kind === 'lead' && $session];
         });
         $g = self::guidance($c);
         $round['lane_task'] = $round['lane'] !== null ? ($g['lanes'][$round['lane']] ?? null) : null;
@@ -145,7 +159,7 @@ final class ProverController
                         'current_revision' => 1, 'created_by' => Auth::id(), 'created_at' => $now, 'updated_at' => $now]);
                     QuestionController::revision($sid, 1, 'Proof search with the native prover', 'active', $html, 'First state of the search', $model, $stamp);
                     Activity::touch((int)$c['project_id'], 'strategy', $sid, 'created');
-                } else {
+                } elseif ((string)Db::value('SELECT body_html FROM strategy_revisions WHERE strategy_id = ? AND revision_no = ?', [$sid, $s['current_revision']]) !== $html) {
                     $no = (int)$s['current_revision'] + 1;
                     QuestionController::revision($sid, $no, $s['title'], $s['status'], $html, 'New state of the search', $model, $stamp);
                     Db::update('proof_strategies', ['current_revision' => $no, 'updated_at' => $now], 'id = :id', ['id' => $sid]);
@@ -154,7 +168,7 @@ final class ProverController
             });
         }
         $stop = $r->input('stop') === true;
-        Db::update('prover_campaigns', ['guidance_json' => json_encode($g, JSON_UNESCAPED_UNICODE), 'strategy_id' => $sid, 'status' => $stop ? 'paused' : $c['status'], 'updated_at' => Db::now()], 'id = :id', ['id' => $c['id']]);
+        Db::update('prover_campaigns', ['guidance_json' => json_encode($g, JSON_UNESCAPED_UNICODE), 'strategy_id' => $sid, 'status' => $stop ? 'paused' : $c['status'], 'lead_at' => Db::now(), 'updated_at' => Db::now()], 'id = :id', ['id' => $c['id']]);
         Response::json(['ok' => true, 'strategy_id' => $sid, 'paused' => $stop]);
     }
 
@@ -325,7 +339,7 @@ final class ProverController
         $g = self::guidance($c);
         $stats = Db::one("SELECT COUNT(*) AS rounds, COALESCE(SUM(seconds), 0) AS seconds, COALESCE(SUM(facts), 0) AS facts, COALESCE(SUM(rejected), 0) AS rejected, SUM(status = 'running') AS running FROM prover_rounds WHERE campaign_id = ?", [$c['id']]);
         return ['id' => (int)$c['id'], 'project_id' => (int)$c['project_id'], 'question_id' => $c['question_id'] ? (int)$c['question_id'] : null, 'goal' => $c['goal_text'],
-            'status' => $c['status'], 'strategy_id' => $c['strategy_id'] ? (int)$c['strategy_id'] : null, 'lead_at' => $c['lead_at'], 'created_at' => $c['created_at'],
+            'status' => $c['status'], 'lead_mode' => $c['lead_mode'] ?? 'periodic', 'strategy_id' => $c['strategy_id'] ? (int)$c['strategy_id'] : null, 'lead_at' => $c['lead_at'], 'created_at' => $c['created_at'],
             'guidance' => $g ?: null, 'rounds' => (int)$stats['rounds'], 'running' => (int)$stats['running'], 'seconds' => (int)$stats['seconds'], 'facts' => (int)$stats['facts'], 'rejected' => (int)$stats['rejected']];
     }
 

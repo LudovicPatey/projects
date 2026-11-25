@@ -95,7 +95,7 @@ test('the tools process speaks MCP, and forwards each call with the round\'s tok
   const end = Date.now() + 8000; while (lines.length < 4 && Date.now() < end) await new Promise((r) => setTimeout(r, 50));
   p.kill(); server.close();
   assert.equal(lines[0].result.serverInfo.name, 'prover'); assert.ok(lines[0].result.capabilities.tools);
-  assert.deepEqual(lines[1].result.tools.map((t) => t.name), ['fact_search', 'fact_read', 'note_search', 'note_add', 'fact_submit', 'fact_verify', 'cite_result']);
+  assert.deepEqual(lines[1].result.tools.map((t) => t.name), ['fact_search', 'fact_read', 'note_search', 'note_add', 'fact_submit', 'fact_verify', 'guidance_read', 'cite_result']);
   assert.deepEqual(JSON.parse(lines[2].result.content[0].text), { ok: 1 }); assert.equal(lines[2].result.isError, false);
   assert.equal(lines[3].error.code, -32601);
   assert.deepEqual(seen, [['T0K', { name: 'fact_search', arguments: { query: 'x' } }]]);

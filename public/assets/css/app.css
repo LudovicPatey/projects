@@ -1657,3 +1657,12 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: non
 .cons-auto { margin-top: 10px; align-items: flex-start; }
 .tl-change .tl-dot { background: var(--accent-2); border-color: var(--accent); }
 .tl-change.undone .tl-body { opacity: .65; }
+
+/* Reading suggestions on the overview: facts the consolidation marked as real progress. */
+.reading-row { display: flex; align-items: flex-start; gap: 8px; padding: 8px 0; border-top: 1px solid var(--line-2); min-width: 0; }
+.reading-main { display: grid; gap: 3px; flex: 1; min-width: 0; color: var(--text); }
+.reading-main:hover { text-decoration: none; }
+.reading-main:hover b { color: var(--accent); }
+.reading-top { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; min-width: 0; overflow-wrap: anywhere; }
+.reading-why { color: var(--muted); overflow-wrap: anywhere; }
+.reading-row > .btn { flex: none; }

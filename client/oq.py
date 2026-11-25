@@ -52,7 +52,7 @@ import webbrowser
 import zipfile
 import zlib
 
-VERSION = "1.15.0"
+VERSION = "1.16.0"
 API_LEVEL = 2  # raise with the server's AiTaskController::API_LEVEL when a client needs new server features
 GITHUB_REPO = "LudovicPatey/projects"
 KINDS = ["extract", "ask", "bib", "derive", "review", "lean", "notation", "consolidate"]
@@ -3805,7 +3805,9 @@ How to work, adaptively:
 4. fact_submit each self-contained result you will use: a fresh verifier judges it. If it is rejected, use its repair hints, fix the
    critical errors first, and change strategy when the fix is not local. Cite the returned fact id afterwards.
 5. Share with note_add: plans, directions, obstacles and dead ends (with the concrete reason), examples and counterexamples.
-6. Work until the time of the round ends, or the goal is a usable fact. A hard open problem is not a reason to stop.
+6. The lead may change the guidance and your lane while you work: call guidance_read after each fact_submit and at least every
+   20 minutes, and switch to your new lane when it changed.
+7. Work until the time of the round ends, or the goal is a usable fact. A hard open problem is not a reason to stop.
 End with one paragraph saying what you found and what remains."""
 
 PROVER_VERIFIER = """You are the verifier of the project's prover: the sole authority on correctness. A worker submits the statement and proof in
@@ -3828,6 +3830,32 @@ and the activity of each lane. Step back from the local threads and control the 
 Judge progress by the route to the theorem, not by the number of facts. Set "stop" to true only when the goal is a usable fact standing on
 usable facts, or when nothing credible is left; people then decide. Use web search for the literature when it helps; it is not a fact.
 {rules}"""
+
+PROVER_LEAD_SESSION = """You are the lead of the project's prover, in a session of {minutes} minutes: you own the strategy and the coordination,
+and you never create facts. Workers, on the computers of the team, prove in the lanes you define, round after round. PROBLEM.md in the
+current folder has the problem and the project's notation. Your tools: state, set_guidance, wait, fact_search, fact_read, note_search,
+note_add.
+
+Control loop:
+1. Start with state. If there is no guidance yet, or it is stale, set it now with set_guidance.
+2. A control beat at least every 15 minutes: call state to see the new notes, facts and rejected proofs, and what each lane is doing.
+   Inventory every credible approach, parked ones included: its mechanism, its frontier, its decisive obstacle, the evidence for and
+   against. When the synthesis or the guidance materially changes, call set_guidance: "summary" (the mathematical verdict),
+   "elaboration" (the state, citing fact ids for what is established and marking every idea that is not, closed routes, missing bridge
+   lemmas, dangerous heuristics), "guidance" (next steps and reasons, alternatives, when to return to a parked route) and 1 to {lanes}
+   "lanes" (distinct lines of work, each with a concrete task). Deliberately continue, sharpen or redirect each lane.
+3. Between beats, keep reasoning about the mathematics at the level of architecture: mechanisms, interfaces, decisive gaps. Search the
+   literature with web search for the techniques around the problem, and record a map of them with note_add (kinds direction, plan,
+   obstacle): notes and literature are never facts. When nothing is left to think through until the workers report, call wait,
+   or end your answer: you are woken up again when the workers report something new, or at the next beat.
+4. Once per session, a macro audit: every credible direction, its frontier and obstacle, the evidence gained, and why to continue, park or
+   resume it, recorded in the guidance with the conditions for revisiting a parked route.
+5. state tells the minutes left. Before the end, and whenever you end your answer, keep the guidance current with a handover in
+   "elaboration", so that the next session continues from it.
+Judge progress by the route to the theorem, not by the number of facts. Set "stop" to true only when the goal is a usable fact standing
+on usable facts, or when nothing credible is left; people then decide.
+{rules}
+End with one paragraph on the state of the search."""
 
 PROVER_SOURCE_CHECK = """A worker wants to use a result of the literature, in cite.json: its statement and its reference. Check whether the
 work states this result: read it when you can find it, with web search. "verdict": "confirmed" if the work states it, as written or in an
@@ -3856,11 +3884,28 @@ PROVER_TOOLS = [
                      "glossary": {"type": "object", "additionalProperties": {"type": "string"}}}, "required": ["title", "statement", "proof"]}},
     {"name": "fact_verify", "description": "Ask the verifier to check an existing fact that is not usable yet. If it accepts it, you may build on it.",
      "inputSchema": {"type": "object", "properties": {"id": {"type": "integer"}}, "required": ["id"]}},
+    {"name": "guidance_read", "description": "The lead's current guidance and your lane: read it again after each submission and at least every 20 minutes.",
+     "inputSchema": {"type": "object", "properties": {}}},
     {"name": "cite_result", "description": "Record a result of the literature: its complete statement and its reference (authors, title, year, arxiv or doi, cited_for). It is checked against its source; once confirmed you may cite it.",
      "inputSchema": {"type": "object", "properties": {"title": {"type": "string"}, "statement": {"type": "string"},
                      "reference": {"type": "object", "properties": {"authors": {"type": "string"}, "title": {"type": "string"}, "year": {"type": "integer"}, "arxiv": {"type": "string"}, "doi": {"type": "string"}, "cited_for": {"type": "string"}}},
                      "quote": {"type": "string"}}, "required": ["title", "statement", "reference"]}},
+    {"name": "state", "description": "What changed since your last call: new notes (findings, dead ends, rejected proofs), new facts, the rounds running on each lane, the current guidance, and the minutes left in your session.",
+     "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "set_guidance", "description": "Replaces the guidance of the campaign, which workers read: summary, elaboration, guidance, and 1 to 8 lanes, each with a title and a task. Set stop to true only when the goal is established or nothing credible is left.",
+     "inputSchema": {"type": "object", "properties": {"summary": {"type": "string"}, "elaboration": {"type": "string"}, "guidance": {"type": "string"},
+                     "lanes": {"type": "array", "items": {"type": "object", "properties": {"title": {"type": "string"}, "task": {"type": "string"}}, "required": ["title", "task"]}},
+                     "stop": {"type": "boolean"}}, "required": ["summary", "guidance", "lanes"]}},
+    {"name": "wait", "description": "Sleeps until the workers report something new, or for at most this many minutes (up to 20), then says what is new.",
+     "inputSchema": {"type": "object", "properties": {"minutes": {"type": "number"}}, "required": ["minutes"]}},
 ]
+
+# What each role may call. The lead never creates facts; a worker does not steer.
+PROVER_ROLES = {
+    "worker": ("fact_search", "fact_read", "note_search", "note_add", "fact_submit", "fact_verify", "guidance_read", "cite_result"),
+    "lead": ("state", "set_guidance", "wait", "fact_search", "fact_read", "note_search", "note_add"),
+}
+LEAD_NOTE_KINDS = ("plan", "direction", "obstacle", "dead_end")
 
 
 def ranked(rows, query, text, limit):
@@ -3885,8 +3930,10 @@ def ranked(rows, query, text, limit):
 class ProverToolbox:
     """What a worker's tools do, for one round. It holds the platform key; the AI never sees it."""
 
-    def __init__(self, api, campaign, round_, opts, workdir):
-        self.api, self.campaign, self.round, self.opts, self.workdir = api, campaign, round_, opts, workdir
+    def __init__(self, api, campaign, round_, opts, workdir, role="worker", deadline=None):
+        self.api, self.campaign, self.round, self.opts, self.workdir, self.role = api, campaign, round_, opts, workdir, role
+        self.deadline = deadline or time.time() + 3600
+        self.seen_facts, self.seen_notes = None, 0
         self.lock = threading.Lock()
         self.facts, self.notes, self.loaded, self.last_note = {}, [], 0, 0
         self.refresh(force=True)
@@ -3899,9 +3946,10 @@ class ProverToolbox:
         self.facts = {f["id"]: f for f in ctx.get("facts") or [] if f.get("status") != "retracted"}
         self.notation = ctx.get("notation") or []
         new = self.api.get(f"/api/prover/campaigns/{self.campaign['id']}/notes?since={self.last_note}").get("notes") or []
-        self.notes += new
+        have = {n["id"] for n in self.notes}
+        self.notes += [n for n in new if n["id"] not in have]  # the notes added here are already in the list
         if new:
-            self.last_note = new[-1]["id"]
+            self.last_note = max(self.last_note, new[-1]["id"])
         self.loaded = time.time()
 
     def brief(self, f):
@@ -3909,11 +3957,50 @@ class ProverToolbox:
                 "statement": f["statement"][:600]}
 
     def call(self, name, args):
-        with self.lock:
-            fn = getattr(self, "tool_" + name, None)
-            if not fn:
-                raise ValueError(f"Unknown tool {name}.")
+        if name not in PROVER_ROLES[self.role]:
+            raise ValueError(f"The {self.role} has no tool {name}.")
+        fn = getattr(self, "tool_" + name)
+        if name == "wait":  # it sleeps: the other tools stay usable meanwhile
             return fn(**{k: v for k, v in (args or {}).items() if k in fn.__code__.co_varnames})
+        with self.lock:
+            return fn(**{k: v for k, v in (args or {}).items() if k in fn.__code__.co_varnames})
+
+    def campaign_now(self):
+        return self.api.get(f"/api/prover/campaigns/{self.campaign['id']}")
+
+    def tool_guidance_read(self):
+        c = self.campaign_now()
+        g = c.get("guidance") or {}
+        lane = self.round.get("lane")
+        lanes = g.get("lanes") or []
+        mine = lanes[lane] if lane is not None and lane < len(lanes) else None
+        return {"summary": g.get("summary"), "guidance": g.get("guidance"), "your_lane": mine, "lanes": lanes, "updated_at": g.get("at"), "status": c.get("status")}
+
+    def tool_state(self):
+        self.refresh(force=True)
+        new_facts = [self.brief(f) for i, f in self.facts.items() if self.seen_facts is not None and i not in self.seen_facts]
+        self.seen_facts = set(self.facts)
+        notes = [{k: n.get(k) for k in ("id", "kind", "claim", "evidence", "fact_id")} for n in self.notes if n["id"] > self.seen_notes][-80:]
+        self.seen_notes = self.notes[-1]["id"] if self.notes else 0
+        c = self.campaign_now()
+        running = [{"lane": x.get("lane"), "client": x.get("client_name"), "model": x.get("ai_model"), "since": x.get("started_at")} for x in c.get("recent_rounds") or [] if x.get("status") == "running" and x.get("kind") == "worker"]
+        recent = [{k: x.get(k) for k in ("kind", "lane", "status", "facts", "rejected", "notes", "summary_text")} for x in (c.get("recent_rounds") or [])[:20] if x.get("status") != "running"]
+        return {"minutes_left": max(0, round((self.deadline - time.time()) / 60)), "guidance": c.get("guidance"), "status": c.get("status"),
+                "new_notes": notes, "new_facts": new_facts[:80], "usable_facts": sum(1 for f in self.facts.values() if f.get("usable")), "running": running, "recent_rounds": recent}
+
+    def tool_set_guidance(self, summary, guidance, lanes, elaboration="", stop=False):
+        r = self.api.post(f"/api/prover/rounds/{self.round['id']}/lead", {"summary": summary, "elaboration": elaboration, "guidance": guidance, "lanes": lanes, "stop": bool(stop)})
+        return {"saved": True, "paused": r.get("paused", False)}
+
+    def tool_wait(self, minutes):
+        end = min(time.time() + max(0.0, min(float(minutes), 20.0)) * 60, self.deadline - 60)
+        last = self.notes[-1]["id"] if self.notes else 0
+        while time.time() < end:
+            new = self.api.get(f"/api/prover/campaigns/{self.campaign['id']}/notes?since={last}").get("notes") or []
+            if new:
+                return {"new_notes": len(new), "minutes_left": max(0, round((self.deadline - time.time()) / 60))}
+            time.sleep(max(0.05, min(self.opts.wait_poll, end - time.time())))
+        return {"new_notes": 0, "minutes_left": max(0, round((self.deadline - time.time()) / 60))}
 
     def tool_fact_search(self, query, limit=10):
         self.refresh()
@@ -3933,6 +4020,8 @@ class ProverToolbox:
         return {"results": [{k: n.get(k) for k in ("id", "kind", "claim", "evidence", "fact_id")} for n in ranked(rows, query, lambda n: f"{n['kind']} {n['claim']} {n.get('evidence') or ''}", limit)]}
 
     def tool_note_add(self, kind, claim, evidence=""):
+        if self.role == "lead" and kind not in LEAD_NOTE_KINDS:
+            return {"error": "The lead records only plans, directions, obstacles and dead ends: findings go through the workers."}
         r = self.api.post(f"/api/prover/rounds/{self.round['id']}/notes", {"kind": kind, "claim": claim, "evidence": evidence})
         self.notes.append({"id": r["id"], "kind": kind, "claim": claim, "evidence": evidence, "fact_id": None})
         return {"id": r["id"]}
@@ -4050,7 +4139,7 @@ def cmd_prover_tools(a):
             send({"jsonrpc": "2.0", "id": mid, "result": {"protocolVersion": (msg.get("params") or {}).get("protocolVersion") or "2025-06-18",
                                                           "capabilities": {"tools": {}}, "serverInfo": {"name": "prover", "version": VERSION}}})
         elif method == "tools/list":
-            send({"jsonrpc": "2.0", "id": mid, "result": {"tools": PROVER_TOOLS}})
+            send({"jsonrpc": "2.0", "id": mid, "result": {"tools": [t for t in PROVER_TOOLS if t["name"] in PROVER_ROLES[a.role]]}})
         elif method == "tools/call":
             p = msg.get("params") or {}
             try:
@@ -4069,14 +4158,14 @@ def cmd_prover_tools(a):
     return 0
 
 
-def tools_command(gateway):
+def tools_command(gateway, role="worker"):
     """How the AI tool launches the tools process: this client, with the address and the token of the round."""
     me = [sys.executable] if getattr(sys, "frozen", False) else [sys.executable, os.path.realpath(__file__)]
-    return me + ["prover-tools", "--port", str(gateway.port), "--token", gateway.token]
+    return me + ["prover-tools", "--port", str(gateway.port), "--token", gateway.token, "--role", role]
 
 
-def worker_command(provider, gateway, workdir, model, web):
-    cmd = tools_command(gateway)
+def worker_command(provider, gateway, workdir, model, web, role="worker"):
+    cmd = tools_command(gateway, role)
     if provider == "claude":
         config = {"mcpServers": {"prover": {"command": cmd[0], "args": cmd[1:]}}}
         tools = "Read,WebSearch" if web else "Read"
@@ -4106,7 +4195,9 @@ def prover_round(api, campaign, round_, opts):
     """One round: a worker session with the tools, or the lead's structured answer."""
     with tempfile.TemporaryDirectory(prefix="oq-prove-") as tmp:
         workdir = pathlib.Path(os.path.realpath(tmp))
-        box = ProverToolbox(api, campaign, round_, opts, workdir)
+        session = round_["kind"] == "lead" and round_.get("session")
+        limit = opts.lead_seconds if session else opts.round_seconds
+        box = ProverToolbox(api, campaign, round_, opts, workdir, "lead" if session else "worker", time.time() + limit)
         q = campaign.get("question_id")
         if q:
             try:
@@ -4114,7 +4205,7 @@ def prover_round(api, campaign, round_, opts):
                 box.question = f"{question.get('title') or ''}\n\n{html_text(question.get('statement_html') or '')}"
             except ApiError:
                 box.question = None
-        if round_["kind"] == "lead":
+        if round_["kind"] == "lead" and not session:
             usable = [box.brief(f) for f in box.facts.values() if f.get("usable")][-400:]
             stats = api.get(f"/api/prover/campaigns/{campaign['id']}").get("recent_rounds") or []
             (workdir / "lead.json").write_text(json.dumps({"problem": prover_problem(campaign, box, {}), "previous": campaign.get("guidance"), "notes": box.notes[-300:],
@@ -4127,27 +4218,59 @@ def prover_round(api, campaign, round_, opts):
         gate = ProverGateway(box)
         started = time.time()
         try:
-            cmd = worker_command(opts.provider, gate, workdir, opts.model, True)
+            cmd = worker_command(opts.provider, gate, workdir, opts.model, True, box.role)
             cmd[0] = shutil.which(cmd[0]) or cmd[0]
             env = {**safe_env(opts.provider), "MCP_TOOL_TIMEOUT": "7200000", "MCP_TIMEOUT": "60000"}
-            prompt = f"{SAFETY}\n\n" + PROVER_WORKER.format(rules=PROVER_RULES) + "\n\nRead PROBLEM.md in the current folder to begin."
-            try:
-                p = subprocess.run(cmd, input=prompt, text=True, encoding="utf-8", capture_output=True, cwd=str(workdir), env=env, timeout=opts.round_seconds)
-                out = p.stdout
-                Ledger().add(seconds=time.time() - started, tokens=count_tokens(opts.provider, out))
-                if p.returncode != 0:
-                    check_limit_text((p.stderr or out or "")[-2000:])
-                    raise RuntimeError(f"{opts.provider} stopped with an error: {(p.stderr or out or '').strip()[-300:]}")
+            role = PROVER_LEAD_SESSION.format(minutes=round(limit / 60), lanes=max(2, opts.workers * 2), rules=PROVER_RULES) if session else PROVER_WORKER.format(rules=PROVER_RULES)
+            prompt = f"{SAFETY}\n\n{role}\n\nRead PROBLEM.md in the current folder to begin."
+            said, active = "", 0.0
+            while True:
+                left = box.deadline - time.time()
+                began = time.time()
                 try:
-                    said = str(json.loads(out).get("result") or "") if opts.provider == "claude" else out.strip().splitlines()[-1]
-                except (ValueError, IndexError):
-                    said = ""
-            except subprocess.TimeoutExpired:
-                Ledger().add(seconds=time.time() - started)
-                said = "The round reached its time limit; its facts and notes are kept."
+                    p = subprocess.run(cmd, input=prompt, text=True, encoding="utf-8", capture_output=True, cwd=str(workdir), env=env, timeout=max(30, left))
+                    out = p.stdout
+                    active += time.time() - began
+                    Ledger().add(seconds=time.time() - began, tokens=count_tokens(opts.provider, out))
+                    if p.returncode != 0:
+                        check_limit_text((p.stderr or out or "")[-2000:])
+                        raise RuntimeError(f"{opts.provider} stopped with an error: {(p.stderr or out or '').strip()[-300:]}")
+                    try:
+                        said = str(json.loads(out).get("result") or "") if opts.provider == "claude" else out.strip().splitlines()[-1]
+                    except (ValueError, IndexError):
+                        said = ""
+                except subprocess.TimeoutExpired:
+                    active += time.time() - began
+                    Ledger().add(seconds=time.time() - began)
+                    said = said or "The round reached its time limit; its facts and notes are kept."
+                    break
+                # The lead stays on: once its session ends, the client waits for the workers' reports, or the next beat, and wakes it.
+                if not session or not prover_wake(api, box, opts):
+                    break
+                prompt = f"{SAFETY}\n\n{role}\n\nYou are woken up again: call state to see what changed since your last look, then continue the control loop."
         finally:
             gate.close()
-        return round(time.time() - started), said[:1000]
+        return round(active if session else time.time() - started), said[:1000]
+
+
+def prover_wake(api, box, opts):
+    """Between two lead sessions: waits until a worker reports, or the next beat. False when the lead round ends instead."""
+    beat = time.time() + opts.lead_beat
+    margin = min(120, opts.lead_seconds / 5)  # too little time left for another session
+    last = max([n["id"] for n in box.notes] or [0])
+    while time.time() < min(beat, box.deadline - margin):
+        if getattr(opts, "should_stop", lambda: False)():
+            return False
+        try:
+            c = api.get(f"/api/prover/campaigns/{box.campaign['id']}")
+            if c.get("status") != "active":
+                return False
+            if api.get(f"/api/prover/campaigns/{box.campaign['id']}/notes?since={last}").get("notes"):
+                return True
+        except ApiError:
+            pass
+        time.sleep(max(0.05, min(opts.wait_poll, beat - time.time())))
+    return time.time() < box.deadline - margin
 
 
 class ProverRun:
@@ -4172,12 +4295,13 @@ class ProverRun:
                 time.sleep(min(300, max(30, (retry or time.time() + 60) - time.time())))
                 continue
             try:
-                got = self.api.post(f"/api/prover/campaigns/{campaign_id}/rounds", {"engine": self.opts.provider, "ai_model": self.opts.model_used, "client_name": f"{platform.node() or 'computer'} (prover)"})
+                got = self.api.post(f"/api/prover/campaigns/{campaign_id}/rounds", {"engine": self.opts.provider, "ai_model": self.opts.model_used, "client_name": f"{platform.node() or 'computer'} (prover)",
+                                                                               "offer_lead": bool(self.opts.lead)})
             except ApiError as e:
                 say(f"{time.strftime('%H:%M:%S')}  Worker {n} stops: {e}")
                 return
             r, c = got["round"], got["campaign"]
-            what = "lead" if r["kind"] == "lead" else f"lane {r['lane'] + 1}" + (f": {r['lane_task']['title']}" if r.get("lane_task") else "")
+            what = ("lead session" if r.get("session") else "lead") if r["kind"] == "lead" else f"lane {r['lane'] + 1}" + (f": {r['lane_task']['title']}" if r.get("lane_task") else "")
             say(f"{time.strftime('%H:%M:%S')}  Worker {n}: round {r['id']}, {what}")
             try:
                 seconds, said = prover_round(self.api, c, r, self.opts)
@@ -4235,15 +4359,21 @@ def cmd_prove(a):
     a.verifier = a.verifier or (others[0] if others else a.provider)
     a.verifier_model = a.verifier_model or (chosen_model(a.verifier, "review") if a.verifier != a.provider else a.model)
     a.round_seconds = max(5, a.round_minutes) * 60
+    a.lead_seconds = float(os.environ.get("OQ_PROVER_LEAD_SECONDS") or max(10, a.lead_minutes) * 60)
+    a.wait_poll = float(os.environ.get("OQ_PROVER_POLL") or 20)
+    a.lead_beat = float(os.environ.get("OQ_PROVER_BEAT") or 900)  # the lead is woken at least every 15 minutes
     a.verify_timeout = 1800
     if not 1 <= a.workers <= 8:
         raise Stop("workers must be between 1 and 8.")
-    c = api.post(f"/api/projects/{a.project}/prover/campaigns", {"question_id": a.question, "goal": a.goal or ""})
+    c = api.post(f"/api/projects/{a.project}/prover/campaigns", {"question_id": a.question, "goal": a.goal or "", **({"lead_mode": a.lead_mode} if a.lead_mode else {})})
+    if a.lead and c.get("lead_mode") != "continuous":
+        say("This campaign has a periodic lead: --lead has no effect. Start it with --lead-mode continuous to have a lead session run all the time.")
     try:
         (data_dir() / "prover_stop").unlink()
     except OSError:
         pass
     run = ProverRun(api, a)
+    a.should_stop = run.stopping
     say(f"Campaign {c['id']}: {a.workers} worker(s) on {a.provider} ({a.model or 'default model'}), verified on {a.verifier} ({a.verifier_model or 'default model'}). "
         f"Stop with: python3 oq.py prove stop")
     threads = [threading.Thread(target=run.worker, args=(i + 1, c["id"]), daemon=True) for i in range(a.workers)]
@@ -5553,11 +5683,15 @@ def parser():
     pv.add_argument("--model")
     pv.add_argument("--verifier", choices=["claude", "codex"], help="the AI of the verifier (default: the other one when it is installed)")
     pv.add_argument("--verifier-model")
+    pv.add_argument("--lead-mode", choices=["periodic", "continuous"], help="periodic: one lead answer every 30 minutes (default); continuous: a lead session runs all the time")
+    pv.add_argument("--lead", action="store_true", help="in a continuous campaign, this computer runs the lead session when none runs (it takes one of its workers)")
+    pv.add_argument("--lead-minutes", type=int, default=60, help="length of one lead session; the next one continues from its handover")
     pv.add_argument("--once", action="store_true", help="one round per worker, then stop")
     pv.set_defaults(fn=cmd_prove)
     pt = sub.add_parser("prover-tools", help=argparse.SUPPRESS)
     pt.add_argument("--port", type=int, required=True)
     pt.add_argument("--token", required=True)
+    pt.add_argument("--role", choices=["worker", "lead"], default="worker")
     pt.set_defaults(fn=cmd_prover_tools)
     return ap
 

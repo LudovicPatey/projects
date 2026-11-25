@@ -115,6 +115,13 @@ export const OverviewView = {
     <div class="dash">
       <div class="dash-col">
         <section class="panel"><header><h2><icon name="bell" :size="15"/> Needs your attention</h2></header><action-list :actions="d.actions"/></section>
+        <section v-if="d.reading?.length" class="panel reading-panel"><header><h2><icon name="sparkles" :size="15"/> Worth reading</h2><small class="muted">{{ d.reading.length }}</small></header>
+          <p class="muted small">Facts the AI consolidation marked as real progress, that you have not opened since. Most facts are routine: these are worth your time.</p>
+          <div v-for="f in d.reading" :key="f.id" class="reading-row">
+            <a class="reading-main" :href="link('facts', f.id)"><span class="reading-top"><code class="key">{{ f.label }}</code><b><math-text :text="f.title"/></b></span>
+              <span class="reading-why small"><math-text :text="f.reason"/> <ai-meta compact :model="f.model"/></span></a>
+            <button class="btn xs ghost" title="Remove it from your suggestions" @click="dismiss(f)">Not for me</button>
+          </div></section>
         <section class="panel"><header><h2><icon name="target" :size="15"/> Big questions</h2><a :href="link('questions')">All questions ›</a></header>
           <a v-for="q in d.questions.roots" :key="q.id" class="big-q" :href="link('questions', q.id)">
             <div class="big-q-top"><i v-if="q.priority === 'high'" class="q-high" title="High priority">!</i><b><math-text :text="q.title"/></b><pill :status="q.status"/></div>
@@ -144,6 +151,10 @@ export const OverviewView = {
   methods: {
     timeAgo, link, computeTime, aiTimeSummary,
     async load() { try { this.d = await api.get(`api/projects/${this.p.id}/dashboard`); } catch (e) { toast(e.message, 'error'); } },
+    async dismiss(f) {
+      const r = await attempt(() => api.post(`api/facts/${f.id}/reading/dismiss`, {}));
+      if (r) this.d = { ...this.d, reading: r.reading };
+    },
     preparing() { toast('Preparing your copy. The download starts when it is ready.'); },
     startEdit() { this.title = this.p.title; this.editing = true; },
     async save() {

@@ -39,6 +39,7 @@ final class DashboardController
             'bib' => self::bibliography($pid),
             'conversations' => self::conversations($pid, $me),
             'actions' => self::actions($pid, $me, $questions, $facts),
+            'reading' => self::reading($pid, $me),
             'activity' => self::activity($pid, $me),
             'people' => self::people($pid),
             'ai_time' => AiTaskController::computeSummary($pid),
@@ -147,6 +148,34 @@ final class DashboardController
             }
         }
         return array_slice($out, 0, 7);
+    }
+
+    /**
+     * Reading suggestions: facts the consolidation flagged as real progress, that this member has not opened since,
+     * nor reviewed, nor set aside. Most facts are AI-written and routine: these are the few worth a person's time.
+     */
+    public static function reading(int $pid, int $me, int $limit = 8): array
+    {
+        return array_map(fn($f) => ['id' => (int)$f['id'], 'label' => $f['label'], 'title' => $f['title'], 'reason' => $f['highlight_reason'], 'model' => $f['highlight_model'],
+            'at' => $f['highlight_at'], 'tool' => $f['tool']], Db::all(
+            "SELECT f.id, f.label, f.title, f.tool, f.highlight_reason, f.highlight_model, f.highlight_at FROM facts f
+             LEFT JOIN read_marks m ON m.user_id = ? AND m.project_id = f.project_id AND m.item_type = 'fact' AND m.item_id = f.id
+             WHERE f.project_id = ? AND f.deleted_at IS NULL AND f.retracted_at IS NULL AND f.highlight_at IS NOT NULL
+               AND (m.activity_id IS NULL OR m.activity_id < f.highlight_activity OR m.forced_unread = 1)
+               AND NOT EXISTS (SELECT 1 FROM fact_highlight_dismissals d WHERE d.user_id = ? AND d.fact_id = f.id)
+               AND NOT EXISTS (SELECT 1 FROM fact_reviews v WHERE v.fact_id = f.id AND v.revision_no = f.current_revision AND v.reviewer_id = ? AND v.reviewer_kind = 'human')
+             ORDER BY f.highlight_at DESC, f.id DESC LIMIT $limit", [$me, $pid, $me, $me]));
+    }
+
+    /** A member sets a reading suggestion aside. */
+    public static function dismissReading(Request $r): never
+    {
+        if (Auth::isAi()) throw new HttpError(403, 'Only a person can do this.');
+        $f = Access::fact($r->int('id'));
+        if (!Db::value('SELECT 1 FROM fact_highlight_dismissals WHERE user_id = ? AND fact_id = ?', [Auth::id(), $f['id']])) {
+            Db::insert('fact_highlight_dismissals', ['user_id' => Auth::id(), 'fact_id' => $f['id'], 'created_at' => Db::now()]);
+        }
+        Response::json(['reading' => self::reading((int)$f['project_id'], Auth::id())]);
     }
 
     /** Recent events on items this user can see. Private conversations of others never appear. */

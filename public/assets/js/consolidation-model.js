@@ -6,6 +6,7 @@ export const SUGGESTION_KINDS = [
   { kind: 'question', title: 'Open questions', help: 'A remark asks a question that is still open. Accepting makes it an open question, linked to its source.' },
   { kind: 'kind', title: 'Kinds', help: 'A fact has the wrong kind, for example a remark that is really a lemma.' },
   { kind: 'cite', title: 'Cited results', help: 'A proof uses a result of another work directly. Accepting links the proof to the fact that states it, written here as a new cited result when there is none, so that the proof relies only on the database.' },
+  { kind: 'progress', title: 'Worth reading', help: 'A fact that is real progress, worth a person\'s reading. Accepting adds it to every member\'s reading suggestions, on the overview.' },
   { kind: 'topics', title: 'Subject tags', help: 'Free tags to find facts by subject. They are added to the fact\'s tags.' },
 ];
 
@@ -25,6 +26,7 @@ export function suggestionText(s, facts) {
     case 'kind': return `${a} becomes a ${s.data?.kind ?? '?'}`;
     case 'question': return `${a} becomes the open question “${s.data?.title ?? ''}”`;
     case 'topics': return `Tag ${a}: ${(s.data?.topics ?? []).join(', ')}`;
+    case 'progress': return `${a} is worth reading`;
     case 'cite': return b ? `${a} uses ${b}, for ${s.data?.ref_label ?? 'a reference'}` : `${a} uses a new cited result: ${s.data?.title ?? ''}`;
     default: return a;
   }
@@ -61,6 +63,7 @@ export function historyText(h, factId) {
     case 'kind': return `Kind changed to ${h.data?.kind ?? '?'}`;
     case 'topics': return `Tagged ${(h.data?.topics ?? []).join(', ')}`;
     case 'question': return `Became the open question “${h.data?.title ?? ''}”`;
+    case 'progress': return 'Marked as worth reading';
     case 'cite': return here ? `${h.data?.ref_label ?? 'A reference'} linked to ${other ?? `the new cited result “${h.data?.title ?? ''}”`}` : `${other} relies on this fact for ${h.data?.ref_label ?? 'a reference'}`;
     default: return h.kind;
   }

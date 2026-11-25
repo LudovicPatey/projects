@@ -140,6 +140,7 @@ $routes = [
     ['DELETE', '/api/facts/{id}/reviews/{rid}',           [FactController::class, 'deleteReview']],
     ['POST',   '/api/facts/{id}/proofs',                  [FactController::class, 'proposeProof']],
     ['POST',   '/api/facts/{id}/topics',                  [ConsolidationController::class, 'setTopics']],
+    ['POST',   '/api/facts/{id}/reading/dismiss',         [DashboardController::class, 'dismissReading']],
     ['GET',    '/api/projects/{id}/consolidation',        [ConsolidationController::class, 'list']],
     ['POST',   '/api/projects/{id}/consolidation',        [ConsolidationController::class, 'suggest']],
     ['POST',   '/api/projects/{id}/consolidation/bulk',   [ConsolidationController::class, 'bulk']],

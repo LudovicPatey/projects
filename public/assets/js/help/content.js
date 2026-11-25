@@ -166,9 +166,11 @@ export const ARTICLES = [
   // ---------------------------------------------------------------- Your project
   {
     slug: 'question', category: 'project', title: 'The project overview', summary: 'The main problem, its status and a summary of the project.',
-    keywords: 'question overview status open solved archived edit title dashboard activity attention progress team',
+    keywords: 'question overview status open solved archived edit title dashboard activity attention progress team worth reading suggestions read',
     blocks: [
       p('The [Overview](app:overview) page is the dashboard of the project: the main problem, how many questions are settled, **what needs your attention**, the big questions, the state of the facts and strategies, recent activity and the team.'),
+      h('Worth reading'),
+      p('Most facts are written by AI and many are routine steps, so nobody can read them all. After reading the whole database, the [consolidation](help:consolidation) marks the few that are **real progress**: a new result on a question, a key step, a surprising counterexample. They appear under **Worth reading** on the overview, with the reason, until you open the fact, review it, or click **Not for me**. The fact itself shows the reason at the top.'),
       live((c) => [line(`The status of this project is **${c.project.status}**.` + (isOwner(c) ? ' As an owner, you can edit the question and change the status.' : ' Only its owners can edit the question or change the status.'), c.people.owners.map(toPerson))]),
       h('Edit the question (owners)'),
       steps('Click **Edit** under the problem.', 'Change the title or the statement.', 'Click **Save**.'),
@@ -530,7 +532,8 @@ export const ARTICLES = [
         ['**Missing dependency**', 'Records that a proof relies on another fact. The text does not change, so reviews stay valid. A dependency that would make a cycle is refused.', 'Any member'],
         ['**Open question**', 'A remark that asks something open becomes an [open question](help:open-questions), linked to its source, and leaves the facts. A remark that other facts rely on stays.', 'An owner'],
         ['**Kind**', 'Corrects the kind of a fact, for example a remark that states and proves a lemma.', 'Any member'],
-        ['**Subject tags**', 'Adds free tags to the fact.', 'Any member']),
+        ['**Subject tags**', 'Adds free tags to the fact.', 'Any member'],
+        ['**Worth reading**', 'Marks a fact as real progress: it appears in every member\'s reading suggestions on the [overview](help:question), until each one opens it.', 'Any member']),
       steps('In [Facts](app:facts), click **Consolidate**.', 'Read each proposal, the two facts it concerns and the reason the AI gives. Click a fact to open it.', 'Click **Accept** or **Reject**, or **Accept all** and **Reject all** for a whole group.'),
       list('The AI never proposes again what people rejected or undid.', 'Click **Ask AI to consolidate** to run it at any time, for example after adding facts by hand.', 'Each proposal shows the model that made it and its computing time.'),
       h('Subject tags'),
@@ -830,6 +833,10 @@ export const ARTICLES = [
       h('Run it'),
       cmd('python3 oq.py prove run --project ID --question ID --workers 2 --minutes 120', 'Join or start a campaign'),
       cmd('python3 oq.py prove stop', 'Stop after the rounds in progress'),
+      h('A continuous lead'),
+      p('By default the lead answers once every 30 minutes. In a **continuous** campaign, a lead session runs all the time, like the lead agent of Danus: it watches the notes and facts as they arrive, revises the guidance and the lanes within minutes, searches the literature, and hands over to the next session every hour. When a session has nothing left to do, it stops, and the client wakes a new one as soon as a worker reports something, or after 15 minutes: waiting costs nothing. Workers reread their lane after each submission and every 20 minutes. It is closer to Danus, and heavier on the subscription of the member who runs it.'),
+      cmd('python3 oq.py prove run --project ID --question ID --workers 3 --lead-mode continuous --lead', 'Start a continuous campaign; this computer runs the lead session with one of its workers'),
+      list('Only a computer started with `--lead` runs the lead session. Without one, a lead still answers every 30 minutes.', '`--lead-minutes` sets the length of a session; the next one continues from its handover.'),
       cmd('python3 oq.py prove status --project ID', 'The campaigns of a project, with their rounds, facts and summary'),
       cmd('python3 oq.py prove stats --project ID', 'Danus and the native prover side by side: computing time, facts, facts per hour, and what became of them'),
       warn('It is experimental and starts only from the command line. Like Danus, it is the heaviest use of your subscription: your [usage limits](help:ai-client) apply between rounds, and each round has its own time limit.'),

@@ -20,7 +20,7 @@ use App\Response;
  */
 final class ConsolidationController
 {
-    public const KINDS = ['same', 'depends', 'kind', 'question', 'topics', 'cite'];
+    public const KINDS = ['same', 'depends', 'kind', 'question', 'topics', 'cite', 'progress'];
     public const MAX_TOPICS = 8;
     private const MAX_TOPIC_LENGTH = 40;
     private const MAX_PER_POST = 200;
@@ -143,7 +143,7 @@ final class ConsolidationController
     }
 
     /** What the AI may apply on its own when it is confident and the project allows it. Turning a remark into an open question stays with people. */
-    public const AUTO_KINDS = ['same', 'depends', 'kind', 'topics', 'cite'];
+    public const AUTO_KINDS = ['same', 'depends', 'kind', 'topics', 'cite', 'progress'];
 
     /**
      * Records the proposals that are valid and new. Those the AI is highly confident about are applied at once when the project
@@ -188,9 +188,9 @@ final class ConsolidationController
             'source' => Db::value("SELECT COALESCE(b.cite_key, d.title, s.source_type) FROM fact_sources s LEFT JOIN bib_entries b ON s.source_type = 'bib' AND b.id = s.source_id
                                    LEFT JOIN documents d ON s.source_type = 'document' AND d.id = s.source_id WHERE s.fact_id = ? AND s.revision_no = ? AND s.covers <> 'context' LIMIT 1", [$f['id'], $f['current_revision']]),
             'depends_on' => $deps[(int)$f['id']] ?? [], 'topics' => self::decode($f['topics_json']),
-            'basis' => $graph[(int)$f['id']]['basis'] ?? null,
+            'basis' => $graph[(int)$f['id']]['basis'] ?? null, 'status' => $graph[(int)$f['id']]['status'] ?? null, 'worth_reading' => $f['highlight_at'] !== null,
             'outside_refs' => array_values(array_map(fn($x) => ['key' => $x['key'], 'label' => $x['label']], array_filter($graph[(int)$f['id']]['outside_refs'] ?? [], fn($x) => !$x['resolved']))),
-        ], Db::all('SELECT f.id, f.label, f.kind, f.title, f.current_revision, f.topics_json, r.statement_html, r.proof_html FROM facts f
+        ], Db::all('SELECT f.id, f.label, f.kind, f.title, f.current_revision, f.topics_json, f.highlight_at, r.statement_html, r.proof_html FROM facts f
                     JOIN fact_revisions r ON r.fact_id = f.id AND r.revision_no = f.current_revision
                     WHERE f.project_id = ? AND f.deleted_at IS NULL AND f.retracted_at IS NULL ORDER BY f.id LIMIT 600', [$pid]));
         $decided = array_map(fn($s) => ['kind' => $s['kind'], 'fact_id' => (int)$s['fact_id'], 'other_fact_id' => $s['other_fact_id'] ? (int)$s['other_fact_id'] : null,
@@ -221,6 +221,14 @@ final class ConsolidationController
             case 'depends':
                 $to = (int)self::live($pid, (int)$other)['id'];
                 $undo = ['dep_added' => self::addDependency($pid, $f, $to) ? $to : null];
+                $out = ['fact_id' => $fid];
+                break;
+            case 'progress':
+                // Real progress, worth a person's reading: it appears in the members' reading suggestions.
+                $undo = ['before' => array_intersect_key($f, array_flip(['highlight_reason', 'highlight_at', 'highlight_model', 'highlight_activity']))];
+                Activity::touch($pid, 'fact', $fid, 'updated');
+                Db::update('facts', ['highlight_reason' => $s['reason_text'], 'highlight_at' => Db::now(), 'highlight_model' => $s['ai_model'],
+                    'highlight_activity' => Activity::latest($pid, 'fact', $fid)], 'id = :id', ['id' => $fid]);
                 $out = ['fact_id' => $fid];
                 break;
             case 'cite':
@@ -298,6 +306,9 @@ final class ConsolidationController
                 $added = array_diff(self::decode($u['after'] ?? null), self::decode($u['before'] ?? null));
                 $topics = $cur === ($u['after'] ?? null) ? self::decode($u['before'] ?? null) : array_values(array_diff(self::decode($cur), $added));
                 Db::update('facts', ['topics_json' => $topics ? json_encode($topics, JSON_UNESCAPED_UNICODE) : null, 'updated_at' => $now], 'id = :id', ['id' => $fid]);
+                break;
+            case 'progress':
+                Db::update('facts', ['highlight_reason' => null, 'highlight_at' => null, 'highlight_model' => null, 'highlight_activity' => null] + ($u['before'] ?? []), 'id = :id', ['id' => $fid]);
                 break;
             case 'cite':
                 Db::run('DELETE FROM fact_ref_links WHERE fact_id = ? AND ref_key = ?', [$fid, $u['ref'] ?? '']);
@@ -590,6 +601,7 @@ final class ConsolidationController
             return $r['status'] === 'rejected' ? 'People already rejected this proposal.' : 'The same proposal is already waiting.';
         }
         if ($s['kind'] === 'depends' && Db::value('SELECT 1 FROM fact_deps WHERE fact_id = ? AND depends_on_id = ?', [$s['fact_id'], $s['other_fact_id']])) return 'This dependency is already recorded.';
+        if ($s['kind'] === 'progress' && Db::value('SELECT highlight_at FROM facts WHERE id = ?', [$s['fact_id']])) return 'This fact is already marked as worth reading.';
         return null;
     }
 
