@@ -1,0 +1,115 @@
+# Builds every installer of the desktop client on GitHub's computers, each on its own system: Mac (Apple Silicon and Intel),
+# Windows and Linux. Run it by hand (Actions, "Client installers", Run workflow), or push a tag vX.Y.Z: the installers are then
+# also attached to a draft release of that tag, which clients ignore until it is published. npm run dist still builds locally.
+name: Client installers
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*.*.*']
+
+permissions:
+  contents: write # only to attach the installers to a draft release
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      # The same recipe as npm run dist:linux: built in Debian 11, so that it runs on most distributions since 2020.
+      - name: Build the AppImage
+        working-directory: client/desktop
+        run: node build-docker.mjs linux
+      - name: Check the engine
+        run: |
+          cd client/desktop/dist
+          ./open-questions-ai-linux.AppImage --appimage-extract > /dev/null
+          ./squashfs-root/resources/engine/oq --version
+      - uses: actions/upload-artifact@v4
+        with:
+          name: open-questions-ai-linux
+          path: client/desktop/dist/open-questions-ai-linux.AppImage
+          if-no-files-found: error
+
+  windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build the installer
+        working-directory: client/desktop
+        run: |
+          npm ci --no-audit --no-fund
+          npm run engine
+          npx electron-builder --win nsis --x64 --publish never
+      - name: Check the engine
+        working-directory: client/desktop
+        run: build/engine/oq.exe --version
+      - uses: actions/upload-artifact@v4
+        with:
+          name: open-questions-ai-windows
+          path: client/desktop/dist/open-questions-ai-windows.exe
+          if-no-files-found: error
+
+  mac:
+    strategy:
+      matrix:
+        include:
+          - { arch: arm64, runner: macos-15 }
+          - { arch: x64, runner: macos-15-intel }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # Ad-hoc signed, as on a Mac without a Developer ID certificate: macOS asks to confirm the first launch.
+      - name: Build the disk image
+        working-directory: client/desktop
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: |
+          npm ci --no-audit --no-fund
+          npm run engine
+          npx electron-builder --mac dmg --${{ matrix.arch }} --publish never
+      - name: Check the engine
+        working-directory: client/desktop
+        run: build/engine/oq --version
+      - uses: actions/upload-artifact@v4
+        with:
+          name: open-questions-ai-mac-${{ matrix.arch }}
+          path: client/desktop/dist/open-questions-ai-mac-${{ matrix.arch }}.dmg
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [linux, windows, mac]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: installers
+          merge-multiple: true
+      # The tag must match the client's version, or the release would offer the wrong one.
+      - name: Attach to a draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          version=$(sed -n 's/^VERSION = "\(.*\)"/\1/p' client/oq.py)
+          [ "v$version" = "$TAG" ] || { echo "Tag $TAG does not match client version $version"; exit 1; }
+          gh release view "$TAG" > /dev/null 2>&1 || gh release create "$TAG" --draft --title "$TAG" --notes "Open Questions AI client $version."
+          cp client/oq.py installers/ # clients update the command-line client from the release too
+          gh release upload "$TAG" installers/* --clobber

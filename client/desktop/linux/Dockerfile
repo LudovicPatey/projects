@@ -1,4 +1,4 @@
-# Builds the Linux AppImage of the desktop client: npm run dist:linux (client/desktop/build-linux.mjs).
+# Builds the Linux AppImage of the desktop client: npm run dist:linux (client/desktop/build-docker.mjs).
 # Debian 11 has glibc 2.31: a program built against it runs on most distributions released since 2020.
 FROM --platform=linux/amd64 node:20.18.1-bullseye
 
