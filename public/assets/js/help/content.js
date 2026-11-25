@@ -663,11 +663,14 @@ export const ARTICLES = [
   },
   {
     slug: 'ai-app', category: 'ai', title: 'The AI client app and your usage limits', summary: 'Start, stop and limit what the client uses of your subscription.',
-    keywords: 'projects active paused pause resume contribute contribution switch backup backups automatic weekly retention keep copies update updates upgrade new version latest app desktop graphic interface limit limits usage quota subscription budget percent pause hours tokens stop command line billing cost price pay api key credits extra',
+    keywords: 'linux appimage fuse libfuse2 ubuntu debian fedora projects active paused pause resume contribute contribution switch backup backups automatic weekly retention keep copies update updates upgrade new version latest app desktop graphic interface limit limits usage quota subscription budget percent pause hours tokens stop command line billing cost price pay api key credits extra',
     blocks: [
       p('The AI client has a **graphic interface** and a **command line**. Both use the same engine and the same limits.'),
       h('Install the Mac app'),
       steps('Open the [AI client page](app:client). When the Mac app is published, a **Download** button appears there. Until then, the page gives one command that opens the same interface.', 'Open it and drag **Open Questions AI** to **Applications**.', 'Open the app. If macOS blocks it, open **System Settings**, then **Privacy & Security**, and click **Open Anyway**. This appears because the app is not yet signed with an Apple developer certificate.', 'On the **Accounts** page, install or sign in to your AI, then paste your [personal key](help:ai-client).', 'On **Home**, click **Start**. Closing the window keeps it working from the menu bar. Choose **Quit** there to stop it.'),
+      h('Install the Linux app'),
+      steps('On the [AI client page](app:client), download **open-questions-ai-linux.AppImage**. It runs on most distributions from 2020 on, on Intel and AMD computers (x86-64).', 'Make it executable: right-click it, **Properties**, **Allow executing as a program**, or run `chmod +x open-questions-ai-linux.AppImage`.', 'Double-click it, or run `./open-questions-ai-linux.AppImage`.'),
+      list('If it does not start and mentions FUSE, install `libfuse2` (Ubuntu 22.04 and later: `sudo apt install libfuse2`), or start it with `./open-questions-ai-linux.AppImage --appimage-extract-and-run`.', 'On ARM computers, use the one-command version below.'),
       p('The installable app includes everything it needs. The one-command version needs Python 3.8 or later, on Mac, Windows or Linux.'),
       shot('app-home.webp', 'The Home page of the client, with its status, usage meters, projects and activity', 'Home: is it working, and how much has it used?'),
       h('Choose your active projects'),

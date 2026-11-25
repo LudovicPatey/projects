@@ -9,7 +9,8 @@
   "scripts": {
     "start": "electron .",
     "engine": "node build-engine.mjs",
-    "dist": "npm run engine && electron-builder"
+    "dist": "npm run engine && electron-builder",
+    "dist:linux": "node build-linux.mjs"
   },
   "devDependencies": {
     "electron": "45.4.1",
