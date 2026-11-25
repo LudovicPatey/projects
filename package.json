@@ -10,7 +10,8 @@
     "test": "node --test tests/*.test.mjs",
     "protocol": "node scripts/client-protocol.mjs",
     "admin": "node scripts/admin.mjs",
-    "audit:fetch": "node scripts/audit-fetch.mjs"
+    "audit:fetch": "node scripts/audit-fetch.mjs",
+    "danus:upstream": "node scripts/danus-upstream.mjs"
   },
   "engines": {
     "node": ">=22"

@@ -1,0 +1,41 @@
+{
+  "repository": "https://github.com/frenzymath/Danus",
+  "branch": "codex",
+  "commit": "6d92e8d415933ca2ef52fd1a4da73fdfcd418f1c",
+  "license": "Apache-2.0",
+  "adapted": {
+    "agents/contracts/worker.md": "client/oq.py PROVER_WORKER and PROVER_RULES",
+    "agents/contracts/verifier.md": "client/oq.py PROVER_VERIFIER",
+    "agents/contracts/main_agent.md": "client/oq.py PROVER_LEAD",
+    "agents/contracts/README.md": "docs/PROVER.md (roles)",
+    "agents/skills/worker/construct-counterexamples/SKILL.md": "client/oq.py PROVER_WORKER, step 2",
+    "agents/skills/worker/construct-toy-examples/SKILL.md": "client/oq.py PROVER_WORKER, step 2",
+    "agents/skills/worker/direct-proving/SKILL.md": "client/oq.py PROVER_WORKER, steps 2 to 4",
+    "agents/skills/worker/identify-key-failures/SKILL.md": "client/oq.py PROVER_WORKER, step 2",
+    "agents/skills/worker/obtain-immediate-conclusions/SKILL.md": "client/oq.py PROVER_WORKER, step 2",
+    "agents/skills/worker/propose-subgoal-decomposition-plans/SKILL.md": "client/oq.py PROVER_WORKER, step 2",
+    "agents/skills/worker/query-memory/SKILL.md": "client/oq.py PROVER_WORKER, step 1, and the note_search tool",
+    "agents/skills/worker/search-math-results/SKILL.md": "client/oq.py PROVER_RULES and the cite_result tool",
+    "agents/skills/worker/verify-proof/SKILL.md": "client/oq.py PROVER_WORKER, step 4, and the fact_submit tool",
+    "agents/skills/verify/check-referenced-statements/SKILL.md": "client/oq.py PROVER_VERIFIER",
+    "agents/skills/verify/synthesize-verification-report/SKILL.md": "client/oq.py PROVER_VERIFIER",
+    "agents/skills/verify/verify-sequential-statements/SKILL.md": "client/oq.py PROVER_VERIFIER",
+    ".agents/skills/elaboration/SKILL.md": "client/oq.py PROVER_LEAD (elaboration)",
+    "danus/core/DATA_MODEL.md": "docs/PROVER.md (facts, notes, usable facts)"
+  },
+  "integration": {
+    "danus/core/factgraph.py": "client/oq.py DANUS_MERGE (FactGraph.add, exists, revoke)",
+    "danus/core/global_memory.py": "client/oq.py DANUS_MERGE (GlobalMemory.append)",
+    "danus/core/schema.py": "client/oq.py DANUS_MERGE (kinds, statuses, external references)",
+    "danus/core/__init__.py": "client/oq.py DANUS_MERGE (imports)",
+    "danus/execution/layout.py": "client/oq.py DANUS_MERGE (project_dir)",
+    "danus/gateway/server.py": "client/oq.py DanusRun.checks (verification entries, source_id)",
+    "danus/orchestration/cli.py": "client/oq.py DanusRun.launch (new, assign, start, stop, status --json) and DANUS_MACOS_PATCH",
+    "danus/codex.py": "client/oq.py DANUS_MACOS_PATCH and DANUS_CLAUDE_ADAPTER",
+    "danus/execution/loop.py": "client/oq.py DANUS_MACOS_PATCH and DANUS_CLAUDE_ADAPTER",
+    "danus/verify/launcher.py": "client/oq.py DANUS_MACOS_PATCH and DANUS_CLAUDE_ADAPTER",
+    "danus/authoring/driver.py": "client/oq.py DANUS_MACOS_PATCH",
+    "scripts/services.sh": "client/oq.py DanusRun.launch (services.sh up verify)",
+    "scripts/bootstrap.sh": "client/oq.py DANUS_SETUP and DANUS_NATIVE_SETUP"
+  }
+}

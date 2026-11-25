@@ -63,6 +63,12 @@ through a local address with a one-round token, limited to this round's campaign
 found, facts per hour of computing, and what became of those facts (usable, disputed, retracted). Both engines are run on
 the same questions before choosing.
 
+## Following Danus
+
+`third_party/danus` keeps the Danus files the prover adapts, unchanged, at the commit the client installs, with a manifest of
+where each one is used. `npm run danus:upstream` reports what changed upstream since, and checks that the Danus integration
+still fits. See `third_party/danus/README.md`.
+
 ## Phases
 
 1. Engine: campaigns, rounds, notes, tools, verifier, lead, command line, statistics. (This change.)

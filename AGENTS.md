@@ -36,4 +36,5 @@ npm test
 - The platform never runs an AI model. AI work goes through the queue (`AiTaskController`) and the local client `client/oq.py`, which has no dependency and never gives its key to the AI process.
 - When `client/oq.py` or `client/desktop` changes for users, raise `VERSION` in `client/oq.py` and the version in `client/desktop/package.json` together: clients detect updates from GitHub Releases and the platform. If a client needs new server features, also raise `API_LEVEL` in `client/oq.py` and `AiTaskController`. In the other direction, a server that older clients can no longer use raises the minimum client version with `npm run protocol -- --breaking`.
 - The project is licensed under AGPL-3.0-only. Keep the source-code links visible, and check that any new dependency has a compatible license.
+- Danus is followed at one commit (`third_party/danus/manifest.json`, equal to `DANUS_COMMIT` in `client/oq.py`). Run `npm run danus:upstream` to audit upstream changes before carrying them into the native prover (`PROVER_*`) or the Danus integration, then `-- --accept`.
 - Commit, push or deploy only when explicitly asked.
