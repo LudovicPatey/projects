@@ -257,7 +257,8 @@ h1 { font-size: 24px; } h2 { font-size: 16px; } h3 { font-size: 15px; } h4 { fon
 .tl-item.current .tl-dot { border-color: var(--human); background: var(--human); }
 .tl-body { background: #fff; border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 14px; }
 .tl-item.viewing .tl-body { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-2); }
-.tl-head { display: flex; gap: 8px; align-items: center; }
+.tl-head { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; }
+.tl-head > .muted { white-space: nowrap; }
 .tl-notes { margin-top: 6px; }
 .tl-actions { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
 .backlink { display: flex; gap: 8px; align-items: center; padding: 8px 10px; border-radius: 6px; color: var(--text); }
@@ -587,6 +588,16 @@ h4.mt { margin-top: 18px; }
 .proof-tag.human { background: var(--human-bg); color: var(--human); }
 .proof-tag.ai { background: var(--ai-bg); color: var(--ai); }
 .proof-tag.mixed { background: var(--warn-bg); color: var(--warn); }
+.basis-tag { display: inline-flex; font-size: 11px; font-weight: 700; padding: 0 7px; border-radius: 10px; white-space: nowrap; border: 1px solid var(--line); color: var(--muted); }
+.basis-tag.cited { border-color: var(--human); color: var(--human); }
+.basis-tag.incomplete { border-color: var(--warn); color: var(--warn); }
+.outside-ref { padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; margin-bottom: 8px; display: grid; gap: 6px; min-width: 0; }
+.outside-ref.open { border-color: var(--warn); background: var(--warn-bg); }
+.outside-ref-top { display: flex; gap: 6px; align-items: flex-start; min-width: 0; overflow-wrap: anywhere; }
+.outside-ref-top > svg { flex: none; margin-top: 2px; }
+.outside-ref-act { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; min-width: 0; }
+.outside-ref-act select { flex: 1 1 220px; min-width: 0; max-width: 100%; }
+.cons-new { margin: 4px 0; padding: 6px 10px; border-left: 3px solid var(--human); background: var(--line-2); overflow-wrap: anywhere; }
 .endorse-count { color: #15803d; font-weight: 700; }
 .endorsers { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; font-size: 12.5px; color: #15803d; font-weight: 600; }
 .btn.endorse { color: #15803d; border-color: #86efac; }
@@ -1628,3 +1639,21 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: non
 .comment-role.r-disputes { background: var(--bad-bg) !important; color: var(--bad) !important; }
 .comment-role.r-supports { background: var(--good-bg) !important; color: var(--good) !important; }
 .comment-role.r-clarifies { background: var(--info-bg) !important; color: var(--info) !important; }
+
+/* Notation in the text of a fact: a dotted underline on each symbol, and its meaning on hover, focus or tap. */
+.rich .oq-nt { border-bottom: 1.5px dotted var(--accent); cursor: help; border-radius: 2px; }
+.rich .oq-nt:hover, .rich .oq-nt:focus-visible { background: var(--accent-2); outline: none; }
+.nt-pop { position: fixed; z-index: 1000; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow-lg); padding: 9px 11px; font-size: 13px; line-height: 1.45; overflow-wrap: anywhere; pointer-events: none; }
+.nt-pop[hidden] { display: none; }
+.nt-pop-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 4px; }
+.nt-pop-sym { font-weight: 600; }
+.nt-pop-from { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; white-space: nowrap; }
+.nt-pop-body p { margin: 0; }
+.nt-pop-body p + p { margin-top: 4px; }
+.cons-conf { align-self: flex-start; }
+.cons-conf.c-high { background: var(--good-bg); color: var(--good); }
+.cons-conf.c-medium { background: var(--info-bg); color: var(--info); }
+.cons-conf.c-low { background: var(--warn-bg); color: var(--warn); }
+.cons-auto { margin-top: 10px; align-items: flex-start; }
+.tl-change .tl-dot { background: var(--accent-2); border-color: var(--accent); }
+.tl-change.undone .tl-body { opacity: .65; }

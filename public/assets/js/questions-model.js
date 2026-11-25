@@ -40,6 +40,7 @@ export const FACT_SUPPORT = {
   chain_broken: { ok: false, text: 'This fact relies on a denied, disputed or retracted fact.' },
   proof_disputed: { ok: false, text: 'The result is accepted but no proof of it is. Fix the proof, or propose and check another one.' },
   chain_unproved: { ok: false, text: 'This fact relies on a result whose proof is disputed.' },
+  incomplete: { ok: false, text: 'A proof in this fact or below it uses a result of another work directly. Link that result to the fact that states it first.' },
   retracted: { ok: false, text: 'This fact is retracted.' },
   missing: { ok: false, text: 'This fact no longer exists.' },
 };

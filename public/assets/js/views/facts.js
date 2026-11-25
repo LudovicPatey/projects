@@ -5,9 +5,10 @@ import { FactGraph, STATUS, PROOF_LABEL } from '../factgraph.js';
 import { factTitle, formatFactHtml, kindCounts, kindLabel, kindOf, parseExternalRefs, texLine } from '../fact-format.js';
 import { PROOF_STATE, proofTally, resultOnlyBody, stance } from '../fact-proofs.js';
 import { asMath, rephrasingState, shownRephrasing } from '../notation-model.js';
+import { factNotation } from '../notation-marks.js';
 import { NotationPanel } from './notation.js';
 import { ConsolidationPanel } from './consolidation.js';
-import { parseTopics, topicFilter } from '../consolidation-model.js';
+import { CONFIDENCE, historyText, parseTopics, topicFilter, undoLabel } from '../consolidation-model.js';
 import { GRAPH_VIEWS, bestCenter, defaultView, keyGraph, neighborhood } from '../graph-views.js';
 
 const VERDICTS = {
@@ -22,8 +23,10 @@ const LEAN = {
 const CHAIN = {
   broken: 'Depends on a disputed or retracted fact',
   unproved: 'Depends on a result whose proof is disputed',
-  unchecked: 'Depends on an unchecked fact',
+  unchecked: 'Depends on an unchecked fact or a citation nobody accepted',
+  incomplete: 'Depends on a proof that still uses an outside result directly',
 };
+const SOURCE_CHECK = { confirmed: ['The source states it', 'green'], differs: ['The source states something different', 'amber'], not_found: ['Not found in the source', 'amber'] };
 
 const BASIS = {
   message_author: 'author of the message', comment_author: 'author of the comment', bibliography: 'authors in the bibliography',
@@ -40,6 +43,12 @@ const ProofTag = {
   props: { origin: String },
   computed: { text() { return PROOF_LABEL[this.origin] || PROOF_LABEL.none; } },
   template: `<span class="proof-tag" :class="origin">{{ text }}</span>`,
+};
+
+/** A cited result states a result of another work without its proof. A proof that still uses an outside result directly is incomplete. */
+const BasisTag = {
+  props: { basis: String, incomplete: Boolean },
+  template: `<span v-if="basis === 'cited'" class="basis-tag cited" title="A result of another work, stated without its proof. A person who read the source accepts it.">Cited result</span><span v-if="incomplete" class="basis-tag incomplete" title="Its proof uses a result of another work that is not a fact of the database yet">Outside result</span>`,
 };
 
 const StatusTag = {
@@ -59,7 +68,7 @@ const usedBy = (f) => f.used_by ?? f.dependents?.length ?? 0;
 const notationView = () => { try { return localStorage.getItem('oq-fact-notation') !== 'source'; } catch { return true; } };
 
 export const FactsView = {
-  components: { FactGraph, StatusTag, ByLine, LabelChips, ProofTag, NotationPanel, ConsolidationPanel },
+  components: { FactGraph, BasisTag, StatusTag, ByLine, LabelChips, ProofTag, NotationPanel, ConsolidationPanel },
   props: { pid: Number, id: Number, query: Object },
   data() {
     return {
@@ -67,7 +76,7 @@ export const FactsView = {
       fact: null, factError: null, tab: 'content', activeThread: null, backlinks: [],
       readable: readView(), fKind: 'all', outline: [], reviewVerdict: 'correct', checkForm: null, trace: null, retracting: null, revView: null, denying: null,
       reviewStatement: 'true', resultOnly: null, proposing: null, proofCheck: null, projectNotation: notationView(), unfaithful: null,
-      fStar: 'all', gView: null, gScope: 'all', gDepth: 2, matchIds: new Set(), listTag: null, fTopic: 'all', topicDraft: null,
+      fStar: 'all', fBasis: 'all', refPick: {}, gView: null, gScope: 'all', gDepth: 2, matchIds: new Set(), listTag: null, fTopic: 'all', topicDraft: null,
     };
   },
   computed: {
@@ -89,6 +98,7 @@ export const FactsView = {
         && (this.fLabel === 'all' || f.labels.includes(this.fLabel))
         && (this.fLean === 'all' || (this.fLean === 'with' ? f.lean !== 'none' : f.lean === this.fLean))
         && (this.fStar === 'all' || (this.fStar === 'mine' ? f.starred : f.stars > 0))
+        && (this.fBasis === 'all' || (this.fBasis === 'incomplete' ? f.incomplete : f.basis === this.fBasis))
         && (!q || [f.label, f.title, f.statement_text, f.ai_model, f.author, f.kind, kindOf(f), f.method, f.tool, f.labels.join(' '), (f.topics || []).join(' ')].some((x) => String(x || '').toLowerCase().includes(q)) || this.matchIds.has(f.id)));
       if (this.lineage && this.id) {
         const keep = this.lineageOf(this.id);
@@ -102,7 +112,18 @@ export const FactsView = {
       const ids = new Set(this.filtered.map((f) => f.id));
       return this.edges.filter(([a, b]) => ids.has(a) && ids.has(b));
     },
-    activeFilters() { return [this.fStatus, this.fOrigin, this.fLabel, this.fLean, this.fStar, this.fTopic].filter((v) => v !== 'all').length; },
+    activeFilters() { return [this.fStatus, this.fOrigin, this.fLabel, this.fLean, this.fStar, this.fTopic, this.fBasis].filter((v) => v !== 'all').length; },
+    basisCounts() {
+      const c = { proved: 0, cited: 0, incomplete: 0 };
+      for (const f of this.results) { if (f.basis in c) c[f.basis] += 1; if (f.incomplete) c.incomplete += 1; }
+      return c;
+    },
+    cited() { return this.fact?.basis === 'cited'; },
+    // What an outside reference can be linked to: the cited results first, then the other facts.
+    linkOptions() {
+      const others = this.results.filter((f) => f.id !== this.fact?.id);
+      return [...others.filter((f) => f.basis === 'cited'), ...others.filter((f) => f.basis !== 'cited')];
+    },
     starCount() { return this.results.filter((f) => f.stars > 0).length; },
     graphView() { return this.gView || defaultView(this.results.length, this.starCount > 0); },
     center() { return this.id && this.filtered.some((f) => f.id === this.id) ? this.id : bestCenter(this.filtered); },
@@ -137,6 +158,7 @@ export const FactsView = {
     oldProofs() { return (this.fact?.proofs || []).filter((p) => p.revision_no !== this.fact.current_revision); },
     banner() {
       const f = this.fact, by = f.ai_model, tool = f.tool ? ` with ${f.tool}` : '';
+      if (f.basis === 'cited') return { head: 'Cited result.', rest: `A result of another work, stated here without its proof. Entered by ${by}. Accept it once you have read the source.` };
       if (f.method === 'deduced') return { head: 'AI-deduced', rest: `by ${by}${tool}. Check carefully before relying on it.` };
       const entered = `Entered by ${by}. Check it against the source.`;
       if (f.origin === 'human' && f.proof_origin === 'human') return { head: 'Human statement and proof.', rest: entered };
@@ -157,6 +179,16 @@ export const FactsView = {
       const own = this.rephrasing ? Object.entries(this.rephrasing.local || {}) : this.glossary;
       return own.map(([k, v]) => [k, typeof v === 'string' ? v : JSON.stringify(v)]);
     },
+    // Revisions and the changes applied to the fact, newest first: one history.
+    timeline() {
+      if (!this.fact) return [];
+      const revs = this.fact.revisions.map((r) => ({ key: `r${r.id}`, at: r.created_at, rev: r }));
+      const changes = (this.fact.history || []).map((h) => ({ key: `h${h.id}`, at: h.decided_at, change: h }));
+      return [...revs, ...changes].sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : (a.change ? -1 : 0) + (b.change ? 1 : 0))); // a change follows the revision of the same second
+    },
+    mergedHere() { return (this.fact?.history || []).filter((h) => h.kind === 'same' && h.status === 'accepted' && h.fact_id === this.fact.id); },
+    // The notation marked in the text shown: what this version defines for itself, then the agreed project symbols. None on an older revision.
+    notationMarks() { return this.fact && !this.shownRevision ? factNotation(this.localNotation, this.fact.notation) : []; },
     projectSymbols() { return this.rephrasing ? [...new Set((this.rephrasing.uses || []).map((u) => u.project_symbol).filter(Boolean))] : []; },
     myReview() { return this.fact?.reviews.find((v) => v.reviewer_id === this.me && v.reviewer_kind === 'human' && v.revision_no === this.fact.current_revision); },
     currentReviews() { return this.fact.reviews.filter((v) => v.revision_no === this.fact.current_revision); },
@@ -207,6 +239,7 @@ export const FactsView = {
       <select v-model="fOrigin" aria-label="Filter by proof origin"><option value="all">Any proof origin</option><option value="human">Human proof</option><option value="ai">AI proof</option><option value="mixed">Human + AI proof</option><option value="none">No proof</option></select>
       <select v-model="fLabel" aria-label="Filter by label"><option value="all">All labels</option><option v-for="l in labelOptions" :key="l" :value="l">{{ pretty(l) }} ({{ labelCounts[l] }})</option></select>
       <select v-model="fStar" aria-label="Filter by star"><option value="all">Starred or not</option><option value="starred">Starred ({{ starCount }})</option><option value="mine">Starred by me</option></select>
+      <select v-model="fBasis" aria-label="Filter by basis"><option value="all">Proved or cited</option><option value="proved">Proved here ({{ basisCounts.proved }})</option><option value="cited">Cited results ({{ basisCounts.cited }})</option><option value="incomplete">Using an outside result ({{ basisCounts.incomplete }})</option></select>
       <select v-if="topicOptions.length || fTopic !== 'all'" v-model="fTopic" aria-label="Filter by subject tag"><option value="all">All subjects</option><option v-for="t in topicOptions" :key="t.topic" :value="t.topic">{{ t.topic }} ({{ t.n }})</option></select>
       <label class="check" v-if="id"><input type="checkbox" v-model="lineage"> Only this fact's lineage</label>
     </div>
@@ -245,6 +278,7 @@ export const FactsView = {
         <select v-model="fOrigin" aria-label="Filter by proof origin"><option value="all">Any proof origin</option><option value="human">Human proof</option><option value="ai">AI proof</option><option value="mixed">Human + AI proof</option><option value="none">No proof</option></select>
         <select v-model="fLabel" aria-label="Filter by label"><option value="all">All labels</option><option v-for="l in labelOptions" :key="l" :value="l">{{ pretty(l) }} ({{ labelCounts[l] }})</option></select>
         <select v-model="fStar" aria-label="Filter by star"><option value="all">Starred or not</option><option value="starred">Starred ({{ starCount }})</option><option value="mine">Starred by me</option></select>
+        <select v-model="fBasis" aria-label="Filter by basis"><option value="all">Proved or cited</option><option value="proved">Proved here ({{ basisCounts.proved }})</option><option value="cited">Cited results ({{ basisCounts.cited }})</option><option value="incomplete">Using an outside result ({{ basisCounts.incomplete }})</option></select>
         <select v-if="topicOptions.length || fTopic !== 'all'" v-model="fTopic" class="wide-filter" aria-label="Filter by subject tag"><option value="all">All subjects</option><option v-for="t in topicOptions" :key="t.topic" :value="t.topic">{{ t.topic }} ({{ t.n }})</option></select>
         <select v-model="fLean" aria-label="Filter by Lean"><option value="all">Any Lean</option><option value="with">With Lean</option><option value="compiled">Compiling</option><option value="none">No Lean</option></select>
       </div>
@@ -257,7 +291,8 @@ export const FactsView = {
         <div class="li-meta wrap">
           <label-chips :labels="f.labels"/>
           <status-tag :status="f.status"/>
-          <proof-tag :origin="f.proof_origin"/>
+          <basis-tag :basis="f.basis" :incomplete="f.incomplete"/>
+          <proof-tag v-if="f.basis !== 'cited'" :origin="f.proof_origin"/>
           <span v-for="t in (f.topics || []).slice(0, 3)" :key="t" class="topic-chip sm">{{ t }}</span>
         </div>
         <div class="li-foot">
@@ -283,11 +318,12 @@ export const FactsView = {
         <div class="doc-title">
           <div class="fact-id"><code class="key big">{{ fact.label }}</code><span class="kind-tag" :class="'k-' + kindOf(fact)">{{ kindLabel(kindOf(fact)) }}</span><span>{{ fact.method }}</span><span v-if="fact.tool">{{ fact.tool }}</span><span>revision {{ fact.current_revision }}</span></div>
           <h2 :title="fact.title"><math-text :text="headTitle"/></h2>
-          <div class="fact-chips"><label-chips :labels="fact.labels"/><status-tag :status="fact.status"/><proof-tag :origin="fact.proof_origin"/><span class="lean-tag" :class="fact.lean" v-if="fact.lean !== 'none'">{{ leanLabels[fact.lean] }}</span></div>
+          <div class="fact-chips"><label-chips :labels="fact.labels"/><status-tag :status="fact.status"/><basis-tag :basis="fact.basis" :incomplete="fact.incomplete"/><proof-tag v-if="!cited" :origin="fact.proof_origin"/><span class="lean-tag" :class="fact.lean" v-if="fact.lean !== 'none'">{{ leanLabels[fact.lean] }}</span></div>
           <div class="fact-topics"><icon name="tag" :size="13"/>
             <template v-if="topicDraft === null"><a v-for="t in fact.topics" :key="t" class="topic-chip" :href="link('facts', null, {topic: t})">{{ t }}</a><span v-if="!fact.topics.length" class="muted small">No subject tag</span><button class="link-btn small" @click="topicDraft = fact.topics.join(', ')">{{ fact.topics.length ? 'Edit' : 'Add tags' }}</button></template>
             <template v-else><input v-model="topicDraft" class="topic-input" placeholder="Subjects, separated by commas" aria-label="Subject tags, separated by commas" @keydown.enter="saveTopics" @keydown.esc="topicDraft = null"><button class="btn xs primary" @click="saveTopics">Save</button><button class="btn xs ghost" @click="topicDraft = null">Cancel</button></template></div>
           <div v-if="fact.merged_from" class="notation-banner t-info"><icon name="layers" :size="14"/><span>{{ fact.merged_from }} was merged into this fact, as the same result.</span></div>
+          <div v-else-if="mergedHere.length" class="notation-banner t-info"><icon name="layers" :size="14"/><span>{{ mergedHere.map((h) => h.other_label).join(', ') }} {{ mergedHere.length > 1 ? 'were' : 'was' }} merged into this fact, as the same result.</span><button class="btn xs" @click="tab = 'trace'; loadTrace()">History</button></div>
           <div class="fact-byline"><ai-meta :model="fact.ai_model" :user="fact.ai_user_name" :ms="fact.ai_generation_ms"/><span class="muted small">added by {{ fact.author }} · updated {{ timeAgo(fact.updated_at) }}</span></div>
           <div v-if="fact.status === 'definition'" class="notation-banner t-info"><icon name="book" :size="14"/><span>A definition: it belongs to the project notation, and it is not checked like a result.</span><button class="btn xs" @click="setMode('notation')">Open the notation</button></div>
           <div v-if="fact.endorsed_by.length" class="endorsers"><icon name="check-circle" :size="14"/> Endorsed by
@@ -299,11 +335,14 @@ export const FactsView = {
         </div>
         <div class="doc-actions">
           <button class="btn sm star-toggle" :class="{on: fact.starred}" :aria-pressed="!!fact.starred" :title="fact.starred_by?.length ? 'Starred by ' + fact.starred_by.map((u) => u.name).join(', ') : 'Star this fact: it matters, and stands out in the graph'" @click="toggleStar(fact)"><icon name="star" :size="14"/> {{ fact.starred ? 'Starred' : 'Star' }}<b v-if="fact.stars" class="seg-n">{{ fact.stars }}</b></button>
-          <button v-if="!fact.retracted_at" class="btn sm endorse" :class="{on: endorsed}" :aria-pressed="endorsed" :title="endorsed ? 'Withdraw your endorsement' : 'Endorse this revision: you checked it and consider it correct'" @click="toggleEndorse">
+          <button v-if="!fact.retracted_at && cited" class="btn sm endorse" :class="{on: endorsed}" :aria-pressed="endorsed" :title="endorsed ? 'Withdraw your acceptance' : 'Accept this citation: you read the source, and it states this result'" @click="toggleEndorse">
+            <icon name="check" :size="14"/> {{ endorsed ? 'Accepted' : 'Accept' }}</button>
+          <button v-else-if="!fact.retracted_at" class="btn sm endorse" :class="{on: endorsed}" :aria-pressed="endorsed" :title="endorsed ? 'Withdraw your endorsement' : 'Endorse this revision: you checked it and consider it correct'" @click="toggleEndorse">
             <icon name="check" :size="14"/> {{ endorsed ? 'Endorsed' : 'Endorse' }}</button>
-          <button v-if="!fact.retracted_at" class="btn sm result-only" :class="{on: resultOnlyOn}" :aria-pressed="resultOnlyOn" :title="resultOnlyOn ? 'Withdraw: you no longer say this' : 'You believe the result, but the proof has a gap or an error'" @click="toggleResultOnly"><icon name="check" :size="14"/> {{ resultOnlyOn ? 'Result only' : 'Result, not proof' }}</button>
+          <button v-if="!fact.retracted_at && !cited" class="btn sm result-only" :class="{on: resultOnlyOn}" :aria-pressed="resultOnlyOn" :title="resultOnlyOn ? 'Withdraw: you no longer say this' : 'You believe the result, but the proof has a gap or an error'" @click="toggleResultOnly"><icon name="check" :size="14"/> {{ resultOnlyOn ? 'Result only' : 'Result, not proof' }}</button>
           <button v-if="!fact.retracted_at" class="btn sm deny" :class="{on: denied}" :aria-pressed="denied" :title="denied ? 'Withdraw your denial' : 'Deny this revision: you found an error'" @click="toggleDeny"><icon name="x" :size="14"/> {{ denied ? 'Denied' : 'Deny' }}</button>
-          <ai-action v-if="!fact.retracted_at" kind="review" source-type="fact" :source-id="fact.id" label="AI review"/>
+          <ai-action v-if="!fact.retracted_at && !cited" kind="review" source-type="fact" :source-id="fact.id" label="AI review"/>
+          <ai-action v-if="!fact.retracted_at && cited" kind="source_check" source-type="fact" :source-id="fact.id" label="Check the source"/>
           <ai-action v-if="!fact.retracted_at" kind="lean" source-type="fact" :source-id="fact.id" label="Lean proof"/>
           <ai-action v-if="!fact.retracted_at" kind="ask" source-type="fact" :source-id="fact.id" label="Ask AI"/>
           <ai-action v-if="!fact.retracted_at && !currentRephrasing && !notationState" kind="notation" source-type="fact" :source-id="fact.id" label="Project notation" title="Write this fact again in the notation agreed by the project"/>
@@ -357,18 +396,42 @@ export const FactsView = {
           <button v-else-if="currentRephrasing" class="btn xs" @click="checkRephrasing('')">Undo</button>
           <ai-action v-if="notationState.tone === 'warn' || notationState.tone === 'bad'" kind="notation" source-type="fact" :source-id="fact.id" label="Rewrite again"/></div>
         <div v-if="rephrasing?.uses?.length" class="notation-uses"><span class="muted small">In its source:</span><span v-for="(u, i) in rephrasing.uses" :key="i" class="notation-use"><math-text :text="asMath(u.symbol)"/> <small><math-text :text="u.meaning_here"/></small><template v-if="u.project_symbol && u.project_symbol !== u.symbol"> → <math-text :text="asMath(u.project_symbol)"/></template></span></div>
-        <section class="fact-sec statement"><h4>Statement</h4><rich-content :html="shown(statementHtml)"/></section>
-        <section class="fact-sec" v-if="content.proof_html"><h4>Proof<span v-if="!shownRevision && mainFlawed" class="tag amber">Disputed</span><span v-if="!shownRevision && proofs.length" class="tag">1 of {{ proofs.length + 1 }}</span></h4><rich-content :html="shown(proofHtml)"/></section>
+        <div v-if="cited && !shownRevision" class="notation-banner t-info"><icon name="book" :size="14"/><span>Proofs that use this result rely on its source. <template v-if="fact.status === 'accepted'">A member who read the source accepted it.</template><template v-else>Nobody has accepted it yet: read the source, then click <b>Accept</b>. You can also propose a proof below.</template></span></div>
+        <section class="fact-sec statement"><h4>Statement</h4><rich-content :html="shown(statementHtml)" :notation="notationMarks"/></section>
+        <section class="fact-sec" v-if="content.proof_html"><h4>Proof<span v-if="!shownRevision && mainFlawed" class="tag amber">Disputed</span><span v-if="!shownRevision && proofs.length" class="tag">1 of {{ proofs.length + 1 }}</span></h4><rich-content :html="shown(proofHtml)" :notation="notationMarks"/></section>
+        <section v-if="!shownRevision && fact.outside_refs?.length" class="fact-sec outside-refs"><h4>Results used from other works<span class="count">{{ fact.outside_refs.length }}</span></h4>
+          <p class="muted small">A proof relies only on facts of the database, so that it can be checked against them. Link each result the proof takes from another work to the fact that states it, usually a cited result. A consolidation proposes these links, and writes the cited results that are missing.</p>
+          <div v-for="r in fact.outside_refs" :key="r.key" class="outside-ref" :class="{open: !r.resolved}">
+            <div class="outside-ref-top"><icon :name="r.resolved ? 'check-circle' : 'link'" :size="14"/><math-text class="outside-ref-label" :text="r.label"/></div>
+            <div v-if="r.fact" class="row-gap small"><span class="muted">Stated by</span><a :href="factLink(r.fact.id)"><code class="key">{{ r.fact.label }}</code></a><status-tag :status="r.fact.status"/><button class="link-btn small" @click="clearRef(r)">Unlink</button></div>
+            <div v-else-if="r.not_used" class="row-gap small"><span class="muted">Not used as a result: background only.</span><button class="link-btn small" @click="clearRef(r)">Undo</button></div>
+            <div v-else class="outside-ref-act">
+              <select v-model="refPick[r.key]" class="sm" :aria-label="'Fact that states ' + r.label"><option :value="undefined" disabled>Fact that states it…</option><option v-for="f in linkOptions" :key="f.id" :value="f.id">{{ f.basis === 'cited' ? 'Cited · ' : '' }}{{ f.label }}: {{ f.title }}</option></select>
+              <button class="btn sm" :disabled="!refPick[r.key]" @click="linkRef(r)">Link</button>
+              <button class="btn sm ghost" title="The proof only mentions this work, and uses no result from it" @click="linkRef(r, true)">Not used</button>
+            </div>
+          </div>
+        </section>
+        <section v-if="!shownRevision && cited && fact.source_checks?.length" class="fact-sec"><h4>Source checks by AI<span class="count">{{ fact.source_checks.length }}</span></h4>
+          <p class="muted small">An AI read the source and said what it states. This is evidence: only a person accepts a citation.</p>
+          <article v-for="c in fact.source_checks" :key="c.id" class="review" :class="{old: !c.current}">
+            <div class="row-gap"><span class="tag" :class="sourceChecks[c.verdict][1]">{{ sourceChecks[c.verdict][0] }}</span><ai-meta :model="c.ai_model" :user="c.ai_user_name" :ms="c.ai_generation_ms"/>
+              <span v-if="!c.independent" class="tag amber" title="The model that wrote this fact: recorded, but not counted">same model as author</span><span v-if="!c.current" class="tag">earlier revision</span>
+              <span class="grow"></span><span class="muted small">{{ timeAgo(c.created_at) }}</span></div>
+            <rich-content v-if="c.body_html" :html="c.body_html"/>
+          </article>
+        </section>
         <section v-if="!shownRevision && !fact.retracted_at" class="fact-sec other-proofs" id="other-proofs">
-          <h4>Other proofs<span v-if="proofs.length" class="count">{{ proofs.length }}</span><span class="grow"></span><button class="btn sm" @click="proposing = {proof: null}"><icon name="plus" :size="13"/> Propose another proof</button></h4>
-          <p v-if="!proofs.length" class="muted small">{{ mainFlawed || fact.status === 'proof_disputed' ? 'The proof above is disputed. A correct proof here is enough for the fact to count as checked.' : 'A different argument can be proposed here, by a person or an AI client, and reviewed on its own.' }}</p>
+          <h4>{{ cited ? 'Proofs' : 'Other proofs' }}<span v-if="proofs.length" class="count">{{ proofs.length }}</span><span class="grow"></span><button class="btn sm" @click="proposing = {proof: null}"><icon name="plus" :size="13"/> {{ cited ? 'Propose a proof' : 'Propose another proof' }}</button></h4>
+          <p v-if="!proofs.length && cited" class="muted small">With a proof here, this result no longer rests on its source: it becomes a proved fact, checked like the others.</p>
+          <p v-else-if="!proofs.length" class="muted small">{{ mainFlawed || fact.status === 'proof_disputed' ? 'The proof above is disputed. A correct proof here is enough for the fact to count as checked.' : 'A different argument can be proposed here, by a person or an AI client, and reviewed on its own.' }}</p>
           <article v-for="p in proofs" :key="p.id" class="alt-proof" :class="{flash: +query?.proof === p.id}" :data-proof="p.id">
             <header class="row-gap"><span class="tag" :class="proofStates[p.state].cls">{{ proofStates[p.state].label }}</span>
               <by-line :name="p.author_name" :model="p.author_kind === 'agent' ? p.ai_model : null" :user="p.ai_user_name" :ms="p.ai_generation_ms"/>
               <span class="grow"></span><span class="muted small">{{ timeAgo(p.updated_at) }}</span>
               <template v-if="p.author_id === me && p.author_kind === 'human'"><button class="icon-btn xs" title="Edit your proof" aria-label="Edit your proof" @click="proposing = {proof: p}"><icon name="edit" :size="13"/></button></template>
               <button v-if="p.author_id === me || isOwner" class="icon-btn xs" title="Withdraw this proof" aria-label="Withdraw this proof" @click="removeProof(p)"><icon name="trash" :size="13"/></button></header>
-            <rich-content :html="shown(p.body_html)"/>
+            <rich-content :html="shown(p.body_html)" :notation="notationMarks"/>
             <footer class="alt-proof-foot">
               <span class="muted small">{{ tallyText(p) }}</span><span class="grow"></span>
               <template v-if="!(p.author_id === me && p.author_kind === 'human')">
@@ -382,7 +445,7 @@ export const FactsView = {
           <details v-if="oldProofs.length" class="old-proofs"><summary>{{ oldProofs.length }} proof{{ oldProofs.length > 1 ? 's' : '' }} of an earlier statement</summary>
             <article v-for="p in oldProofs" :key="p.id" class="alt-proof old"><header class="row-gap"><span class="tag">r{{ p.revision_no }}</span><by-line :name="p.author_name" :model="p.author_kind === 'agent' ? p.ai_model : null" :user="p.ai_user_name" :ms="p.ai_generation_ms"/></header><rich-content :html="shown(p.body_html)"/></article></details>
         </section>
-        <section class="fact-sec" v-if="content.intuition_html"><h4>Intuition</h4><rich-content :html="shown(content.intuition_html)"/></section>
+        <section class="fact-sec" v-if="content.intuition_html"><h4>Intuition</h4><rich-content :html="shown(content.intuition_html)" :notation="notationMarks"/></section>
         <template v-if="!shownRevision">
           <section class="fact-sec" v-if="fact.sources.length"><h4>Sources</h4>
             <div v-for="(x, i) in fact.sources" :key="i" class="fact-source">
@@ -411,7 +474,7 @@ export const FactsView = {
       <div v-if="tab==='reviews'" class="pad scroll">
         <div v-if="canWriteReview" class="card review-form">
           <h4>{{ myReview ? 'Update your review' : 'Review revision ' + fact.current_revision }}</h4>
-          <div class="field"><span>The proof</span><div class="seg" role="group" aria-label="The proof"><button v-for="(v, k) in verdicts" :key="k" :class="{on: reviewVerdict === k}" :aria-pressed="reviewVerdict === k" @click="reviewVerdict = k">{{ v.label }}</button></div></div>
+          <div class="field"><span>{{ cited ? 'The citation' : 'The proof' }}</span><div class="seg" role="group" :aria-label="cited ? 'The citation' : 'The proof'"><button v-for="(v, k) in verdicts" :key="k" :class="{on: reviewVerdict === k}" :aria-pressed="reviewVerdict === k" @click="reviewVerdict = k">{{ cited ? citedVerdicts[k] : v.label }}</button></div></div>
           <div v-if="reviewVerdict !== 'correct'" class="field"><span>The result itself</span><div class="seg" role="group" aria-label="The result itself"><button v-for="(l, k) in {true: 'Is true', unsure: 'Not sure', false: 'Is false'}" :key="k" :class="{on: reviewStatement === k}" :aria-pressed="reviewStatement === k" :disabled="k === 'false' && reviewVerdict === 'gap'" @click="reviewStatement = k">{{ l }}</button></div></div>
           <rich-editor ref="reviewEd" compact :key="fact.id + '-' + fact.current_revision" :initial-html="myReview?.body_html || ''" :placeholder="reviewVerdict === 'correct' ? 'What did you check? (optional)' : 'Point to the exact step…'"/>
           <div class="row-end"><button class="btn primary sm" @click="submitReview">Submit review</button></div>
@@ -489,6 +552,12 @@ export const FactsView = {
           </div>
         </section>
         <template v-if="trace">
+          <section class="trace-sec"><h4>Rests on <span class="count">{{ trace.rests_on.length }} cited result{{ trace.rests_on.length === 1 ? '' : 's' }}</span></h4>
+            <div v-if="trace.incomplete.length" class="fact-alert amber small">Not complete: {{ trace.incomplete.map((x) => x.label).join(', ') }} still use{{ trace.incomplete.length === 1 ? 's' : '' }} a result of another work directly.</div>
+            <div v-if="!trace.rests_on.length" class="muted small">{{ fact.basis === 'cited' ? 'It is itself a cited result.' : 'No cited result: everything it builds on is proved in the database.' }}</div>
+            <template v-else><div class="trace-summary small"><b>{{ trace.rests_on_accepted }}</b> of {{ trace.rests_on.length }} accepted by a member who read the source.</div>
+              <a v-for="c in trace.rests_on" :key="c.id" class="trace-anc" :href="factLink(c.id)"><code class="key">{{ c.label }}</code><status-tag :status="c.status"/><span class="muted small ellipsis">{{ c.title }}</span></a></template>
+          </section>
           <section class="trace-sec"><h4>People credited for human proofs <span class="count">including what it builds on</span></h4>
             <div v-if="!trace.human_proof_credits.length" class="muted small">No human proof is recorded in this fact or its dependencies.</div>
             <div v-for="p in trace.human_proof_credits" :key="p.name + p.basis" class="trace-row small"><b>{{ p.name }}</b> <span class="muted">({{ basis[p.basis] }}) · {{ p.facts.length }} fact{{ p.facts.length > 1 ? 's' : '' }}</span>
@@ -502,17 +571,27 @@ export const FactsView = {
             <div v-if="trace.ancestor_count > trace.ancestors.length" class="muted small">Showing the {{ trace.ancestors.length }} closest facts.</div>
           </section>
         </template>
-        <h4 class="mt">Revisions</h4>
+        <h4 class="mt">Revisions and changes</h4>
         <div class="timeline">
-        <div v-for="r in fact.revisions" :key="r.id" class="tl-item" :class="{current: r.revision_no === fact.current_revision}">
+        <template v-for="x in timeline" :key="x.key">
+        <div v-if="x.change" class="tl-item tl-change" :class="{undone: x.change.status === 'undone'}">
+          <div class="tl-dot"></div><div class="tl-body">
+            <div class="tl-head"><b>{{ historyText(x.change, fact.id) }}</b><span v-if="x.change.status === 'undone'" class="tag">undone</span><span class="grow"></span><span class="muted small">{{ fullDate(x.change.decided_at) }}</span></div>
+            <div class="small"><template v-if="x.change.auto_applied"><span class="tag">Applied by the AI</span> <ai-meta compact :model="x.change.ai_model"/><span v-if="x.change.confidence" class="muted"> · {{ confidenceLabels[x.change.confidence] }}</span></template>
+              <template v-else>Accepted by <b>{{ x.change.decided_by_name }}</b>, proposed by <ai-meta compact :model="x.change.ai_model"/></template>
+              <template v-if="x.change.status === 'undone'"> · undone by {{ x.change.undone_by_name }}, {{ timeAgo(x.change.undone_at) }}</template></div>
+            <div class="tl-notes"><math-text :text="x.change.reason_text"/></div>
+            <div v-if="x.change.can_undo && (x.change.auto_applied || isOwner || !['same', 'question'].includes(x.change.kind))" class="tl-actions"><button class="btn xs" @click="undoChange(x.change)"><icon name="restore" :size="13"/> {{ undoLabel(x.change) }}</button></div>
+          </div></div>
+        <div v-else class="tl-item" :class="{current: x.rev.revision_no === fact.current_revision}"><template v-for="r in [x.rev]" :key="r.id">
           <div class="tl-dot"></div><div class="tl-body">
             <div class="tl-head"><b>Revision {{ r.revision_no }}</b><span v-if="r.revision_no === fact.current_revision" class="tag green">current</span>
               <proof-tag :origin="r.proof_origin"/><span class="grow"></span><span class="muted small">{{ fullDate(r.created_at) }}</span></div>
             <by-line :name="r.author_name" :model="r.ai_model" :user="r.ai_user_name" :ms="r.ai_generation_ms"/>
             <div v-if="r.notes" class="tl-notes">{{ r.notes }}</div>
             <div class="tl-actions"><button class="btn xs" @click="revView = r.revision_no === fact.current_revision ? null : r.revision_no; tab = 'content'"><icon name="eye" :size="13"/> View</button></div>
-          </div></div>
-        </div>
+          </div></template></div>
+        </template>
       </div>
     </template>
     <div v-else-if="factError" class="placeholder">{{ factError }}</div>
@@ -545,7 +624,7 @@ export const FactsView = {
     </form>
   </modal>
 </div>`,
-  created() { this.graphViews = GRAPH_VIEWS; this.proofStates = PROOF_STATE; this.basis = BASIS; this.covers = COVERS; this.statuses = STATUS; this.verdicts = VERDICTS; this.leanLabels = LEAN; this.chainLabels = CHAIN; },
+  created() { this.graphViews = GRAPH_VIEWS; this.proofStates = PROOF_STATE; this.basis = BASIS; this.covers = COVERS; this.statuses = STATUS; this.verdicts = VERDICTS; this.leanLabels = LEAN; this.chainLabels = CHAIN; this.sourceChecks = SOURCE_CHECK; this.confidenceLabels = CONFIDENCE; this.citedVerdicts = { correct: 'Source states it', gap: 'Not as written', incorrect: 'Result is false' }; },
   methods: {
     factTitle, texLine, kindOf, kindLabel, stance, asMath,
     setNotation(on) { this.projectNotation = on; this.refreshOutline(); try { localStorage.setItem('oq-fact-notation', on ? 'project' : 'source'); } catch { /* the choice lasts for this page only */ } },
@@ -612,7 +691,7 @@ export const FactsView = {
       if (this.query?.proof) { this.tab = 'content'; this.$nextTick(() => this.$el.querySelector?.(`[data-proof="${+this.query.proof}"]`)?.scrollIntoView({ block: 'center' })); }
       if (this.tab === 'trace') this.loadTrace();
     },
-    clearFilters() { this.fStatus = this.fOrigin = this.fLabel = this.fLean = this.fStar = this.fTopic = 'all'; },
+    clearFilters() { this.fStatus = this.fOrigin = this.fLabel = this.fLean = this.fStar = this.fTopic = this.fBasis = 'all'; },
     async saveTopics() {
       const topics = parseTopics(this.topicDraft);
       const r = await attempt(() => api.post(`api/facts/${this.fact.id}/topics`, { topics }), 'Tags saved');
@@ -655,6 +734,17 @@ export const FactsView = {
       if (this.endorsed) await this.refresh(await attempt(() => api.del(`${url}/${this.myReview.id}`), 'Endorsement withdrawn'));
       else await this.refresh(await attempt(() => api.post(url, { verdict: 'correct', body_html: this.myReview?.body_html || '' }), 'Fact endorsed'));
     },
+    historyText, undoLabel,
+    async undoChange(h) {
+      if (h.kind === 'same' && !confirm(`Unmerge ${h.other_label}? It comes back as its own fact, with its sources, dependencies, proof and stars.`)) return;
+      const r = await attempt(() => api.post(`api/fact-suggestions/${h.id}/undo`, {}), h.kind === 'same' ? 'Unmerged' : 'Undone');
+      if (r) { await this.loadFact(); await this.loadList(); }
+    },
+    async linkRef(r, notUsed = false) {
+      const body = notUsed ? { ref: r.key, not_used: true } : { ref: r.key, fact_id: this.refPick[r.key] };
+      await this.refresh(await attempt(() => api.post(`api/facts/${this.fact.id}/refs`, body), notUsed ? 'Marked as background' : 'Linked'));
+    },
+    async clearRef(r) { await this.refresh(await attempt(() => api.post(`api/facts/${this.fact.id}/refs`, { ref: r.key, clear: true }), 'Undone')); },
     async loadBacklinks() {
       if (!this.fact) return;
       this.backlinks = (await attempt(() => api.get(`api/projects/${this.pid}/backlinks?type=fact&target=${this.fact.id}`)))?.backlinks || [];

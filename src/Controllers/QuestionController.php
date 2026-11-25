@@ -404,6 +404,7 @@ final class QuestionController
         if ($f['status'] === 'proof_disputed') return 'proof_disputed';
         if ($f['chain'] === 'broken') return 'chain_broken';
         if ($f['chain'] === 'unproved') return 'chain_unproved';
+        if ($f['incomplete'] || $f['chain'] === 'incomplete') return 'incomplete';
         return $f['endorsed_by'] ? 'validated' : 'unvalidated';
     }
 

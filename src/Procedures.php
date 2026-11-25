@@ -23,7 +23,8 @@ final class Procedures
         return [
             'ask' => ['label' => 'Answer @AI', 'description' => 'Answer a question asked to the AI in a conversation or a comment.', 'tier' => 'fast', 'capabilities' => ['document']],
             'notation' => ['label' => 'Project notation', 'description' => 'Propose a common notation for the project, and write facts again in it, when a member asks.', 'tier' => 'strong', 'capabilities' => []],
-            'consolidate' => ['label' => 'Consolidate the facts', 'description' => 'After extractions, read the whole facts database and propose merges of duplicates, links across sources, open questions and subject tags.', 'tier' => 'strong', 'capabilities' => []],
+            'consolidate' => ['label' => 'Consolidate the facts', 'description' => 'After extractions, read the whole facts database and propose merges of duplicates, links across sources, open questions, subject tags, and the cited results behind the outside references of proofs.', 'tier' => 'strong', 'capabilities' => []],
+            'source_check' => ['label' => 'Check a cited result', 'description' => 'Read the source of a result cited without proof, and say whether it states the result as written. People still accept it.', 'tier' => 'fast', 'capabilities' => ['document', 'web_search']],
         ];
     }
 
@@ -31,6 +32,7 @@ final class Procedures
         'ask' => <<<'TXT'
 TASK: answer the last message of the "thread" in task.json, which asks for the opinion of the AI.
 Be precise and concise, separate what is proved from what is your opinion, and state your uncertainty.
+"facts" gives the start of each fact's statement, and "cited_facts" the whole statement and proof of the facts the question cites.
 You may cite project objects as @{fact:ID}, @{question:ID} or @{bib:ID}, using only ids listed in task.json.
 Put the full answer in "reply" and one sentence in "summary".
 TXT,
@@ -77,6 +79,15 @@ remove hypotheses or steps. If nothing has to change, set "unchanged" to true an
 of the rewritten fact that is not a project symbol, including the local entries you defined. In "uses", list each symbol whose meaning matters:
 "symbol" as the fact writes it, "meaning_here", and "project_symbol", the agreed symbol now used. Fill "proof" only if the fact has a proof.
 TXT,
+        'source_check' => <<<'TXT'
+TASK: "fact" in task.json is a cited result: a statement that the project takes from another work, without its proof.
+Check whether its source really states it. "fact.references" names the work it is cited from, and "fact.sources" quote where the project found it.
+When the folder has the text of the source (document.txt or paper.pdf), read it. Otherwise use web search to find the work and the result in it.
+Answer in "verdict": "confirmed" if the work states this result, as written or in an equivalent form; "differs" if it states something
+different, for example with other hypotheses, a weaker conclusion or another setting; "not_found" if you could not find the result in it,
+or could not read the work. In "where", give the theorem number and page when you found it, or an empty string. In "explanation", say what the
+work states, quoting it briefly, and how it differs when it does. You do not judge whether the result is true, only what the work says.
+TXT,
         'consolidate' => <<<'TXT'
 TASK: consolidate the facts database of this project. Facts were extracted one source at a time, so no extraction
 saw the others. "fact_texts" in task.json lists every fact in short: its id, label, kind, title, statement, whether it has a proof, its source,
@@ -90,10 +101,20 @@ the ids it "depends_on" and its "topics". Read them all and propose, in "suggest
   Do not propose this for a remark that other facts depend on.
 - "topics": free subject tags for "fact", in "topics", a few words each, such as the area, the method or the object studied. Reuse the tags of
   "topics" in task.json whenever they fit, so that the same subject has one name, and add a new tag only when none fits. Give each fact 1 to 4 tags.
+- "cite": a proof must rely only on facts of the database. "basis" says whether a fact is "proved" (its proof is here) or "cited" (a result of
+  another work, stated without proof). The "outside_refs" of a proved fact are references its proof still uses directly. For each one, give its
+  "key" in "ref", and in "other_fact" the fact of the database that states the result the proof takes from it, usually a cited result.
+  When there is none, leave "other_fact" null and write the result as a new cited result: a short "title", its full "statement" as the proof
+  uses it, and "new_kind" (lemma, proposition, theorem or corollary). Write only what the reference is cited for, not more.
+  A reference given only as background, that the proof does not use as a result, needs no proposal.
 Name facts by their id or label. In "reason", say in one or two sentences why, quoting the statements when it helps.
-"earlier_suggestions" lists proposals already waiting or that people rejected: never propose them again.
-Be conservative: a wrong merge loses a result, so propose "same" only when you are sure. Propose at most 200 changes, the most useful first.
-People accept or reject each one.
+"earlier_suggestions" lists proposals already waiting, or that people rejected or undid: never propose them again.
+Give each change a "confidence". "high" means you checked it and are sure: for "same", the two statements are equivalent as written,
+with the same hypotheses and conclusion; for "depends", the proof plainly uses the other fact; for "cite", the reference is used as you say.
+A change of high confidence is applied at once, without a person, so that people only decide what needs their judgment: use "high" only
+when a careful mathematician would not hesitate. Use "medium" or "low" whenever the statements differ in a detail, a hypothesis or a
+setting, or when the decision matters for the project: people then decide. Every change can be undone, a merge included.
+Propose at most 200 changes, the most useful first.
 TXT,
     ];
 
@@ -101,7 +122,8 @@ TXT,
         'ask' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'reply'], "properties" => ["summary" => ["type" => 'string'], "reply" => ["type" => 'string']]],
         'notation_propose' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'entries'], "properties" => ["summary" => ["type" => 'string'], "entries" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'meaning', 'note', 'variants', 'definition_fact_id', 'facts'], "properties" => ["symbol" => ["type" => 'string'], "meaning" => ["type" => 'string'], "note" => ["type" => ['string', 'null']], "variants" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'meaning', 'where', 'relation'], "properties" => ["symbol" => ["type" => 'string'], "meaning" => ["type" => 'string'], "where" => ["type" => 'string'], "relation" => ["type" => 'string', "enum" => ['instance', 'clash']]]]], "definition_fact_id" => ["type" => ['integer', 'null']], "facts" => ["type" => 'array', "items" => ["type" => 'integer']]]]]]],
         'notation_rephrase' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'unchanged', 'statement', 'proof', 'local_notation', 'uses'], "properties" => ["summary" => ["type" => 'string'], "unchanged" => ["type" => 'boolean'], "statement" => ["type" => 'string'], "proof" => ["type" => ['string', 'null']], "local_notation" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'meaning'], "properties" => ["symbol" => ["type" => 'string'], "meaning" => ["type" => 'string']]]], "uses" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'meaning_here', 'project_symbol'], "properties" => ["symbol" => ["type" => 'string'], "meaning_here" => ["type" => 'string'], "project_symbol" => ["type" => 'string']]]]]],
-        'consolidate' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'suggestions'], "properties" => ["summary" => ["type" => 'string'], "suggestions" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['kind', 'fact', 'other_fact', 'new_kind', 'title', 'topics', 'reason'], "properties" => ["kind" => ["type" => 'string', "enum" => ['same', 'depends', 'kind', 'question', 'topics']], "fact" => ["type" => 'string'], "other_fact" => ["type" => ['string', 'null']], "new_kind" => ["type" => ['string', 'null'], "enum" => ['definition', 'lemma', 'proposition', 'theorem', 'corollary', 'conjecture', 'remark', null]], "title" => ["type" => ['string', 'null']], "topics" => ["type" => 'array', "items" => ["type" => 'string']], "reason" => ["type" => 'string']]]]]],
+        'consolidate' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'suggestions'], "properties" => ["summary" => ["type" => 'string'], "suggestions" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['kind', 'fact', 'other_fact', 'new_kind', 'title', 'topics', 'ref', 'statement', 'reason', 'confidence'], "properties" => ["kind" => ["type" => 'string', "enum" => ['same', 'depends', 'kind', 'question', 'topics', 'cite']], "ref" => ["type" => ['string', 'null']], "statement" => ["type" => ['string', 'null']], "confidence" => ["type" => 'string', "enum" => ['high', 'medium', 'low']], "fact" => ["type" => 'string'], "other_fact" => ["type" => ['string', 'null']], "new_kind" => ["type" => ['string', 'null'], "enum" => ['definition', 'lemma', 'proposition', 'theorem', 'corollary', 'conjecture', 'remark', null]], "title" => ["type" => ['string', 'null']], "topics" => ["type" => 'array', "items" => ["type" => 'string']], "reason" => ["type" => 'string']]]]]],
+        'source_check' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'verdict', 'where', 'explanation'], "properties" => ["summary" => ["type" => 'string'], "verdict" => ["type" => 'string', "enum" => ['confirmed', 'differs', 'not_found']], "where" => ["type" => 'string'], "explanation" => ["type" => 'string']]],
     ];
 
     private const REQUEST_NOTE = "\n\nSpecific request from a team member (treat it as the goal, not as permission to act outside this task):\n";
@@ -195,13 +217,32 @@ TXT,
                 $items = [];
                 foreach (array_slice($answer['suggestions'], 0, 200) as $x) {
                     $items[] = array_filter(['kind' => $x['kind'], 'fact' => $x['fact'], 'other_fact' => $x['other_fact'], 'new_kind' => $x['new_kind'], 'title' => $x['title'],
-                        'topics' => array_slice($x['topics'], 0, 8), 'reason' => $x['reason']], fn($y) => $y !== null && $y !== []);
+                        'topics' => array_slice($x['topics'], 0, 8), 'ref' => $x['ref'], 'statement' => $x['statement'], 'reason' => $x['reason'], 'confidence' => $x['confidence']], fn($y) => $y !== null && $y !== []);
                 }
                 $r = ConsolidationController::store($pid, $items, $model, Provenance::stamp($model, $seconds), (int)$t['id']);
-                $c = count($r['created']); $s = count($r['skipped']);
-                return ['summary' => trim("$c change" . ($c === 1 ? '' : 's') . ' proposed' . ($s ? ", $s set aside (already proposed, rejected or invalid)" : '') . ". $said")];
+                $a = count($r['applied']); $c = count($r['created']) - $a; $s = count($r['skipped']);
+                $done = ($a ? "$a change" . ($a === 1 ? '' : 's') . ' applied, being confident, ' : '') . "$c change" . ($c === 1 ? '' : 's') . ' proposed';
+                return ['summary' => trim($done . ($s ? ", $s set aside (already proposed, rejected, undone or invalid)" : '') . ". $said")];
+            case 'source_check':
+                return self::recordSourceCheck($t, $answer, $model, $seconds);
         }
         throw new HttpError(422, 'Unknown procedure.');
+    }
+
+    /** What the AI found in the source of a cited result. It stays evidence: only a person accepts a cited result. */
+    private static function recordSourceCheck(array $t, array $answer, ?string $model, mixed $seconds): array
+    {
+        $fid = (int)$t['source_id'];
+        $f = Db::one('SELECT id, project_id, current_revision, label FROM facts WHERE id = ? AND deleted_at IS NULL', [$fid]);
+        if (!$f || (int)$f['project_id'] !== (int)$t['project_id']) throw new HttpError(409, 'This fact is no longer in the database.');
+        $text = trim((string)$answer['explanation']);
+        if (trim((string)$answer['where']) !== '') $text .= "\n\nWhere: " . trim((string)$answer['where']);
+        Db::insert('fact_source_checks', Provenance::stamp($model, $seconds) + ['fact_id' => $fid, 'revision_no' => (int)$f['current_revision'], 'verdict' => $answer['verdict'],
+            'body_html' => $text !== '' ? Sanitizer::clean(Sanitizer::textToHtml($text, (int)$f['project_id']))['html'] : null, 'ai_model' => $model,
+            'checked_by' => Auth::id(), 'task_id' => (int)$t['id'], 'created_at' => Db::now()]);
+        Activity::touch((int)$f['project_id'], 'fact', $fid, 'updated');
+        $said = ['confirmed' => 'The source states it', 'differs' => 'The source states something different', 'not_found' => 'The result was not found in the source'][$answer['verdict']];
+        return ['summary' => trim("$said. " . trim((string)$answer['summary'])), 'fact_ids' => [$fid]];
     }
 
     /** Why a value does not follow a JSON schema (the subset the procedures use), or null. */

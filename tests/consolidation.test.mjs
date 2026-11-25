@@ -176,7 +176,7 @@ if a == ["--version"]: print("1.0 (Claude Code)"); sys.exit()
 if a[:2] == ["auth", "status"]: print("{}"); sys.exit()
 prompt = sys.stdin.read()
 task = json.load(open("task.json"))
-out = {"summary": "Read all.", "suggestions": [{"kind": "topics", "fact": str(${w}), "other_fact": None, "new_kind": None, "title": None, "topics": ["Client tag"], "reason": "Its subject."}]} if "consolidate the facts database" in prompt and "fact_texts" in task else None
+out = {"summary": "Read all.", "suggestions": [{"kind": "topics", "fact": str(${w}), "other_fact": None, "new_kind": None, "title": None, "topics": ["Client tag"], "ref": None, "statement": None, "reason": "Its subject.", "confidence": "medium"}]} if "consolidate the facts database" in prompt and "fact_texts" in task else None
 print(json.dumps({"is_error": False, "result": "", "structured_output": out, "modelUsage": {"claude-opus-5-5": {"inputTokens": 1, "outputTokens": 1}}}))
 `, { mode: 0o755 });
   const dir = path.join(tmp, 'run'); fs.mkdirSync(dir, { recursive: true });

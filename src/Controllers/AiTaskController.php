@@ -144,9 +144,13 @@ final class AiTaskController
         if ($kind === 'consolidate' && $sourceType !== null) throw new HttpError(422, 'Consolidation reads the whole facts database.');
         if ($kind === 'notation' && $sourceType !== null && $sourceType !== 'fact') throw new HttpError(422, 'Ask for a notation for the whole project, or for one fact.');
         if ($kind === 'notation' && $sourceType === 'fact' && NotationController::hash($pid) === sha1('')) throw new HttpError(422, 'Agree on at least one notation entry first.');
-        if (in_array($kind, ['review', 'lean'], true)) {
+        if (in_array($kind, ['review', 'lean', 'source_check'], true)) {
             if ($sourceType !== 'fact') throw new HttpError(422, 'Choose the fact to check.');
             if (Db::value('SELECT retracted_at FROM facts WHERE id = ?', [$sourceId])) throw new HttpError(422, 'This fact is retracted.');
+            // A cited result has no proof here: an AI can only say whether its source states it, and a person accepts it.
+            $basis = FactController::graphFact($pid, (int)$sourceId)['basis'] ?? null;
+            if ($kind === 'review' && $basis === 'cited') throw new HttpError(422, 'A cited result has no proof to review. Ask the AI to check its source instead.');
+            if ($kind === 'source_check' && $basis !== 'cited') throw new HttpError(422, 'Only a result cited without proof has a source to check.');
         }
         if ($sourceType === 'bib' && !Db::value('SELECT pdf_blob_id FROM bib_entries WHERE id = ?', [$sourceId])) throw new HttpError(422, 'This reference has no PDF.');
         if ($kind === 'ask' && $prompt === '') throw new HttpError(422, 'Write your question for the AI.');
@@ -915,6 +919,7 @@ final class AiTaskController
                 if ($c['target_type'] === 'document') $ctx['document'] = self::documentContext((int)$c['target_id'], null);
             }
         }
+        if ($t['kind'] === 'ask') self::askFacts($t, $ctx);
         if ($type === 'question') $ctx['question'] = Db::one('SELECT id, title, statement_html AS body_html, status FROM open_questions WHERE id = ?', [$id]);
         if ($type === 'strategy') {
             $ctx['strategy'] = Db::one('SELECT id, question_id, title, status FROM proof_strategies WHERE id = ?', [$id]);
@@ -938,14 +943,42 @@ final class AiTaskController
                 $ctx['fact']['glossary'] = json_decode((string)$g, true) ?: null;
                 $ctx['fact']['sources'] = array_map(fn($s) => ['label' => $s['label'] ?? $s['type'], 'quote' => $s['quote']], array_filter(FactController::presentSources($id, (int)$ctx['fact']['current_revision']), fn($s) => !$s['hidden'] && $s['covers'] !== 'context'));
             }
+            if ($t['kind'] === 'source_check') {
+                $ctx['fact']['references'] = json_decode((string)Db::value('SELECT external_refs_json FROM fact_revisions WHERE fact_id = ? AND revision_no = ?', [$id, $ctx['fact']['current_revision']]), true);
+                $ctx['fact']['sources'] = array_values(array_map(fn($s) => ['type' => $s['type'], 'label' => $s['label'] ?? $s['type'], 'page' => $s['page'] ?? null, 'quote' => $s['quote']],
+                    array_filter(FactController::presentSources($id, (int)$ctx['fact']['current_revision']), fn($s) => !$s['hidden'] && $s['covers'] !== 'context')));
+                unset($ctx['fact']['proof']);
+                $doc = Db::value("SELECT source_id FROM fact_sources WHERE fact_id = ? AND revision_no = ? AND source_type = 'document' AND covers <> 'context' LIMIT 1", [$id, $ctx['fact']['current_revision']]);
+                if ($doc) $ctx['document'] = self::documentContext((int)$doc, null);
+            }
             if (in_array($t['kind'], ['review', 'lean'], true)) {
                 $ctx['fact']['external_refs'] = json_decode((string)Db::value('SELECT external_refs_json FROM fact_revisions WHERE fact_id = ? AND revision_no = ?', [$id, $ctx['fact']['current_revision']]), true);
-                $ctx['dependencies'] = array_map(fn($d) => ['label' => $d['label'], 'title' => $d['title'], 'statement' => Sanitizer::toText((string)$d['statement_html'])], Db::all(
-                    'SELECT f.label, f.title, r.statement_html FROM fact_deps d JOIN facts f ON f.id = d.depends_on_id JOIN fact_revisions r ON r.fact_id = f.id AND r.revision_no = f.current_revision WHERE d.fact_id = ? LIMIT 50', [$id]));
+                // What the proof may rely on: each dependency is assumed. A cited result is a result of another work, accepted or not by people.
+                $graph = array_column(FactController::graph($pid)['facts'], null, 'id');
+                $ctx['fact']['outside_refs'] = array_values(array_map(fn($x) => ['label' => $x['label'], 'settled' => $x['resolved']], $graph[$id]['outside_refs'] ?? []));
+                $ctx['dependencies'] = array_map(fn($d) => ['label' => $d['label'], 'title' => $d['title'], 'statement' => Sanitizer::toText((string)$d['statement_html']),
+                    'basis' => $graph[(int)$d['id']]['basis'] ?? null, 'status' => $graph[(int)$d['id']]['status'] ?? null], Db::all(
+                    'SELECT f.id, f.label, f.title, r.statement_html FROM fact_deps d JOIN facts f ON f.id = d.depends_on_id JOIN fact_revisions r ON r.fact_id = f.id AND r.revision_no = f.current_revision WHERE d.fact_id = ? LIMIT 50', [$id]));
             }
         }
         if (isset($ctx['question']['body_html'])) { $ctx['question']['body'] = Sanitizer::toText((string)$ctx['question']['body_html']); unset($ctx['question']['body_html']); }
         return $ctx;
+    }
+
+    /** A question to the AI is often about facts: it reads their statements, and the whole of the facts its question cites. */
+    private static function askFacts(array $t, array &$ctx): void
+    {
+        $pid = (int)$t['project_id'];
+        $rows = Db::all('SELECT f.id, f.label, f.title, f.kind, r.statement_html, r.proof_html FROM facts f JOIN fact_revisions r ON r.fact_id = f.id AND r.revision_no = f.current_revision
+            WHERE f.project_id = ? AND f.deleted_at IS NULL AND f.retracted_at IS NULL ORDER BY f.id DESC LIMIT 300', [$pid]);
+        $said = (string)$t['prompt_text'] . ' ' . implode(' ', array_column($ctx['thread'] ?? [], 'text'));
+        preg_match_all('/@\{fact:([^}]+)\}/', $said, $m);  // a mention keeps the fact's label, a model may write its id
+        $cited = array_slice(array_unique($m[1]), 0, 10);
+        $ctx['facts'] = array_map(fn($f) => ['id' => (int)$f['id'], 'label' => $f['label'], 'title' => $f['title'], 'kind' => $f['kind'],
+            'statement' => mb_substr(Sanitizer::toText((string)$f['statement_html']), 0, 800)], $rows);
+        $ctx['cited_facts'] = [];
+        foreach ($rows as $f) if (in_array((string)$f['id'], $cited, true) || in_array((string)$f['label'], $cited, true)) $ctx['cited_facts'][] = ['id' => (int)$f['id'], 'label' => $f['label'], 'title' => $f['title'],
+            'statement' => mb_substr(Sanitizer::toText((string)$f['statement_html']), 0, 6000), 'proof' => mb_substr(Sanitizer::toText((string)$f['proof_html']), 0, 12000)];
     }
 
     private static function thread(array $rows): array

@@ -5,6 +5,7 @@ export const SUGGESTION_KINDS = [
   { kind: 'depends', title: 'Missing dependencies', help: 'A proof uses another fact of the database, often from another source.' },
   { kind: 'question', title: 'Open questions', help: 'A remark asks a question that is still open. Accepting makes it an open question, linked to its source.' },
   { kind: 'kind', title: 'Kinds', help: 'A fact has the wrong kind, for example a remark that is really a lemma.' },
+  { kind: 'cite', title: 'Cited results', help: 'A proof uses a result of another work directly. Accepting links the proof to the fact that states it, written here as a new cited result when there is none, so that the proof relies only on the database.' },
   { kind: 'topics', title: 'Subject tags', help: 'Free tags to find facts by subject. They are added to the fact\'s tags.' },
 ];
 
@@ -24,6 +25,7 @@ export function suggestionText(s, facts) {
     case 'kind': return `${a} becomes a ${s.data?.kind ?? '?'}`;
     case 'question': return `${a} becomes the open question “${s.data?.title ?? ''}”`;
     case 'topics': return `Tag ${a}: ${(s.data?.topics ?? []).join(', ')}`;
+    case 'cite': return b ? `${a} uses ${b}, for ${s.data?.ref_label ?? 'a reference'}` : `${a} uses a new cited result: ${s.data?.title ?? ''}`;
     default: return a;
   }
 }
@@ -43,3 +45,26 @@ export function parseTopics(text) {
   }
   return out.slice(0, 8);
 }
+
+/** Applied by the AI on its own, newest first: what people may want to look over, and undo. */
+export const autoApplied = (list) => (list ?? []).filter((s) => s.auto_applied && s.status === 'accepted');
+
+export const CONFIDENCE = { high: 'Confident', medium: 'Probable', low: 'Unsure' };
+
+/** One change in the history of a fact, said from that fact's point of view. */
+export function historyText(h, factId) {
+  const here = h.fact_id === factId;
+  const other = here ? h.other_label : h.fact_label;
+  switch (h.kind) {
+    case 'same': return here ? `${other} was merged into this fact` : `Merged into ${other}`;
+    case 'depends': return here ? `Now relies on ${other}` : `${other} now relies on this fact`;
+    case 'kind': return `Kind changed to ${h.data?.kind ?? '?'}`;
+    case 'topics': return `Tagged ${(h.data?.topics ?? []).join(', ')}`;
+    case 'question': return `Became the open question “${h.data?.title ?? ''}”`;
+    case 'cite': return here ? `${h.data?.ref_label ?? 'A reference'} linked to ${other ?? `the new cited result “${h.data?.title ?? ''}”`}` : `${other} relies on this fact for ${h.data?.ref_label ?? 'a reference'}`;
+    default: return h.kind;
+  }
+}
+
+/** The undo button says what it does. */
+export const undoLabel = (s) => (s.kind === 'same' ? 'Unmerge' : 'Undo');

@@ -77,9 +77,27 @@ final class Db
         self::run("UPDATE $table SET $set WHERE $where", array_merge($p, $params));
     }
 
+    private static int $depth = 0;
+
+    /** Runs $fn in a transaction. Inside another one it is a savepoint: a failure undoes only its own changes. */
     public static function tx(callable $fn): mixed
     {
         $pdo = self::pdo();
+        if ($pdo->inTransaction()) {
+            $sp = 'sp' . ++self::$depth;
+            $pdo->exec("SAVEPOINT $sp");
+            try {
+                $r = $fn();
+                $pdo->exec("RELEASE SAVEPOINT $sp");
+                return $r;
+            } catch (\Throwable $e) {
+                $pdo->exec("ROLLBACK TO SAVEPOINT $sp");
+                $pdo->exec("RELEASE SAVEPOINT $sp");
+                throw $e;
+            } finally {
+                self::$depth--;
+            }
+        }
         $pdo->beginTransaction();
         try {
             $r = $fn();
@@ -171,6 +189,10 @@ final class Db
         $migrations[] = 'ALTER TABLE notations ADD COLUMN facts_json TEXT NULL';
         $migrations[] = 'ALTER TABLE facts ADD COLUMN merged_into INT UNSIGNED NULL';
         $migrations[] = 'ALTER TABLE facts ADD COLUMN topics_json TEXT NULL';
+        foreach (['confidence VARCHAR(8) NULL', 'auto_applied TINYINT(1) NOT NULL DEFAULT 0', 'undo_json MEDIUMTEXT NULL', 'undone_by INT UNSIGNED NULL', 'undone_at DATETIME NULL'] as $c) {
+            $migrations[] = "ALTER TABLE fact_suggestions ADD COLUMN $c";
+        }
+        $migrations[] = 'ALTER TABLE projects ADD COLUMN consolidation_auto TINYINT(1) NOT NULL DEFAULT 1';
         // MySQL cut kinds longer than 10 characters, such as "consolidate": room for procedure names, and the cut rows repaired.
         if (!self::isSqlite()) $migrations[] = 'ALTER TABLE ai_tasks MODIFY kind VARCHAR(40) NOT NULL';
         foreach ($migrations as $m) {

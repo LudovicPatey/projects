@@ -14,13 +14,13 @@ const FEATURES = [
   {
     kicker: 'Traceability', title: 'Know where every proof comes from',
     text: 'Each fact shows whether its proof comes from a human or an AI, who is credited, which passage it was taken from, and which results it depends on.',
-    points: ['Human, AI and mixed proofs are told apart', 'Sources cite a page and an exact quote', 'Every revision is kept'],
+    points: ['Human, AI and mixed proofs are told apart', 'Sources cite a page and an exact quote', 'Every revision is kept', 'Merges the AI applies are in the history, and can be undone'],
     img: 'fact-trace.webp', w: 1551, h: 1239, alt: 'Trace of a fact listing its origin, credited people, the facts it is built on and its revisions',
   },
   {
     kicker: 'Human and AI review', title: 'Trust is earned, one check at a time',
-    text: 'Researchers endorse facts in one click. Humans and independent models can mark them correct, point out a gap, or reject them, and Lean proofs can be attached.',
-    points: ['A model cannot validate its own work', 'A new revision needs new reviews', 'Lean code containing sorry is detected'],
+    text: 'Researchers endorse facts in one click. Humans and independent models can mark them correct, point out a gap, or reject them, and Lean proofs can be attached. A result cited from another work is accepted only by a person who read its source, and every proof is checked against the facts it relies on.',
+    points: ['A model cannot validate its own work', 'A new revision needs new reviews', 'Cited results are told apart from proved facts', 'Lean code containing sorry is detected'],
     img: 'fact-reviews.webp', w: 1551, h: 1239, alt: 'Reviews of a fact by researchers and by an AI model, with the endorsement button',
   },
   {

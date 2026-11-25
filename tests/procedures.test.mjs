@@ -28,7 +28,7 @@ after(() => { app?.stop(); if (tmp) { try { fs.rmSync(tmp, { recursive: true, fo
 test('the platform lists its procedures, for clients to offer them', async () => {
   const r = await app.call(key, 'GET', '/api/ai/procedures');
   assert.equal(r.status, 200);
-  assert.deepEqual(r.data.procedures.map((p) => p.id), ['ask', 'notation', 'consolidate']);
+  assert.deepEqual(r.data.procedures.map((p) => p.id), ['ask', 'notation', 'consolidate', 'source_check']);
   for (const p of r.data.procedures) { assert.ok(p.label && p.description && ['strong', 'fast'].includes(p.tier)); assert.match(p.version, /^[0-9a-f]{12}$/); }
   assert.deepEqual(r.data.capabilities, ['web_search', 'document']);
   assert.equal((await app.call({ token: 'nope' }, 'GET', '/api/ai/procedures')).status, 401);
@@ -48,6 +48,21 @@ test('a client that runs recipes gets one; others keep their own code, or do not
   await app.call(key, 'POST', `/api/ai/tasks/${t.id}/release`, { lease: t.lease });
 });
 
+test('a question to the AI reads the statements of the facts, and the whole of those it cites', async () => {
+  const facts = (await app.call(ann, 'GET', `/api/projects/${pid}/facts`)).data.facts;
+  const a = facts.find((f) => f.title === 'a'); const b = facts.find((f) => f.title === 'b');
+  const asked = (await app.call(ann, 'POST', `/api/projects/${pid}/ai/tasks`, { kind: 'ask', prompt_text: `Is @{fact:${a.label}} the same as @{fact:${b.id}}?` })).data.id;
+  for (const features of [['procedures'], []]) {
+    const t = (await claim({ kinds: ['ask'], features, capabilities: ['document'] })).data.task;
+    assert.ok(t, `claimed with ${features}`);
+    assert.equal(t.context.facts.find((f) => f.id === a.id).statement, 'S a.', 'older clients get the statements too');
+    assert.deepEqual(t.context.cited_facts.map((f) => [f.id, f.statement, f.proof]).sort(), [[a.id, 'S a.', 'P.'], [b.id, 'S b.', 'P.']].sort(), 'cited by label or by id');
+    if (t.recipe) assert.match(t.recipe.instructions, /cited_facts/);
+    await app.call(key, 'POST', `/api/ai/tasks/${t.id}/release`, { lease: t.lease });
+  }
+  await app.call(ann, 'POST', `/api/ai/tasks/${asked}/cancel`, {});
+});
+
 test('the platform checks the answer against the schema, then applies it itself', async () => {
   const t = (await claim({ kinds: ['consolidate'], features: ['procedures'] })).data.task;
   const send = (answer, extra = {}) => app.call(key, 'POST', `/api/ai/tasks/${t.id}/answer`, { lease: t.lease, ai_model: 'claude-opus-5-5', generation_seconds: 12, answer, ...extra });
@@ -56,8 +71,9 @@ test('the platform checks the answer against the schema, then applies it itself'
   r = await send({ summary: 'x', suggestions: [{ kind: 'merge', fact: 'a' }] });
   assert.equal(r.status, 422);
   assert.equal((await send({ summary: 'x', suggestions: [] }, { lease: 'wrong' })).status, 409);
-  r = await send({ summary: 'Read all.', suggestions: [{ kind: 'topics', fact: 'lem:a', other_fact: null, new_kind: null, title: null, topics: ['Tag'], reason: 'Its subject.' },
-    { kind: 'same', fact: 'lem:a', other_fact: 'lem:a', new_kind: null, title: null, topics: [], reason: 'invalid' }] });
+  const none = { ref: null, statement: null, confidence: 'medium' };
+  r = await send({ summary: 'Read all.', suggestions: [{ kind: 'topics', fact: 'lem:a', other_fact: null, new_kind: null, title: null, topics: ['Tag'], ...none, reason: 'Its subject.' },
+    { kind: 'same', fact: 'lem:a', other_fact: 'lem:a', new_kind: null, title: null, topics: [], ...none, reason: 'invalid' }] });
   assert.equal(r.status, 200, JSON.stringify(r.data));
   assert.equal(r.data.status, 'done'); assert.match(r.data.summary_text, /^1 change proposed, 1 set aside/); assert.equal(r.data.ai_generation_ms, 12000);
   const s = (await app.call(ann, 'GET', `/api/projects/${pid}/consolidation`)).data.suggestions[0];
@@ -135,6 +151,28 @@ print(json.dumps(oq.provider_command("codex", w / "s", {}, w / "o", w, None, Fal
   const [plain, web, codex] = r.stdout.trim().split('\n').map((l) => JSON.parse(l));
   assert.equal(plain[plain.indexOf('--tools') + 1], 'Read'); assert.equal(web[web.indexOf('--tools') + 1], 'Read,WebSearch');
   assert.ok(codex.includes('read-only') && !codex.includes('--search'));
+});
+
+test('a review judges the proof against its dependencies, without the web, and the source check runs unless turned off', () => {
+  const r = python(`${LOAD}
+import argparse, pathlib
+calls = []
+oq.run_ai = lambda *a: calls.append(a[5]) or ({"verdict": "correct", "explanation": "ok", "summary": "ok"}, "gpt-5.6-sol", 1)
+oq.guard = lambda tool: (True, "", None, None)
+class Api:
+    key = "K"
+    def post(self, path, body=None): return {}
+task = {"id": 1, "kind": "review", "lease": "L", "ai_model": "gpt-5.6-sol", "prompt_text": None, "source_type": "fact", "source_id": 3, "context": {"fact": {"id": 3}}}
+oq.process_review(Api(), task, argparse.Namespace(timeout=60), pathlib.Path("/tmp"))
+print(json.dumps(calls))
+print("Do not search the web" in oq.INSTRUCTIONS["review"], "cited" in oq.INSTRUCTIONS["review"], "as a fact of its own" in oq.INSTRUCTIONS["extract"])
+print(oq.procedure_on(oq.clean_limits({}), "source_check"), oq.procedure_on(oq.clean_limits({"procedures": {"source_check": False}}), "source_check"))
+`);
+  assert.equal(r.status, 0, r.stderr);
+  const out = r.stdout.trim().split('\n');
+  assert.deepEqual(JSON.parse(out[0]), [false], 'no web search for a review');
+  assert.equal(out[1], 'True True True');
+  assert.equal(out[2], 'True False', 'this release knows the source check: on until its user turns it off');
 });
 
 test('oq.py procedures lists the platform\'s work and turns it on or off', async () => {

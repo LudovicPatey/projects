@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 namespace App\Controllers;
 
-use App\{FactKind, Access, Activity, Auth, Db, HttpError, Notify, Provenance, Request, Response, Sanitizer};
+use App\{FactBasis, FactKind, Access, Activity, Auth, Db, HttpError, Notify, Provenance, Request, Response, Sanitizer};
 
 /**
  * Fact database: a DAG of statements with proof and intuition.
@@ -37,7 +37,7 @@ final class FactController
 
     /** What the interface shows in the list and the graph. The full statement is loaded with each fact. */
     private const COMPACT = ['id', 'label', 'title', 'kind', 'display_kind', 'status', 'chain', 'origin', 'proof_origin', 'method', 'tool', 'lean', 'labels', 'ai_model',
-        'author', 'ai_user_name', 'ai_generation_ms', 'updated_at', 'stars', 'starred', 'comment_count', 'retracted_at', 'created_by', 'current_revision', 'endorsed_by', 'topics'];
+        'author', 'ai_user_name', 'ai_generation_ms', 'updated_at', 'stars', 'starred', 'comment_count', 'retracted_at', 'created_by', 'current_revision', 'endorsed_by', 'topics', 'basis', 'incomplete'];
     private const EXCERPT = 160;
 
     /**
@@ -123,7 +123,7 @@ final class FactController
     {
         $facts = Db::all(
             "SELECT f.id, f.label, f.kind, f.title, f.origin, f.proof_origin, f.labels_json, f.method, f.tool, f.external_id, f.ai_model, f.current_revision, f.retracted_at, f.created_by, f.topics_json,
-                    f.created_at, f.updated_at, u.name AS author, u.kind AS author_kind, r.statement_html, r.author_id AS revision_author,
+                    f.created_at, f.updated_at, u.name AS author, u.kind AS author_kind, r.statement_html, r.proof_html, r.external_refs_json, r.author_id AS revision_author,
                     r.ai_user_id, r.ai_generation_ms, au.name AS ai_user_name,
                     (SELECT COUNT(*) FROM comments c WHERE c.target_type = 'fact' AND c.target_id = f.id) AS comment_count
              FROM facts f JOIN users u ON u.id = f.created_by
@@ -150,6 +150,17 @@ final class FactController
             $proofs[(int)$v['fact_id']][(int)$v['proof_id']]['reviews'][] = $v;
         }
         $stars = array_map('intval', array_column(Db::all('SELECT s.fact_id, COUNT(*) AS n FROM fact_stars s JOIN facts f ON f.id = s.fact_id WHERE f.project_id = ? GROUP BY s.fact_id', [$pid]), 'n', 'fact_id'));
+        // What tells a cited result from a proved fact, and whether a proof still uses an outside reference directly.
+        $checks = [];
+        foreach (Db::all('SELECT c.fact_id, c.verdict, c.ai_model FROM fact_source_checks c JOIN facts f ON f.id = c.fact_id AND c.revision_no = f.current_revision
+                          WHERE f.project_id = ? ORDER BY c.id DESC', [$pid]) as $c) $checks[(int)$c['fact_id']][] = $c;
+        $links = [];
+        foreach (Db::all('SELECT l.fact_id, l.ref_key, l.cited_fact_id FROM fact_ref_links l JOIN facts f ON f.id = l.fact_id WHERE f.project_id = ?', [$pid]) as $l) {
+            $links[(int)$l['fact_id']][$l['ref_key']] = $l['cited_fact_id'] === null ? null : (int)$l['cited_fact_id'];
+        }
+        $bibOf = [];
+        foreach (Db::all("SELECT s.fact_id, s.source_id FROM fact_sources s JOIN facts f ON f.id = s.fact_id AND s.revision_no = f.current_revision
+                          WHERE f.project_id = ? AND s.source_type = 'bib' AND s.covers <> 'context'", [$pid]) as $s) $bibOf[(int)$s['fact_id']][] = (int)$s['source_id'];
         $lean = [];
         foreach (Db::all('SELECT l.fact_id, l.incomplete, l.check_status FROM fact_lean l
                           JOIN facts f ON f.id = l.fact_id AND l.revision_no = f.current_revision WHERE f.project_id = ?', [$pid]) as $l) {
@@ -184,20 +195,37 @@ final class FactController
             $f['statement_text'] = Sanitizer::toText($f['statement_html']);
             $f['display_kind'] = FactKind::of((string)$f['kind'], $f['tool'], $f['statement_text']);
             // A definition is a convention, not a claim: it belongs to the project notation, and nothing in it needs a check.
+            $f['basis'] = FactBasis::of($f['display_kind'], $f['labels'], trim((string)$f['proof_html']) !== '' || !empty($proofs[$id]));
+            if ($f['basis'] === 'cited') $f['status'] = FactBasis::citedStatus($f['retracted_at'], $reviews[$id] ?? [], $checks[$id] ?? [], $f['ai_model']);
             if ($f['display_kind'] === 'definition' && !in_array($f['status'], ['retracted', 'disputed'], true)) $f['status'] = 'definition';
-            unset($f['statement_html']);
+            $f['outside_refs'] = $f['basis'] === 'proved' ? FactBasis::outsideRefs($f['proof_html'], $f['external_refs_json']) : [];
+            unset($f['statement_html'], $f['proof_html'], $f['external_refs_json']);
             $f['deps'] = [];
             $f['dependents'] = [];
             $f['chain'] = 'ok';
             $byId[$id] = $f;
         }
         foreach ($edges as [$a, $b]) { $byId[$a]['deps'][] = $b; $byId[$b]['dependents'][] = $a; }
+        foreach ($byId as $id => &$f) {
+            $f['outside_refs'] = FactBasis::resolve($f['outside_refs'], $links[$id] ?? [], $f['deps'], $bibOf);
+            $f['incomplete'] = (bool)array_filter($f['outside_refs'], fn($x) => !$x['resolved']);
+        }
+        unset($f);
 
-        // Propagate along dependents, weakest first, so that 'broken' takes precedence.
-        self::mark($byId, fn($f) => $f['status'] === 'unchecked', 'unchecked');
+        // Propagate along dependents, weakest first, so that 'broken' takes precedence. A cited result nobody accepted is unchecked.
+        // A proof that uses an outside result directly makes what relies on it incomplete: no review of the chain can settle it.
+        self::mark($byId, fn($f) => in_array($f['status'], ['unchecked', 'source_confirmed'], true), 'unchecked');
+        self::mark($byId, fn($f) => $f['incomplete'], 'incomplete');
         self::mark($byId, fn($f) => $f['status'] === 'proof_disputed', 'unproved');
         self::mark($byId, fn($f) => in_array($f['status'], ['disputed', 'retracted'], true), 'broken');
         return ['facts' => array_values($byId), 'edges' => $edges];
+    }
+
+    /** One fact as the graph sees it: its basis, status and outside references. */
+    public static function graphFact(int $pid, int $id): ?array
+    {
+        foreach (self::graph($pid)['facts'] as $f) if ($f['id'] === $id) return $f;
+        return null;
     }
 
     private static function mark(array &$byId, callable $bad, string $state): void
@@ -317,13 +345,19 @@ final class FactController
             if (count($ancestors) >= self::MAX_TRACE) continue;
             $sources = self::presentSources($x, $a['current_revision']);
             $addPeople($sources, $x);
-            $ancestors[] = ['id' => $x, 'label' => $a['label'], 'title' => $a['title'], 'depth' => $d, 'proof_origin' => $a['proof_origin'], 'origin' => $a['origin'],
+            $ancestors[] = ['id' => $x, 'label' => $a['label'], 'title' => $a['title'], 'depth' => $d, 'proof_origin' => $a['proof_origin'], 'origin' => $a['origin'], 'basis' => $a['basis'], 'incomplete' => $a['incomplete'],
                 'method' => $a['method'], 'tool' => $a['tool'], 'ai_model' => $a['ai_model'], 'status' => $a['status'], 'labels' => $a['labels'],
                 // A source merely cited by a deduced fact gives its authors no credit for that fact.
                 'credits' => array_values(array_filter(array_map(fn($s) => $s['covers'] === 'context' ? null : $s['author'], $sources)))];
         }
+        // The cited results it rests on, at any depth: what a reader must accept for the fact to hold.
+        $cited = array_values(array_map(fn($x) => ['id' => $x, 'label' => $byId[$x]['label'], 'title' => $byId[$x]['title'], 'status' => $byId[$x]['status']],
+            array_filter(array_keys($depth), fn($x) => $byId[$x]['basis'] === 'cited')));
         Response::json([
-            'fact' => ['id' => $id, 'proof_origin' => $f['proof_origin'], 'origin' => $f['origin'], 'method' => $f['method'], 'tool' => $f['tool'], 'ai_model' => $f['ai_model']],
+            'rests_on' => $cited, 'rests_on_accepted' => count(array_filter($cited, fn($c) => $c['status'] === 'accepted')),
+            'incomplete' => array_values(array_map(fn($x) => ['id' => $x, 'label' => $byId[$x]['label'], 'title' => $byId[$x]['title']],
+                array_filter(array_merge([$id], array_keys($depth)), fn($x) => $byId[$x]['incomplete']))),
+            'fact' => ['id' => $id, 'basis' => $byId[$id]['basis'], 'proof_origin' => $f['proof_origin'], 'origin' => $f['origin'], 'method' => $f['method'], 'tool' => $f['tool'], 'ai_model' => $f['ai_model']],
             'sources' => $own, 'human_proof_credits' => array_values($people), 'ancestors' => $ancestors,
             'ancestor_count' => count($depth), 'ancestor_proof_origins' => $counts,
         ]);
@@ -593,6 +627,63 @@ final class FactController
         Response::json(self::present(Access::fact((int)$f['id'])), $old ? 200 : 201);
     }
 
+    /**
+     * A person settles an outside reference of a proof: the fact of the database that states the result it uses, which becomes
+     * a dependency, or "not used as a result" (a reference for context only). {"clear": true} unsettles it again.
+     */
+    public static function linkRef(Request $r): never
+    {
+        if (Auth::isAi()) throw new HttpError(403, 'Only a person can do this.');
+        $f = Access::fact($r->int('id'));
+        $pid = (int)$f['project_id'];
+        Access::member($pid);
+        $key = $r->str('ref');
+        if ($r->input('clear') === true) {
+            // Back to unsettled. A dependency added with the link stays: it is part of the proof now.
+            Db::run('DELETE FROM fact_ref_links WHERE fact_id = ? AND ref_key = ?', [$f['id'], $key]);
+            Activity::touch($pid, 'fact', (int)$f['id'], 'updated');
+            Response::json(self::present(Access::fact((int)$f['id'])));
+        }
+        $byId = array_column(self::graph($pid)['facts'], null, 'id');
+        if (!in_array($key, array_column($byId[(int)$f['id']]['outside_refs'] ?? [], 'key'), true)) throw new HttpError(422, 'This proof does not use this reference.');
+        $target = null;
+        if ($r->input('not_used') !== true) {
+            $target = (int)$r->input('fact_id');
+            if (!isset($byId[$target]) || $target === (int)$f['id']) throw new HttpError(422, 'Choose another fact of this project.');
+        }
+        Db::tx(function () use ($f, $pid, $key, $target) {
+            if ($target !== null) ConsolidationController::addDependency($pid, $f, $target);
+            Db::run('DELETE FROM fact_ref_links WHERE fact_id = ? AND ref_key = ?', [$f['id'], $key]);
+            Db::insert('fact_ref_links', ['fact_id' => $f['id'], 'ref_key' => $key, 'cited_fact_id' => $target, 'created_by' => Auth::id(), 'created_at' => Db::now()]);
+        });
+        Activity::touch($pid, 'fact', (int)$f['id'], 'updated');
+        Response::json(self::present(Access::fact((int)$f['id'])));
+    }
+
+    /**
+     * A new cited result for an outside reference of $proved: its statement, written from how the proof uses it, and the reference.
+     * It has no proof and waits for a person who reads the source. @return int its id
+     */
+    public static function createCited(int $pid, array $proved, string $refKey, string $title, string $statement, string $kind, ?string $model, mixed $seconds): int
+    {
+        $byId = array_column(self::graph($pid)['facts'], null, 'id');
+        $ref = array_values(array_filter($byId[(int)$proved['id']]['outside_refs'] ?? [], fn($x) => $x['key'] === $refKey))[0] ?? null;
+        if (!$ref) throw new HttpError(422, 'This proof does not use this reference.');
+        if ($ref['bib_id'] !== null) {
+            $b = Db::one('SELECT id, cite_key, title, authors, year, doi FROM bib_entries WHERE id = ? AND project_id = ?', [$ref['bib_id'], $pid]);
+            $entry = $b ? ['key' => $b['cite_key'], 'title' => $b['title'], 'authors' => $b['authors'], 'year' => $b['year'], 'doi' => $b['doi'], 'bib_id' => (int)$b['id']] : ['title' => $ref['label']];
+        } else {
+            $cur = Db::value('SELECT external_refs_json FROM fact_revisions WHERE fact_id = ? AND revision_no = ?', [$proved['id'], $proved['current_revision']]);
+            $list = json_decode((string)$cur, true) ?: [];
+            $list = \App\FactMigration::repairRefs($list) ?? $list;
+            $entry = array_values(array_filter($list, fn($x) => 'ext:' . substr(sha1(json_encode($x, JSON_UNESCAPED_UNICODE) ?: ''), 0, 16) === $refKey))[0] ?? ['title' => $ref['label']];
+            if (!is_array($entry)) $entry = ['title' => (string)$entry];
+        }
+        return self::ingest($pid, ['title' => $title, 'kind' => in_array($kind, self::KINDS, true) ? $kind : 'theorem', 'labels' => ['conclusion'], 'method' => 'extracted',
+            'statement_text' => $statement, 'external_refs' => [$entry], 'ai_model' => $model, 'generation_seconds' => $seconds,
+            'notes' => 'Cited result used by the proof of ' . $proved['label']], [], true);
+    }
+
     /** Links a reader's comment to a fact from the same text. The fact and its reviews do not change. */
     public static function linkComment(Request $r): never
     {
@@ -858,7 +949,8 @@ final class FactController
         return $queue;
     }
 
-    private static function ingest(int $pid, array $it, array $refs): int
+    /** $cited: a cited result written from an outside reference of a proof, which names that reference instead of quoting a source. */
+    private static function ingest(int $pid, array $it, array $refs, bool $cited = false): int
     {
         $title = mb_substr(self::s($it, 'title'), 0, 255);
         if ($title === '') throw new HttpError(422, 'A title is required.');
@@ -873,7 +965,7 @@ final class FactController
         $content = self::content($it, $pid, null);
         $labels = self::labels($it['labels'] ?? null, $kind);
         self::checkFormat($kind, $labels, $method, $content);
-        $sources = self::sources($pid, $it, $method);
+        $sources = $cited ? [] : self::sources($pid, $it, $method);
         $label = self::label($pid, self::s($it, 'label'), $kind, $title, null);
         $deps = self::deps($it, $pid, $content, null, [], $refs);
         $prov = self::provenance($method, $content, $sources, $model) + Provenance::stamp($model, $it['generation_seconds'] ?? null);
@@ -1281,6 +1373,13 @@ final class FactController
         $out['glossary'] = $cur['glossary_json'] ? json_decode($cur['glossary_json'], true) : null;
         $out['external_refs'] = $cur['external_refs_json'] ? json_decode($cur['external_refs_json'], true) : null;
         $out['sources'] = self::presentSources($id, (int)$f['current_revision']);
+        $out['outside_refs'] = array_map(fn($x) => $x + ['fact' => $x['fact_id'] !== null && isset($byId[$x['fact_id']]) ? $brief($x['fact_id']) : null], $out['outside_refs']);
+        $out['source_checks'] = array_map(function ($c) use ($f) {
+            $c['independent'] = !self::sameModel($f, $c['ai_model']);
+            $c['current'] = (int)$c['revision_no'] === (int)$f['current_revision'];
+            $c['body_text'] = Sanitizer::toText((string)$c['body_html']);
+            return $c;
+        }, Db::all('SELECT c.*, au.name AS ai_user_name FROM fact_source_checks c LEFT JOIN users au ON au.id = c.ai_user_id WHERE c.fact_id = ? ORDER BY c.id DESC LIMIT 20', [$id]));
         $out['reviews'] = array_map(function ($v) use ($f) {
             $v['independent'] = $v['reviewer_kind'] === 'human' || !self::sameModel($f, $v['ai_model']);
             $v['body_text'] = Sanitizer::toText((string)$v['body_html']);
@@ -1302,6 +1401,22 @@ final class FactController
         }, Db::all('SELECT p.*, u.name AS author_name, au.name AS ai_user_name FROM fact_proofs p JOIN users u ON u.id = p.author_id LEFT JOIN users au ON au.id = p.ai_user_id
                     WHERE p.fact_id = ? ORDER BY p.revision_no DESC, p.id', [$id]));
         $out['rephrasings'] = NotationController::forFact($id, $pid, (int)$f['current_revision']);
+        // Its history beside its revisions: the consolidation changes applied to it, by people or by the AI on its own, each one undoable.
+        $out['history'] = array_map(function ($s) {
+            foreach (['id', 'fact_id', 'other_fact_id'] as $k) $s[$k] = $s[$k] === null ? null : (int)$s[$k];
+            $s['auto_applied'] = (bool)$s['auto_applied'];
+            $s['data'] = json_decode((string)$s['data_json'], true);
+            $s['can_undo'] = $s['status'] === 'accepted' && $s['undo_json'] !== null;
+            unset($s['data_json'], $s['undo_json']);
+            return $s;
+        }, Db::all("SELECT s.id, s.kind, s.status, s.fact_id, s.other_fact_id, s.data_json, s.undo_json, s.reason_text, s.confidence, s.auto_applied, s.ai_model,
+                           s.decided_at, s.undone_at, d.name AS decided_by_name, ub.name AS undone_by_name, a.label AS fact_label, b.label AS other_label
+                    FROM fact_suggestions s LEFT JOIN users d ON d.id = s.decided_by LEFT JOIN users ub ON ub.id = s.undone_by
+                    LEFT JOIN facts a ON a.id = s.fact_id LEFT JOIN facts b ON b.id = s.other_fact_id
+                    WHERE (s.fact_id = ? OR s.other_fact_id = ?) AND s.status IN ('accepted', 'undone') ORDER BY s.decided_at DESC, s.id DESC LIMIT 100", [$id, $id]));
+        // The agreed notation, so that a reader sees the meaning of each symbol the fact uses.
+        $out['notation'] = array_map(fn($n) => ['id' => (int)$n['id'], 'symbol' => $n['symbol'], 'meaning_html' => $n['meaning_html']],
+            Db::all("SELECT id, symbol, meaning_html FROM notations WHERE project_id = ? AND status = 'agreed' ORDER BY id", [$pid]));
         $out['starred_by'] = Db::all('SELECT u.id, u.name FROM fact_stars s JOIN users u ON u.id = s.user_id WHERE s.fact_id = ? ORDER BY s.created_at', [$id]);
         foreach ($out['starred_by'] as &$u) $u['id'] = (int)$u['id'];
         unset($u);

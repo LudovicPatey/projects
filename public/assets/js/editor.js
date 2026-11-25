@@ -6,6 +6,7 @@ import { hydrateChips, openChip, searchRefs } from './refs-client.js';
 import { escapeHtml, markTerms } from './util.js';
 import { mentionMatches, mentionQuery } from './questions-model.js';
 import { askAiPrefix, offersAskAi } from './ai-model.js';
+import { notationMarker, trustMarks } from './notation-marks.js';
 
 const Embed = Quill.import('blots/embed');
 
@@ -206,11 +207,48 @@ const MATH_DELIMITERS = [
   { left: '$', right: '$', display: false },
 ];
 
-export function renderMath(el) {
+/** Renders the formulas of an element. `marker` (from notationMarker) marks the uses of notation in them. */
+export function renderMath(el, marker = null) {
   if (window.renderMathInElement) {
-    window.renderMathInElement(el, { delimiters: MATH_DELIMITERS, throwOnError: false, ignoredClasses: ['mention'] });
+    const marks = marker?.count ? { preProcess: marker.preProcess, trust: trustMarks } : {};
+    window.renderMathInElement(el, { delimiters: MATH_DELIMITERS, throwOnError: false, ignoredClasses: ['mention'], ...marks });
   }
 }
+
+// One popover for the whole page: the meaning of the notation a reader points at, taps or reaches with the keyboard.
+let pop = null;
+function notationPop() {
+  if (!pop) {
+    pop = document.createElement('div');
+    pop.className = 'nt-pop'; pop.id = 'nt-pop'; pop.setAttribute('role', 'tooltip'); pop.hidden = true;
+    document.body.appendChild(pop);
+    // It stays where it opened: scrolling, or a tap elsewhere on a touch screen, closes it.
+    window.addEventListener('scroll', hideNotation, true);
+    document.addEventListener('click', (e) => { if (!e.target.closest?.('.oq-nt')) hideNotation(); });
+  }
+  return pop;
+}
+function showNotation(target, entry) {
+  const p = notationPop();
+  p.innerHTML = '';
+  const head = document.createElement('div'); head.className = 'nt-pop-head';
+  const sym = document.createElement('span'); sym.className = 'nt-pop-sym'; sym.textContent = `$${String(entry.symbol).replace(/^\$+|\$+$/g, '')}$`;
+  const from = document.createElement('span'); from.className = 'nt-pop-from'; from.textContent = entry.source === 'project' ? 'Project notation' : 'Defined in this fact';
+  head.append(sym, from);
+  const body = document.createElement('div'); body.className = 'nt-pop-body';
+  if (entry.meaning_html) body.innerHTML = entry.meaning_html; // sanitized by the server, like every rich text shown
+  else body.textContent = entry.meaning || '';
+  p.append(head, body);
+  p.hidden = false;
+  if (window.renderMathInElement) window.renderMathInElement(p, { delimiters: MATH_DELIMITERS, throwOnError: false });
+  const r = target.getBoundingClientRect(); const w = Math.min(340, window.innerWidth - 16);
+  p.style.width = `${w}px`;
+  const left = Math.max(8, Math.min(r.left + r.width / 2 - w / 2, window.innerWidth - w - 8));
+  const below = r.bottom + 8 + p.offsetHeight < window.innerHeight;
+  p.style.left = `${left}px`; p.style.top = `${below ? r.bottom + 6 : Math.max(8, r.top - p.offsetHeight - 6)}px`;
+  target.setAttribute('aria-describedby', 'nt-pop');
+}
+function hideNotation() { if (pop) pop.hidden = true; }
 
 /** One line of plain text with its LaTeX rendered, for titles and previews in lists. */
 export const MathText = {
@@ -238,10 +276,16 @@ export const MathText = {
 
 /** Displays sanitized rich text coming from the server. */
 export const RichContent = {
-  props: { html: String },
-  template: `<div class="rich" v-html="html" @click="onClick" @keydown.enter="onClick"></div>`,
+  // notation: entries {symbol, meaning or meaning_html, source} whose uses in formulas are marked, with their meaning on hover.
+  props: { html: String, notation: Array },
+  template: `<div class="rich" v-html="html" @click="onClick" @keydown.enter="onClick" @keydown.esc="onEscape" @mouseover="onHover" @mouseout="onLeave" @focusin="onHover" @focusout="onLeave"></div>`,
   mounted() { this.decorate(); },
-  watch: { html() { this.$nextTick(() => this.decorate()); } },
+  beforeUnmount() { hideNotation(); },
+  watch: {
+    html() { this.$nextTick(() => this.decorate()); },
+    // The formulas were rendered with the previous notation: render them again from the stored text.
+    notation(now, before) { if (JSON.stringify(now) !== JSON.stringify(before)) { this.$el.innerHTML = this.html || ''; this.$nextTick(() => this.decorate()); } },
+  },
   methods: {
     decorate() {
       const el = this.$el;
@@ -250,10 +294,25 @@ export const RichContent = {
         if (n.dataset.type === 'user' && +n.dataset.id === store.user?.id) n.classList.add('me');
       });
       hydrateChips(el);
-      if (window.renderMathInElement) renderMath(el);
-      else setTimeout(() => renderMath(el), 500); // KaTeX is loaded with defer
+      const paint = () => { renderMath(el, this.notation?.length ? notationMarker(this.notation) : null); this.markNotation(); };
+      if (window.renderMathInElement) paint();
+      else setTimeout(paint, 500); // KaTeX is loaded with defer
     },
+    // Each mark can be reached with the keyboard, and says what it is to a screen reader.
+    markNotation() {
+      this.$el.querySelectorAll('.oq-nt').forEach((n) => { n.tabIndex = 0; n.setAttribute('role', 'button'); n.setAttribute('aria-label', 'Notation: show its meaning'); });
+    },
+    entryOf(e) {
+      const n = e.target.closest?.('.oq-nt');
+      const i = n && [...n.classList].map((c) => c.match(/^oq-nt-(\d+)$/)).find(Boolean);
+      return i && this.notation?.[+i[1]] ? [n, this.notation[+i[1]]] : null;
+    },
+    onHover(e) { const x = this.entryOf(e); if (x) showNotation(...x); },
+    onLeave(e) { if (this.entryOf(e) && !e.relatedTarget?.closest?.('.oq-nt')) hideNotation(); },
+    onEscape() { hideNotation(); },
     onClick(e) {
+      const x = this.entryOf(e);
+      if (x) { e.preventDefault(); showNotation(...x); return; } // a tap shows it on a touch screen
       const m = e.target.closest('.mention');
       if (!m) return;
       e.preventDefault();

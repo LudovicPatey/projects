@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS projects (
   title VARCHAR(255) NOT NULL,
   question_html MEDIUMTEXT NOT NULL,
   status VARCHAR(20) NOT NULL DEFAULT 'open',
+  consolidation_auto TINYINT(1) NOT NULL DEFAULT 1, -- the consolidation applies the changes it is confident about
   created_by INT UNSIGNED NOT NULL,
   created_at DATETIME NOT NULL,
   updated_at DATETIME NOT NULL,
@@ -307,12 +308,17 @@ CREATE TABLE IF NOT EXISTS fact_suggestions (
   other_fact_id INT UNSIGNED NULL,        -- same: the duplicate merged into fact_id; depends: what fact_id relies on
   data_json TEXT NULL,                    -- kind: {kind}; question: {title, statement}; topics: {topics}
   reason_text TEXT NOT NULL,
-  status VARCHAR(10) NOT NULL DEFAULT 'proposed', -- proposed, accepted, rejected, obsolete
+  status VARCHAR(10) NOT NULL DEFAULT 'proposed', -- proposed, accepted, rejected, obsolete, undone
+  confidence VARCHAR(8) NULL,             -- high, medium, low, as the AI rates it
+  auto_applied TINYINT(1) NOT NULL DEFAULT 0, -- applied by the AI on its own, without a person
+  undo_json MEDIUMTEXT NULL,              -- what applying it changed, to undo it (unmerge)
   ai_model VARCHAR(120) NULL,
   ai_user_id INT UNSIGNED NULL,
   ai_generation_ms INT UNSIGNED NULL,
   decided_by INT UNSIGNED NULL,
   decided_at DATETIME NULL,
+  undone_by INT UNSIGNED NULL,
+  undone_at DATETIME NULL,
   created_at DATETIME NOT NULL,
   KEY idx_fact_suggestion (project_id, status),
   FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
@@ -460,6 +466,36 @@ CREATE TABLE IF NOT EXISTS fact_sources (
   author_name VARCHAR(500) NULL,
   author_basis VARCHAR(20) NULL,          -- how the credit is known
   KEY idx_fact_source (fact_id, revision_no),
+  FOREIGN KEY (fact_id) REFERENCES facts(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- A proof relies only on facts of the database. Each outside reference its proof uses is linked to the fact that states the result,
+-- or marked as not used as a result (cited_fact_id NULL). ref_key: 'bib:<id>' for a cited reference, 'ext:<hash>' for an external reference.
+CREATE TABLE IF NOT EXISTS fact_ref_links (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  fact_id INT UNSIGNED NOT NULL,
+  ref_key VARCHAR(40) NOT NULL,
+  cited_fact_id INT UNSIGNED NULL,
+  created_by INT UNSIGNED NOT NULL,
+  created_at DATETIME NOT NULL,
+  UNIQUE KEY uq_fact_ref (fact_id, ref_key),
+  FOREIGN KEY (fact_id) REFERENCES facts(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- An AI reads the source of a cited result and says whether it states it. This is evidence, never an acceptance.
+CREATE TABLE IF NOT EXISTS fact_source_checks (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  fact_id INT UNSIGNED NOT NULL,
+  revision_no INT UNSIGNED NOT NULL,
+  verdict VARCHAR(10) NOT NULL,           -- 'confirmed' | 'differs' | 'not_found'
+  body_html MEDIUMTEXT NULL,
+  ai_model VARCHAR(120) NULL,
+  ai_user_id INT UNSIGNED NULL,
+  ai_generation_ms INT UNSIGNED NULL,
+  checked_by INT UNSIGNED NOT NULL,
+  task_id INT UNSIGNED NULL,
+  created_at DATETIME NOT NULL,
+  KEY idx_source_check (fact_id, revision_no),
   FOREIGN KEY (fact_id) REFERENCES facts(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
