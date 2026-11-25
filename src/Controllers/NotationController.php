@@ -69,7 +69,7 @@ final class NotationController
         $n = self::row($r->int('nid'));
         $data = self::fields($r, (int)$n['project_id'], $n);
         $reset = $n['status'] === 'agreed' && ($data['symbol_key'] !== $n['symbol_key'] || $data['meaning_html'] !== $n['meaning_html']);
-        Db::update('notations', $data + ['updated_at' => Db::now()] + ($reset ? ['status' => 'proposed', 'decided_by' => null, 'decided_at' => null] : []), 'id = :id', ['id' => $n['id']]);
+        Db::update('notations', $data + ['updated_at' => Db::now()] + ($reset ? ['status' => 'proposed', 'decided_by' => null, 'decided_at' => null, 'auto_suggestion_id' => null] : []), 'id = :id', ['id' => $n['id']]);
         Response::json(self::one((int)$n['id']));
     }
 
@@ -83,7 +83,8 @@ final class NotationController
         if ($status === 'agreed' && Db::value("SELECT 1 FROM notations WHERE project_id = ? AND symbol_key = ? AND status = 'agreed' AND id <> ?", [$n['project_id'], $n['symbol_key'], $n['id']])) {
             throw new HttpError(409, 'This symbol already has an agreed meaning. Change or reject that entry first.');
         }
-        Db::update('notations', ['status' => $status, 'decided_by' => $status === 'proposed' ? null : Auth::id(), 'decided_at' => $status === 'proposed' ? null : Db::now(), 'updated_at' => Db::now()], 'id = :id', ['id' => $n['id']]);
+        // A person's decision: the consolidation no longer changes it.
+        Db::update('notations', ['status' => $status, 'decided_by' => $status === 'proposed' ? null : Auth::id(), 'decided_at' => $status === 'proposed' ? null : Db::now(), 'auto_suggestion_id' => null, 'updated_at' => Db::now()], 'id = :id', ['id' => $n['id']]);
         if ($n['author_kind'] === 'human' && (int)$n['author_id'] !== Auth::id() && Access::isMember((int)$n['project_id'], (int)$n['author_id'])) {
             Notify::send((int)$n['author_id'], (int)$n['project_id'], 'notation', ['link' => ['view' => 'facts', 'query' => ['mode' => 'notation', 'notation' => (int)$n['id']]], 'excerpt' => $n['symbol'] . ': ' . $status]);
         }
@@ -155,15 +156,23 @@ final class NotationController
         self::humanOnly();
         $pid = $r->int('id');
         Access::member($pid);
+        if (self::hash($pid) === self::EMPTY) throw new HttpError(422, 'Agree on at least one notation entry, or mark one as local, first.');
+        $queued = self::queueRephrasings($pid);
+        Response::json(['queued' => $queued, 'progress' => self::progress($pid)], 201);
+    }
+
+    /** Queues the rewrite of every fact that is not written in the current notation yet. Also run by the consolidation when it decides notation. */
+    public static function queueRephrasings(int $pid): int
+    {
         $hash = self::hash($pid);
-        if ($hash === self::EMPTY) throw new HttpError(422, 'Agree on at least one notation entry, or mark one as local, first.');
+        if ($hash === self::EMPTY) return 0;
         $queued = 0;
         foreach (self::states($pid) as $fid => $s) {
             if (!in_array($s['state'], ['none', 'stale', 'unfaithful'], true) || $s['queued']) continue;
             AiTaskController::queueNotation($pid, (int)$fid, (int)$s['revision'], $hash);
             $queued++;
         }
-        Response::json(['queued' => $queued, 'progress' => self::progress($pid)], 201);
+        return $queued;
     }
 
     // ----- shared with facts and the AI queue -----
@@ -187,9 +196,18 @@ final class NotationController
             $talk[(int)$c['target_id']][] = ['author' => $c['name'], 'resolved' => (bool)$c['resolved'], 'text' => mb_substr(Sanitizer::toText((string)$c['body_html']), 0, 2000)];
         }
         return array_map(fn($n) => ['id' => (int)$n['id'], 'symbol' => $n['symbol'], 'meaning' => Sanitizer::toText((string)$n['meaning_html']), 'status' => $n['status'],
+            'decided_by' => self::decidedBy($n),
             'note' => $n['note_html'] ? Sanitizer::toText((string)$n['note_html']) : null, 'variants' => json_decode((string)$n['variants_json'], true) ?: [],
             'comments' => array_slice($talk[(int)$n['id']] ?? [], -20)],
             Db::all("SELECT * FROM notations WHERE project_id = ? AND status " . ($agreedOnly ? ($withLocal ? "IN ('agreed', 'local')" : "= 'agreed'") : "<> 'rejected'") . ' ORDER BY symbol_key LIMIT 300', [$pid]));
+    }
+
+    /** Who decided an entry: nobody yet, the consolidation on its own, or a person (also when a person accepted the consolidation's proposal). */
+    public static function decidedBy(array $n): ?string
+    {
+        if ($n['status'] === 'proposed') return null;
+        $auto = $n['auto_suggestion_id'] && Db::value('SELECT auto_applied FROM fact_suggestions WHERE id = ?', [$n['auto_suggestion_id']]);
+        return $auto ? 'consolidation' : 'person';
     }
 
     /** Where each fact's current revision stands. */
@@ -203,6 +221,8 @@ final class NotationController
         foreach (Db::all('SELECT x.fact_id, x.notation_hash, x.check_verdict, x.unchanged FROM fact_rephrasings x JOIN facts f ON f.id = x.fact_id AND x.revision_no = f.current_revision
                           WHERE f.project_id = ? ORDER BY x.id', [$pid]) as $x) {
             if (!isset($out[(int)$x['fact_id']])) continue;
+            // A rewrite in the current notation wins over a later one in a notation since undone.
+            if ($x['notation_hash'] !== $hash && in_array($out[(int)$x['fact_id']]['state'], ['current', 'unchanged', 'unfaithful'], true)) continue;
             $out[(int)$x['fact_id']]['state'] = $x['notation_hash'] !== $hash ? 'stale' : ($x['check_verdict'] === 'unfaithful' ? 'unfaithful' : ($x['unchanged'] ? 'unchanged' : 'current'));
         }
         foreach (Db::all("SELECT source_id FROM ai_tasks WHERE project_id = ? AND kind = 'notation' AND source_type = 'fact' AND status IN ('pending', 'running')", [$pid]) as $t) {
@@ -406,10 +426,11 @@ final class NotationController
 
     private static function present(array $n): array
     {
-        foreach (['id', 'project_id', 'author_id', 'decided_by', 'definition_fact_id', 'ai_user_id', 'ai_generation_ms', 'comment_count', 'open_threads'] as $k) $n[$k] = $n[$k] === null ? null : (int)$n[$k];
+        foreach (['id', 'project_id', 'author_id', 'decided_by', 'definition_fact_id', 'ai_user_id', 'ai_generation_ms', 'comment_count', 'open_threads', 'auto_suggestion_id'] as $k) $n[$k] = $n[$k] === null ? null : (int)$n[$k];
         $n['variants'] = json_decode((string)$n['variants_json'], true) ?: [];
         $n['facts'] = json_decode((string)$n['facts_json'], true) ?: [];
         $n['meaning_text'] = Sanitizer::toText((string)$n['meaning_html']);
+        $n['decided_by_kind'] = self::decidedBy($n); // null, consolidation or person
         $n['note_text'] = $n['note_html'] ? Sanitizer::toText((string)$n['note_html']) : '';
         unset($n['variants_json'], $n['facts_json']);
         return $n;

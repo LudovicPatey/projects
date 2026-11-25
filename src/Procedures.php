@@ -23,7 +23,7 @@ final class Procedures
         return [
             'ask' => ['label' => 'Answer @AI', 'description' => 'Answer a question asked to the AI in a conversation or a comment.', 'tier' => 'fast', 'capabilities' => ['document']],
             'notation' => ['label' => 'Project notation', 'description' => 'Propose a common notation for the project, and write facts again in it, when a member asks.', 'tier' => 'strong', 'capabilities' => []],
-            'consolidate' => ['label' => 'Consolidate the facts', 'description' => 'After extractions, read the whole facts database and propose merges of duplicates, links across sources, open questions, subject tags, and the cited results behind the outside references of proofs.', 'tier' => 'strong', 'capabilities' => []],
+            'consolidate' => ['label' => 'Consolidate the facts', 'description' => 'After extractions, read the whole facts database and propose merges of duplicates, links across sources, open questions, subject tags, the cited results behind the outside references of proofs, and the project\'s notation.', 'tier' => 'strong', 'capabilities' => []],
             'source_check' => ['label' => 'Check a cited result', 'description' => 'Read the source of a result cited without proof, and say whether it states the result as written. People still accept it.', 'tier' => 'fast', 'capabilities' => ['document', 'web_search']],
         ];
     }
@@ -111,6 +111,19 @@ the ids it "depends_on", its "topics", its "status" and whether it is already "w
   of a proof, a surprising example or counterexample, a result that settles or reframes an approach. Most facts are routine
   steps written by AI: do not mark those. Say in "reason", in one sentence for a mathematician, why it matters. Mark at most 10
   facts per consolidation, the most important first, and never one with "worth_reading" already true.
+- "notation": normalize the project's notation yourself, so that every fact can be written in one notation and people need not
+  decide it. "notation" in task.json lists the entries already written, with their "status" and "decided_by"; "local_notation" lists
+  the symbols that several facts define for themselves, with each meaning and the facts that give it. Fill the "notation" object:
+  "action" "adopt" makes an entry the project's notation: name an entry that is still proposed in "entry", or leave "entry" null and
+  write a new one ("symbol" in LaTeX without dollars, "meaning" as a precise definition with $...$, "note" saying how sources differ or
+  an empty string, "variants" listing the other spellings and meanings found, each with "where" and "relation": "instance" for the same
+  notion in a particular setting, "clash" for a different meaning). "local" keeps a proposed entry out of the project's notation: too
+  specific, each fact defines it. "reject" sets aside a proposed entry that should not be used. In "fact", name a fact that defines or
+  uses the symbol. One symbol per proposal, at most 30. Never propose a change to an entry whose "decided_by" is "person".
+  When sources disagree, choose: the most common convention of the literature, and another symbol for a meaning that also matters,
+  for example FS(X) including 0 and NS(X) without it. Do not leave notation to people: a wrong choice is cheap, it can be undone, and
+  the facts are rewritten in it automatically while their reviewed text stays as it is. Adopt only notions that several facts or sources
+  share or that readers could confuse, not the standard notation every reader knows, nor variables of one proof.
 Name facts by their id or label. In "reason", say in one or two sentences why, quoting the statements when it helps.
 "earlier_suggestions" lists proposals already waiting, or that people rejected or undid: never propose them again.
 Give each change a "confidence". "high" means you checked it and are sure: for "same", the two statements are equivalent as written,
@@ -118,6 +131,7 @@ with the same hypotheses and conclusion; for "depends", the proof plainly uses t
 A change of high confidence is applied at once, without a person, so that people only decide what needs their judgment: use "high" only
 when a careful mathematician would not hesitate. Use "medium" or "low" whenever the statements differ in a detail, a hypothesis or a
 setting, or when the decision matters for the project: people then decide. Every change can be undone, a merge included.
+"notation" and "topics" changes are applied at "medium" too, since they change no result: use "low" only when you would rather people choose.
 Propose at most 200 changes, the most useful first.
 TXT,
     ];
@@ -126,7 +140,7 @@ TXT,
         'ask' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'reply'], "properties" => ["summary" => ["type" => 'string'], "reply" => ["type" => 'string']]],
         'notation_propose' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'entries'], "properties" => ["summary" => ["type" => 'string'], "entries" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'meaning', 'note', 'variants', 'definition_fact_id', 'facts'], "properties" => ["symbol" => ["type" => 'string'], "meaning" => ["type" => 'string'], "note" => ["type" => ['string', 'null']], "variants" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'meaning', 'where', 'relation'], "properties" => ["symbol" => ["type" => 'string'], "meaning" => ["type" => 'string'], "where" => ["type" => 'string'], "relation" => ["type" => 'string', "enum" => ['instance', 'clash']]]]], "definition_fact_id" => ["type" => ['integer', 'null']], "facts" => ["type" => 'array', "items" => ["type" => 'integer']]]]]]],
         'notation_rephrase' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'unchanged', 'statement', 'proof', 'local_notation', 'uses'], "properties" => ["summary" => ["type" => 'string'], "unchanged" => ["type" => 'boolean'], "statement" => ["type" => 'string'], "proof" => ["type" => ['string', 'null']], "local_notation" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'meaning'], "properties" => ["symbol" => ["type" => 'string'], "meaning" => ["type" => 'string']]]], "uses" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'meaning_here', 'project_symbol'], "properties" => ["symbol" => ["type" => 'string'], "meaning_here" => ["type" => 'string'], "project_symbol" => ["type" => 'string']]]]]],
-        'consolidate' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'suggestions'], "properties" => ["summary" => ["type" => 'string'], "suggestions" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['kind', 'fact', 'other_fact', 'new_kind', 'title', 'topics', 'ref', 'statement', 'reason', 'confidence'], "properties" => ["kind" => ["type" => 'string', "enum" => ['same', 'depends', 'kind', 'question', 'topics', 'cite', 'progress']], "ref" => ["type" => ['string', 'null']], "statement" => ["type" => ['string', 'null']], "confidence" => ["type" => 'string', "enum" => ['high', 'medium', 'low']], "fact" => ["type" => 'string'], "other_fact" => ["type" => ['string', 'null']], "new_kind" => ["type" => ['string', 'null'], "enum" => ['definition', 'lemma', 'proposition', 'theorem', 'corollary', 'conjecture', 'remark', null]], "title" => ["type" => ['string', 'null']], "topics" => ["type" => 'array', "items" => ["type" => 'string']], "reason" => ["type" => 'string']]]]]],
+        'consolidate' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'suggestions'], "properties" => ["summary" => ["type" => 'string'], "suggestions" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['kind', 'fact', 'other_fact', 'new_kind', 'title', 'topics', 'ref', 'statement', 'notation', 'reason', 'confidence'], "properties" => ["kind" => ["type" => 'string', "enum" => ['same', 'depends', 'kind', 'question', 'topics', 'cite', 'progress', 'notation']], "notation" => ["type" => ['object', 'null'], "additionalProperties" => false, "required" => ['action', 'entry', 'symbol', 'meaning', 'note', 'variants'], "properties" => ["action" => ["type" => 'string', "enum" => ['adopt', 'local', 'reject']], "entry" => ["type" => ['integer', 'null']], "symbol" => ["type" => ['string', 'null']], "meaning" => ["type" => ['string', 'null']], "note" => ["type" => ['string', 'null']], "variants" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'meaning', 'where', 'relation'], "properties" => ["symbol" => ["type" => 'string'], "meaning" => ["type" => 'string'], "where" => ["type" => 'string'], "relation" => ["type" => 'string', "enum" => ['instance', 'clash']]]]]]], "ref" => ["type" => ['string', 'null']], "statement" => ["type" => ['string', 'null']], "confidence" => ["type" => 'string', "enum" => ['high', 'medium', 'low']], "fact" => ["type" => 'string'], "other_fact" => ["type" => ['string', 'null']], "new_kind" => ["type" => ['string', 'null'], "enum" => ['definition', 'lemma', 'proposition', 'theorem', 'corollary', 'conjecture', 'remark', null]], "title" => ["type" => ['string', 'null']], "topics" => ["type" => 'array', "items" => ["type" => 'string']], "reason" => ["type" => 'string']]]]]],
         'source_check' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'verdict', 'where', 'explanation'], "properties" => ["summary" => ["type" => 'string'], "verdict" => ["type" => 'string', "enum" => ['confirmed', 'differs', 'not_found']], "where" => ["type" => 'string'], "explanation" => ["type" => 'string']]],
     ];
 
@@ -221,11 +235,11 @@ TXT,
                 $items = [];
                 foreach (array_slice($answer['suggestions'], 0, 200) as $x) {
                     $items[] = array_filter(['kind' => $x['kind'], 'fact' => $x['fact'], 'other_fact' => $x['other_fact'], 'new_kind' => $x['new_kind'], 'title' => $x['title'],
-                        'topics' => array_slice($x['topics'], 0, 8), 'ref' => $x['ref'], 'statement' => $x['statement'], 'reason' => $x['reason'], 'confidence' => $x['confidence']], fn($y) => $y !== null && $y !== []);
+                        'topics' => array_slice($x['topics'], 0, 8), 'ref' => $x['ref'], 'statement' => $x['statement'], 'notation' => $x['notation'] ?? null, 'reason' => $x['reason'], 'confidence' => $x['confidence']], fn($y) => $y !== null && $y !== []);
                 }
                 $r = ConsolidationController::store($pid, $items, $model, Provenance::stamp($model, $seconds), (int)$t['id']);
                 $a = count($r['applied']); $c = count($r['created']) - $a; $s = count($r['skipped']);
-                $done = ($a ? "$a change" . ($a === 1 ? '' : 's') . ' applied, being confident, ' : '') . "$c change" . ($c === 1 ? '' : 's') . ' proposed';
+                $done = ($a ? "$a change" . ($a === 1 ? '' : 's') . ' applied at once, ' : '') . "$c change" . ($c === 1 ? '' : 's') . ' proposed';
                 return ['summary' => trim($done . ($s ? ", $s set aside (already proposed, rejected, undone or invalid)" : '') . ". $said")];
             case 'source_check':
                 return self::recordSourceCheck($t, $answer, $model, $seconds);

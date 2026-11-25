@@ -8,7 +8,7 @@ const FEATURES = [
   {
     kicker: 'Fact database', title: 'See what is known, and what it rests on',
     text: 'Results become facts with a statement, a proof and an intuition, linked by their dependencies. Browse them as a list or as an interactive graph.',
-    points: ['Star the facts that matter, and see how they rely on each other, even in a huge database', 'Labels such as conclusion, counterexample, dead end or plan', 'Accept a result while disputing its proof, and propose another proof', 'One agreed notation, with each paper\'s facts rewritten in it', 'After extraction, an AI reads the whole database, merges duplicates, links results across papers and tags subjects when it is confident, each change undoable, and proposes the rest', 'Retracting a fact flags everything built on it', 'Import fact graphs from the Danus prover'],
+    points: ['Star the facts that matter, and see how they rely on each other, even in a huge database', 'Labels such as conclusion, counterexample, dead end or plan', 'Accept a result while disputing its proof, and propose another proof', 'One agreed notation, with each paper\'s facts rewritten in it', 'After extraction, an AI reads the whole database, merges duplicates, links results across papers, tags subjects and settles the notation when it is confident, each change undoable, and proposes the rest', 'Retracting a fact flags everything built on it', 'Import fact graphs from the Danus prover'],
     img: 'facts-graph.webp', w: 1600, h: 978, alt: 'Dependency graph of facts next to a selected theorem with its statement, proof and intuition',
   },
   {

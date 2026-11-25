@@ -71,7 +71,7 @@ test('the platform checks the answer against the schema, then applies it itself'
   r = await send({ summary: 'x', suggestions: [{ kind: 'merge', fact: 'a' }] });
   assert.equal(r.status, 422);
   assert.equal((await send({ summary: 'x', suggestions: [] }, { lease: 'wrong' })).status, 409);
-  const none = { ref: null, statement: null, confidence: 'medium' };
+  const none = { ref: null, statement: null, notation: null, confidence: 'low' };
   r = await send({ summary: 'Read all.', suggestions: [{ kind: 'topics', fact: 'lem:a', other_fact: null, new_kind: null, title: null, topics: ['Tag'], ...none, reason: 'Its subject.' },
     { kind: 'same', fact: 'lem:a', other_fact: 'lem:a', new_kind: null, title: null, topics: [], ...none, reason: 'invalid' }] });
   assert.equal(r.status, 200, JSON.stringify(r.data));

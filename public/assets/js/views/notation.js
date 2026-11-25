@@ -68,7 +68,7 @@ export const NotationPanel = {
       if (r) { this.editing = null; await this.load(); }
     },
     async decide(e, status) {
-      if (status === 'agreed' && !confirm(`Agree that ${e.symbol} has this meaning in the whole project? Facts are rewritten in this notation when a member asks.`)) return;
+      if (status === 'agreed' && e.decided_by_kind !== 'consolidation' && !confirm(`Agree that ${e.symbol} has this meaning in the whole project? Facts are rewritten in this notation when a member asks.`)) return;
       if (await attempt(() => api.post(`api/notation/${e.id}/status`, { status }), { agreed: 'Agreed', rejected: 'Rejected', proposed: 'Reopened', local: 'Kept local: rewrites unfold it or define it in the fact' }[status])) await this.load();
     },
     openTalk(e) {
@@ -128,7 +128,7 @@ export const NotationPanel = {
             <div v-if="!agreed.length" class="d-empty">Nothing agreed yet. Agree on a proposal below.</div>
             <article v-for="e in agreed" :key="e.id" class="notation-entry" :data-notation="e.id" :class="{flash: focus === e.id}">
               <template v-if="editing?.id === e.id">${entryEditor}</template>
-              <template v-else>${entryView('Agreed by {{ e.decided_by_name }} {{ timeAgo(e.decided_at) }}', '<button class="btn sm" @click="edit(e)">Edit</button><button class="btn sm" @click="decide(e, \'proposed\')">Reopen</button>')}</template>
+              <template v-else>${entryView('<template v-if="e.decided_by_kind === \'consolidation\'"><span class="pill t-neutral"><icon name="sparkles" :size="11"/> Adopted by the consolidation</span> {{ timeAgo(e.decided_at) }}</template><template v-else>Agreed by {{ e.decided_by_name }} {{ timeAgo(e.decided_at) }}</template>', '<button v-if="e.decided_by_kind === \'consolidation\'" class="btn sm endorse" title="Make it the team\'s decision: the consolidation no longer changes it" @click="decide(e, \'agreed\')"><icon name="check" :size="13"/> Confirm</button><button class="btn sm" @click="edit(e)">Edit</button><button class="btn sm" @click="decide(e, \'proposed\')">Reopen</button>')}</template>
             </article>
           </section>
           <section class="panel">
@@ -164,7 +164,7 @@ export const NotationPanel = {
           </section>
           <section class="panel">
             <header class="ai-head"><h2><icon name="sparkles" :size="15"/> Review the notation</h2></header>
-            <p class="muted small">An AI client looks at the whole picture: the notation every fact defines for itself, and the sources. It proposes making shared symbols global, one meaning per symbol, and general definitions for notions that papers state in particular settings. People decide.</p>
+            <p class="muted small">An AI client looks at the whole picture: the notation every fact defines for itself, and the sources. It proposes making shared symbols global, one meaning per symbol, and general definitions for notions that papers state in particular settings. The consolidation then settles the notation on its own, when the project lets it apply changes: people confirm, reopen or undo its choices.</p>
             <ai-action kind="notation" label="Ask AI to review the notation"/>
           </section>
           <section class="panel" id="notation-propose">

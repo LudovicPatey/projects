@@ -11,6 +11,7 @@ use App\HttpError;
 use App\Provenance;
 use App\Request;
 use App\Response;
+use App\Sanitizer;
 
 /**
  * Consolidation: an AI reads the whole facts database and proposes changes that no single extraction can see.
@@ -20,7 +21,8 @@ use App\Response;
  */
 final class ConsolidationController
 {
-    public const KINDS = ['same', 'depends', 'kind', 'question', 'topics', 'cite', 'progress'];
+    public const KINDS = ['same', 'depends', 'kind', 'question', 'topics', 'cite', 'progress', 'notation'];
+    private const NOTATION_ACTIONS = ['adopt', 'local', 'reject'];
     public const MAX_TOPICS = 8;
     private const MAX_TOPIC_LENGTH = 40;
     private const MAX_PER_POST = 200;
@@ -143,7 +145,16 @@ final class ConsolidationController
     }
 
     /** What the AI may apply on its own when it is confident and the project allows it. Turning a remark into an open question stays with people. */
-    public const AUTO_KINDS = ['same', 'depends', 'kind', 'topics', 'cite', 'progress'];
+    public const AUTO_KINDS = ['same', 'depends', 'kind', 'topics', 'cite', 'progress', 'notation'];
+
+    /** Cheap to undo and changing no result: applied when the AI finds them probable too, so that people decide as little as possible. */
+    public const AUTO_MEDIUM_KINDS = ['notation', 'topics'];
+
+    public static function autoApplies(array $s): bool
+    {
+        if (!in_array($s['kind'], self::AUTO_KINDS, true)) return false;
+        return $s['confidence'] === 'high' || ($s['confidence'] === 'medium' && in_array($s['kind'], self::AUTO_MEDIUM_KINDS, true));
+    }
 
     /**
      * Records the proposals that are valid and new. Those the AI is highly confident about are applied at once when the project
@@ -163,7 +174,7 @@ final class ConsolidationController
             }
             if ($why = self::known($pid, $s)) { $skipped[] = ['index' => $i, 'reason' => $why]; continue; }
             $created[] = $sid = Db::insert('fact_suggestions', $s + $stamp + ['project_id' => $pid, 'task_id' => $taskId, 'status' => 'proposed', 'ai_model' => $model, 'created_at' => Db::now()]);
-            if ($auto && $s['confidence'] === 'high' && in_array($s['kind'], self::AUTO_KINDS, true)) {
+            if ($auto && self::autoApplies($s)) {
                 try {
                     Db::tx(fn() => self::apply(Db::one('SELECT * FROM fact_suggestions WHERE id = ?', [$sid]), Auth::id(), true));
                     $applied[] = $sid;
@@ -197,6 +208,8 @@ final class ConsolidationController
             'data' => json_decode((string)$s['data_json'], true), 'status' => $s['status']],
             Db::all("SELECT kind, fact_id, other_fact_id, data_json, status FROM fact_suggestions WHERE project_id = ? AND status IN ('proposed', 'rejected', 'undone') ORDER BY id DESC LIMIT 600", [$pid]));
         return ['fact_texts' => $facts, 'topics' => self::topics($pid), 'earlier_suggestions' => $decided,
+            // The project's notation, and the symbols several facts define for themselves: what to normalize.
+            'notation' => NotationController::forTask($pid, false), 'local_notation' => NotationController::shared($pid, 2, 80),
             'omitted_facts' => max(0, (int)Db::value('SELECT COUNT(*) FROM facts WHERE project_id = ? AND deleted_at IS NULL AND retracted_at IS NULL', [$pid]) - count($facts))];
     }
 
@@ -253,6 +266,9 @@ final class ConsolidationController
             case 'question':
                 [$out, $undo] = self::toQuestion($pid, $f, $s, $data, $me);
                 break;
+            case 'notation':
+                [$out, $undo] = self::notation($pid, $s, $data, $me);
+                break;
             case 'topics':
                 $topics = self::clean(array_merge(self::decode($f['topics_json']), (array)($data['topics'] ?? [])));
                 $json = $topics ? json_encode($topics, JSON_UNESCAPED_UNICODE) : null;
@@ -265,6 +281,8 @@ final class ConsolidationController
         }
         Db::update('fact_suggestions', ['status' => 'accepted', 'decided_by' => $me, 'decided_at' => Db::now(), 'auto_applied' => $auto ? 1 : 0,
             'undo_json' => json_encode($undo, JSON_UNESCAPED_UNICODE)], 'id = :id', ['id' => $s['id']]);
+        // The facts are written again in the new notation. Their reviewed text does not change.
+        if ($s['kind'] === 'notation') $out['rephrasings_queued'] = NotationController::queueRephrasings($pid);
         return $out;
     }
 
@@ -330,6 +348,9 @@ final class ConsolidationController
                 foreach ($u['deps'] ?? [] as $to) if (self::alive($pid, (int)$to)) self::addDependency($pid, Db::one('SELECT * FROM facts WHERE id = ?', [$fid]), (int)$to);
                 $out['question_removed'] = $qid;
                 break;
+            case 'notation':
+                $out['notation_id'] = self::revertNotation($u, (int)$s['id']);
+                break;
         }
         if ($u['obsoleted'] ?? null) {
             [$in, $p] = Db::in(array_map('intval', $u['obsoleted']));
@@ -337,7 +358,63 @@ final class ConsolidationController
         }
         Db::update('fact_suggestions', ['status' => 'undone', 'undone_by' => $me, 'undone_at' => $now], 'id = :id', ['id' => $s['id']]);
         Activity::touch($pid, 'fact', $fid, 'updated');
+        // The rewrites made in the notation as it was become current again; the others are queued.
+        if ($s['kind'] === 'notation') $out['rephrasings_queued'] = NotationController::queueRephrasings($pid);
         return $out;
+    }
+
+    /**
+     * The consolidation decides a notation entry: adopts it as the project's notation, keeps it local to the facts, or rejects it.
+     * It never changes what a person decided. @return array{0: array, 1: array} what changed, and what undoing it needs
+     */
+    private static function notation(int $pid, array $s, array $data, int $me): array
+    {
+        $action = (string)($data['action'] ?? '');
+        $status = ['adopt' => 'agreed', 'local' => 'local', 'reject' => 'rejected'][$action] ?? throw new HttpError(422, 'Unknown notation action.');
+        $now = Db::now();
+        $stamp = ['status' => $status, 'decided_by' => $me, 'decided_at' => $now, 'auto_suggestion_id' => (int)$s['id'], 'updated_at' => $now];
+        $entry = ($data['entry'] ?? null) ? Db::one('SELECT * FROM notations WHERE id = ? AND project_id = ?', [(int)$data['entry'], $pid]) : null;
+        if (($data['entry'] ?? null) && !$entry) throw new HttpError(409, 'This notation entry is no longer in the project.');
+        if ($entry && self::personDecided($entry)) throw new HttpError(409, "A person decided {$entry['symbol']}: it stays as they chose.");
+        $key = NotationController::key($entry ? (string)$entry['symbol'] : (string)$data['symbol']);
+        if ($status === 'agreed' && Db::value("SELECT 1 FROM notations WHERE project_id = ? AND symbol_key = ? AND status = 'agreed' AND id <> ?", [$pid, $key, $entry['id'] ?? 0])) {
+            throw new HttpError(409, 'This symbol already has an agreed meaning.');
+        }
+        if ($entry) {
+            $undo = ['entry' => (int)$entry['id'], 'before' => array_intersect_key($entry, array_flip(['status', 'decided_by', 'decided_at', 'auto_suggestion_id']))];
+            Db::update('notations', $stamp, 'id = :id', ['id' => $entry['id']]);
+            return [['notation_id' => (int)$entry['id']], $undo];
+        }
+        $html = fn($t) => Sanitizer::clean(Sanitizer::textToHtml((string)$t, $pid))['html'];
+        $id = Db::insert('notations', $stamp + [
+            'project_id' => $pid, 'symbol' => $data['symbol'], 'symbol_key' => $key, 'meaning_html' => $html($data['meaning']),
+            'note_html' => ($data['note'] ?? '') !== '' ? $html($data['note']) : null, 'variants_json' => ($data['variants'] ?? []) ? json_encode($data['variants'], JSON_UNESCAPED_UNICODE) : null,
+            'author_id' => (int)($s['ai_user_id'] ?: $me), 'author_kind' => 'agent', 'ai_model' => $s['ai_model'], 'ai_user_id' => $s['ai_user_id'], 'ai_generation_ms' => $s['ai_generation_ms'], 'created_at' => $now,
+        ]);
+        return [['notation_id' => $id, 'created' => true], ['created' => $id]];
+    }
+
+    /** Gives the entry back as it was. People who decided it since keep their decision. */
+    private static function revertNotation(array $u, int $sid): int
+    {
+        $id = (int)($u['created'] ?? $u['entry'] ?? 0);
+        $n = Db::one('SELECT * FROM notations WHERE id = ?', [$id]);
+        if (!$n) return $id;
+        if ((int)$n['auto_suggestion_id'] !== $sid) throw new HttpError(409, 'People decided this notation entry since: it stays as they chose.');
+        if ($u['created'] ?? null) {
+            // Written by the consolidation: it goes, unless members discussed it, then it stays as a rejected entry with its discussion.
+            if (Db::value("SELECT 1 FROM comments WHERE target_type = 'notation' AND target_id = ?", [$id])) Db::update('notations', ['status' => 'rejected', 'auto_suggestion_id' => null, 'updated_at' => Db::now()], 'id = :id', ['id' => $id]);
+            else Db::run('DELETE FROM notations WHERE id = ?', [$id]);
+        } else {
+            Db::update('notations', ($u['before'] ?? []) + ['updated_at' => Db::now()], 'id = :id', ['id' => $id]);
+        }
+        return $id;
+    }
+
+    /** Agreed, local or rejected by a person, not by the consolidation. */
+    private static function personDecided(array $n): bool
+    {
+        return NotationController::decidedBy($n) === 'person';
     }
 
     /** A merge undone: the duplicate is back with its dependencies, sources, proof, links and stars, and the kept fact as it was. */
@@ -568,8 +645,47 @@ final class ConsolidationController
             if (!$topics) throw new HttpError(422, 'The fact already has these topics.');
             $data = ['topics' => $topics];
         }
+        if ($kind === 'notation') $data = self::cleanNotation($pid, $x['notation'] ?? null);
         $confidence = in_array($x['confidence'] ?? null, ['high', 'medium', 'low'], true) ? $x['confidence'] : null;
         return ['kind' => $kind, 'fact_id' => $fid, 'other_fact_id' => $other, 'data_json' => $data ? json_encode($data, JSON_UNESCAPED_UNICODE) : null, 'reason_text' => $reason, 'confidence' => $confidence];
+    }
+
+    /**
+     * A decision on the project's notation: {action, entry, symbol, meaning, note, variants}. "entry" names an entry already proposed;
+     * without it, "adopt" writes a new entry, or takes the entry of the same notion when there is one.
+     */
+    private static function cleanNotation(int $pid, mixed $n): array
+    {
+        if (!is_array($n)) throw new HttpError(422, 'A notation proposal needs "notation": {action, entry, symbol, meaning}.');
+        $action = is_string($n['action'] ?? null) ? $n['action'] : '';
+        if (!in_array($action, self::NOTATION_ACTIONS, true)) throw new HttpError(422, 'The notation action must be adopt, local or reject.');
+        $str = fn($k, $max) => mb_substr(trim(is_scalar($n[$k] ?? null) ? (string)$n[$k] : ''), 0, $max);
+        $symbol = trim(preg_replace('/^\$+|\$+$/', '', $str('symbol', 160)) ?? '');
+        $entry = null;
+        if (is_numeric($n['entry'] ?? null)) {
+            $entry = Db::one('SELECT * FROM notations WHERE id = ? AND project_id = ?', [(int)$n['entry'], $pid]);
+            if (!$entry) throw new HttpError(422, 'Unknown notation entry: ' . (int)$n['entry']);
+        } elseif ($symbol !== '') {
+            foreach (Db::all("SELECT * FROM notations WHERE project_id = ? AND status <> 'rejected' ORDER BY status = 'agreed' DESC, id", [$pid]) as $e) {
+                if (NotationController::notionKey($e['symbol']) === NotationController::notionKey($symbol)) { $entry = $e; break; }
+            }
+        }
+        if ($entry) {
+            if (self::personDecided($entry)) throw new HttpError(422, "A person decided {$entry['symbol']}: the consolidation leaves it.");
+            if ($entry['status'] === ['adopt' => 'agreed', 'local' => 'local', 'reject' => 'rejected'][$action]) throw new HttpError(422, "{$entry['symbol']} is already " . $entry['status'] . '.');
+            return ['action' => $action, 'entry' => (int)$entry['id'], 'symbol' => $entry['symbol'], 'meaning' => mb_substr(Sanitizer::toText((string)$entry['meaning_html']), 0, 1000)];
+        }
+        if ($action !== 'adopt') throw new HttpError(422, 'Name in "entry" the notation entry to keep local or to reject.');
+        $meaning = $str('meaning', 4000);
+        if ($symbol === '' || $meaning === '') throw new HttpError(422, 'A new notation entry needs a "symbol" and a "meaning".');
+        $variants = [];
+        foreach (array_slice(is_array($n['variants'] ?? null) ? $n['variants'] : [], 0, 20) as $v) {
+            if (!is_array($v)) continue;
+            $vs = fn($k, $max) => mb_substr(trim(is_scalar($v[$k] ?? null) ? (string)$v[$k] : ''), 0, $max);
+            if ($vs('symbol', 160) === '' || $vs('meaning', 1000) === '') continue;
+            $variants[] = ['symbol' => $vs('symbol', 160), 'meaning' => $vs('meaning', 1000), 'where' => $vs('where', 300), 'relation' => ($v['relation'] ?? '') === 'instance' ? 'instance' : 'clash'];
+        }
+        return ['action' => 'adopt', 'entry' => null, 'symbol' => $symbol, 'meaning' => $meaning, 'note' => $str('note', 2000), 'variants' => $variants];
     }
 
     /** A fact named by its id or its label. */
@@ -597,8 +713,20 @@ final class ConsolidationController
                 if (array_diff($new, $old)) continue;
             } elseif ($s['kind'] === 'kind' && $r['data_json'] !== $s['data_json']) continue;
             elseif ($s['kind'] === 'cite' && (json_decode((string)$r['data_json'], true)['ref'] ?? null) !== (json_decode((string)$s['data_json'], true)['ref'] ?? null)) continue;
+            elseif ($s['kind'] === 'notation') continue; // compared by symbol below, whatever fact it was attached to
             if ($r['status'] === 'undone') return 'People undid this change.';
             return $r['status'] === 'rejected' ? 'People already rejected this proposal.' : 'The same proposal is already waiting.';
+        }
+        if ($s['kind'] === 'notation') {
+            $mine = json_decode((string)$s['data_json'], true);
+            foreach (Db::all("SELECT status, data_json FROM fact_suggestions WHERE project_id = ? AND kind = 'notation' AND status IN ('proposed', 'rejected', 'undone')", [$pid]) as $r) {
+                $d = json_decode((string)$r['data_json'], true) ?: [];
+                $same = fn($a, $b) => mb_strtolower(preg_replace('/[\s.]+/u', '', (string)$a) ?? '') === mb_strtolower(preg_replace('/[\s.]+/u', '', (string)$b) ?? '');
+                if (($d['action'] ?? null) !== $mine['action'] || NotationController::notionKey((string)($d['symbol'] ?? '')) !== NotationController::notionKey((string)$mine['symbol'])) continue;
+                if (!$same($d['meaning'] ?? '', $mine['meaning'] ?? '')) continue; // another meaning for the symbol is another proposal
+                if ($r['status'] === 'undone') return 'People undid this change.';
+                return $r['status'] === 'rejected' ? 'People already rejected this proposal.' : 'The same proposal is already waiting.';
+            }
         }
         if ($s['kind'] === 'depends' && Db::value('SELECT 1 FROM fact_deps WHERE fact_id = ? AND depends_on_id = ?', [$s['fact_id'], $s['other_fact_id']])) return 'This dependency is already recorded.';
         if ($s['kind'] === 'progress' && Db::value('SELECT highlight_at FROM facts WHERE id = ?', [$s['fact_id']])) return 'This fact is already marked as worth reading.';

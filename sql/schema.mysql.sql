@@ -307,10 +307,10 @@ CREATE TABLE IF NOT EXISTS fact_suggestions (
   id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   project_id INT UNSIGNED NOT NULL,
   task_id INT UNSIGNED NULL,
-  kind VARCHAR(12) NOT NULL,              -- same, depends, kind, question, topics
+  kind VARCHAR(12) NOT NULL,              -- same, depends, kind, question, topics, cite, progress, notation
   fact_id INT UNSIGNED NOT NULL,
   other_fact_id INT UNSIGNED NULL,        -- same: the duplicate merged into fact_id; depends: what fact_id relies on
-  data_json TEXT NULL,                    -- kind: {kind}; question: {title, statement}; topics: {topics}
+  data_json TEXT NULL,                    -- kind: {kind}; question: {title, statement}; topics: {topics}; notation: {action, entry, symbol, meaning, note, variants}
   reason_text TEXT NOT NULL,
   status VARCHAR(10) NOT NULL DEFAULT 'proposed', -- proposed, accepted, rejected, obsolete, undone
   confidence VARCHAR(8) NULL,             -- high, medium, low, as the AI rates it
@@ -368,7 +368,8 @@ CREATE TABLE IF NOT EXISTS notations (
   variants_json TEXT NULL,                -- [{symbol, meaning, where, relation}] the same notion written otherwise
   facts_json TEXT NULL,                   -- ids of the facts that define it locally, when proposed to make it global
   definition_fact_id INT UNSIGNED NULL,
-  status VARCHAR(10) NOT NULL DEFAULT 'proposed', -- proposed, agreed, rejected
+  status VARCHAR(10) NOT NULL DEFAULT 'proposed', -- proposed, agreed, local, rejected
+  auto_suggestion_id INT UNSIGNED NULL,   -- the consolidation decided it on its own (fact_suggestions.id); null: a person did
   author_id INT UNSIGNED NOT NULL,
   author_kind VARCHAR(10) NOT NULL,       -- human or agent
   ai_model VARCHAR(120) NULL,

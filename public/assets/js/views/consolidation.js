@@ -97,7 +97,7 @@ export const ConsolidationPanel = {
           </section>
           <section v-if="applied.length" class="panel">
             <header class="ai-head"><h2><icon name="sparkles" :size="15"/> Applied automatically</h2><small>{{ applied.length }}</small></header>
-            <p class="muted small">Changes the AI was confident about, applied without waiting. Look them over: each one is in the history of its facts, and can be undone.</p>
+            <p class="muted small">Changes the AI applied without waiting: those it was confident about, and the notation and tags it found probable. Look them over: each one is in the history of its facts, and can be undone.</p>
             <article v-for="s in applied.slice(0, open.applied ? 1000 : 30)" :key="s.id" class="cons-item">
               <div class="cons-main"><b class="cons-what"><math-text :text="suggestionText(s, d.facts)"/></b>
                 <p class="cons-reason small"><icon name="sparkles" :size="12"/> <math-text :text="s.reason_text"/> <ai-meta compact :model="s.ai_model" :user="s.ai_user_name" :ms="s.ai_generation_ms"/> <span class="muted">{{ timeAgo(s.decided_at) }}</span></p></div>
@@ -113,11 +113,11 @@ export const ConsolidationPanel = {
         <aside class="notation-side">
           <section class="panel">
             <header class="ai-head"><h2><icon name="sparkles" :size="15"/> Ask for a consolidation</h2></header>
-            <p class="muted small">An AI client reads every fact with its source, its dependencies and its tags. It proposes merges, dependencies across sources, corrected kinds, open questions, subject tags, and the cited results behind the outside references of proofs. It never repeats a proposal that people rejected.</p>
+            <p class="muted small">An AI client reads every fact with its source, its dependencies and its tags. It proposes merges, dependencies across sources, corrected kinds, open questions, subject tags, the cited results behind the outside references of proofs, and one notation for the project. It never repeats a proposal that people rejected.</p>
             <p v-if="d.waiting" class="muted small"><icon name="clock" :size="12"/> A consolidation is {{ d.waiting.status === 'running' ? 'running' : 'waiting for an AI client' }}.</p>
             <ai-action v-else kind="consolidate" label="Ask AI to consolidate"/>
             <label class="check cons-auto"><input type="checkbox" :checked="d.auto" :disabled="!owner" @change="setAuto($event.target.checked)"> Apply the changes the AI is confident about, without waiting</label>
-            <p class="muted small">{{ d.auto ? 'Merges, dependencies, kinds, tags and cited results it is sure of are applied at once, and can be undone. Open questions and the rest wait for people.' : 'Every change waits for people.' }}<template v-if="!owner"> An owner chooses.</template></p>
+            <p class="muted small">{{ d.auto ? 'Merges, dependencies, kinds and cited results it is sure of are applied at once. Notation and tags change no result: they are applied when it finds them probable too, and the facts are rewritten in the new notation. Everything can be undone. Open questions and the rest wait for people.' : 'Every change waits for people.' }}<template v-if="!owner"> An owner chooses.</template></p>
           </section>
           <section class="panel">
             <header class="ai-head"><h2><icon name="tag" :size="15"/> Subject tags</h2><small>{{ d.topics.length }}</small></header>
