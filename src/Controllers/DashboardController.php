@@ -156,15 +156,40 @@ final class DashboardController
      */
     public static function reading(int $pid, int $me, int $limit = 8): array
     {
+        $rows = self::readingRows($pid, $me, $limit);
+        $byId = $rows ? array_column(FactController::graph($pid)['facts'], null, 'id') : [];
         return array_map(fn($f) => ['id' => (int)$f['id'], 'label' => $f['label'], 'title' => $f['title'], 'reason' => $f['highlight_reason'], 'model' => $f['highlight_model'],
-            'at' => $f['highlight_at'], 'tool' => $f['tool']], Db::all(
+            'at' => $f['highlight_at'], 'tool' => $f['tool'], 'citations' => self::citationsToAccept($byId, (int)$f['id'])], $rows);
+    }
+
+    /**
+     * The cited results nobody accepted that a fact relies on, itself included: people check the literature an interesting result
+     * builds on, rather than every citation. @return array{count: int, facts: list<array{id: int, label: string, title: string, status: string}>}
+     */
+    public static function citationsToAccept(array $byId, int $id): array
+    {
+        $out = []; $stack = [$id]; $seen = [];
+        while ($stack) {
+            $x = array_pop($stack);
+            if (isset($seen[$x]) || !isset($byId[$x])) continue;
+            $seen[$x] = true;
+            $f = $byId[$x];
+            if ($f['basis'] === 'cited' && !in_array($f['status'], ['accepted', 'retracted'], true)) $out[] = ['id' => (int)$x, 'label' => $f['label'], 'title' => $f['title'], 'status' => $f['status']];
+            array_push($stack, ...array_map('intval', $f['deps']));
+        }
+        return ['count' => count($out), 'facts' => array_slice($out, 0, 6)];
+    }
+
+    private static function readingRows(int $pid, int $me, int $limit): array
+    {
+        return Db::all(
             "SELECT f.id, f.label, f.title, f.tool, f.highlight_reason, f.highlight_model, f.highlight_at FROM facts f
              LEFT JOIN read_marks m ON m.user_id = ? AND m.project_id = f.project_id AND m.item_type = 'fact' AND m.item_id = f.id
              WHERE f.project_id = ? AND f.deleted_at IS NULL AND f.retracted_at IS NULL AND f.highlight_at IS NOT NULL
                AND (m.activity_id IS NULL OR m.activity_id < f.highlight_activity OR m.forced_unread = 1)
                AND NOT EXISTS (SELECT 1 FROM fact_highlight_dismissals d WHERE d.user_id = ? AND d.fact_id = f.id)
                AND NOT EXISTS (SELECT 1 FROM fact_reviews v WHERE v.fact_id = f.id AND v.revision_no = f.current_revision AND v.reviewer_id = ? AND v.reviewer_kind = 'human')
-             ORDER BY f.highlight_at DESC, f.id DESC LIMIT $limit", [$me, $pid, $me, $me]));
+             ORDER BY f.highlight_at DESC, f.id DESC LIMIT $limit", [$me, $pid, $me, $me]);
     }
 
     /** A member sets a reading suggestion aside. */

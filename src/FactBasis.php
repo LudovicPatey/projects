@@ -88,8 +88,23 @@ final class FactBasis
         if ($retractedAt) return 'retracted';
         if (array_filter($reviews, fn($v) => $v['statement_verdict'] === 'false' || ($v['statement_verdict'] === null && $v['verdict'] === 'incorrect'))) return 'disputed';
         if (array_filter($reviews, fn($v) => $v['reviewer_kind'] === 'human' && ($v['verdict'] === 'correct' || $v['statement_verdict'] === 'true'))) return 'accepted';
+        return self::sourceVerdict($checks, $factModel) === 'confirmed' ? 'source_confirmed' : 'unchecked';
+    }
+
+    /** The verdict of the latest source check by another model than the one that wrote the fact, or null. */
+    public static function sourceVerdict(array $checks, ?string $factModel): ?string
+    {
         $same = fn($m) => (string)$factModel !== '' && mb_strtolower(trim((string)$factModel)) === mb_strtolower(trim((string)$m));
-        $latest = array_values(array_filter($checks, fn($c) => !$same($c['ai_model'])))[0] ?? null;
-        return $latest && $latest['verdict'] === 'confirmed' ? 'source_confirmed' : 'unchecked';
+        return (array_values(array_filter($checks, fn($c) => !$same($c['ai_model'])))[0] ?? null)['verdict'] ?? null;
+    }
+
+    /**
+     * Whether a proof search may build on a cited result. People check the results of the literature that matter, not all of them,
+     * so it may build on one nobody accepted yet, unless people dispute it or its source says something else.
+     */
+    public static function citedUsable(string $status, ?string $sourceVerdict): bool
+    {
+        if ($status === 'accepted') return true; // a person read the source: that settles it, whatever an AI check said
+        return !in_array($status, ['disputed', 'retracted'], true) && $sourceVerdict !== 'differs';
     }
 }

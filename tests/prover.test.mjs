@@ -51,7 +51,7 @@ test('the first round is the lead; its guidance gives the workers their lanes, a
 test('a verified fact is created with the verifier\'s review, and may rely only on facts the prover can build on', async () => {
   const w = (await claim()).data.round;
   const post = (body) => app.call(key, 'POST', `/api/prover/rounds/${w.id}/facts`, { title: 'Step', kind: 'lemma', statement: 'S new.', proof: 'By the checked lemma.', verifier: { model: 'gpt-5.6-sol', report: 'All steps check.' }, ...body });
-  assert.match((await post({ depends_on: [id.loose] })).data.error, /verify it before building on it/);
+  assert.match((await post({ depends_on: [id.loose] })).data.error, /before building on it/);
   assert.equal((await post({ verifier: {} })).status, 422);
   const r = await post({ depends_on: [id.checked] });
   assert.equal(r.status, 201, JSON.stringify(r.data));

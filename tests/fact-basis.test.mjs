@@ -69,7 +69,11 @@ test('an AI checks that the source states a cited result: evidence, shown apart,
   assert.equal((await app.call(ann, 'POST', `/api/projects/${pid}/ai/tasks`, { kind: 'source_check', source_type: 'fact', source_id: id.uses_ext })).status, 422, 'a proved fact has no source to check');
   const made = (await app.call(key, 'POST', `/api/projects/${pid}/facts/batch`, { format: 'native', ai_model: 'claude-sonnet-5-5', facts: [
     { ref: 'c', title: 'c', kind: 'lemma', labels: ['conclusion'], method: 'extracted', statement_text: 'S c.', sources: [{ type: 'bib', id: bib, quote: 'Lemma 2', covers: 'statement' }] }] })).data.created[0].id;
-  assert.equal((await app.call(ann, 'POST', `/api/projects/${pid}/ai/tasks`, { kind: 'source_check', source_type: 'fact', source_id: made })).status, 201);
+  // Queued on its own when the cited result arrived: asking again finds it waiting.
+  assert.equal((await app.call(ann, 'POST', `/api/projects/${pid}/ai/tasks`, { kind: 'source_check', source_type: 'fact', source_id: made })).status, 409);
+  for (const x of (await app.call(ann, 'GET', `/api/projects/${pid}/ai`)).data.tasks) {
+    if (x.kind === 'source_check' && x.status === 'pending' && x.source_id !== made) await app.call(ann, 'POST', `/api/ai/tasks/${x.id}/cancel`, {});
+  }
   assert.equal((await claim({ kinds: ['source_check'], capabilities: ['document'] })).data.task, null, 'it needs web search');
   const t = (await claim({ kinds: ['source_check'] })).data.task;
   assert.equal(t.recipe.procedure, 'source_check'); assert.equal(t.context.fact.statement, 'S c.'); assert.equal(t.context.fact.proof, undefined);

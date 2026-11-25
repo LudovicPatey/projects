@@ -254,6 +254,7 @@ final class ConsolidationController
                 Db::run('DELETE FROM fact_ref_links WHERE fact_id = ? AND ref_key = ?', [$fid, $ref]);
                 Db::insert('fact_ref_links', ['fact_id' => $fid, 'ref_key' => $ref, 'cited_fact_id' => $cid, 'created_by' => $me, 'created_at' => Db::now()]);
                 $out = ['fact_id' => $fid, 'cited_fact_id' => $cid, 'created' => !$other];
+                if (!$other) AiTaskController::queueSourceChecks($pid); // the new cited result is checked against its source
                 break;
             case 'kind':
                 $kind = (string)($data['kind'] ?? '');
@@ -335,6 +336,7 @@ final class ConsolidationController
                 // A cited result written for this link goes too, unless other facts rely on it now.
                 if (($c = $u['created'] ?? null) && !Db::value('SELECT 1 FROM fact_deps d JOIN facts f ON f.id = d.fact_id WHERE d.depends_on_id = ? AND f.deleted_at IS NULL', [$c])) {
                     Db::update('facts', ['deleted_at' => $now], 'id = :id', ['id' => $c]);
+                    Db::run("UPDATE ai_tasks SET status = 'cancelled', updated_at = ? WHERE kind = 'source_check' AND source_type = 'fact' AND source_id = ? AND status = 'pending'", [$now, $c]);
                     $out['removed_fact'] = (int)$c;
                 }
                 break;

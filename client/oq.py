@@ -52,7 +52,7 @@ import webbrowser
 import zipfile
 import zlib
 
-VERSION = "1.17.0"
+VERSION = "1.18.0"
 API_LEVEL = 2  # raise with the server's AiTaskController::API_LEVEL when a client needs new server features
 GITHUB_REPO = "LudovicPatey/projects"
 KINDS = ["extract", "ask", "bib", "derive", "review", "lean", "notation", "consolidate"]
@@ -3785,7 +3785,9 @@ PROVER_RULES = """Rules that always hold:
 - A proof may build only on facts that are "usable" (fact_search and fact_read say so), cited by their id in "depends_on".
   An unchecked fact is awareness, never a brick: verify it with fact_verify before relying on it.
 - A result of the literature enters only through cite_result (its complete statement and its reference), which checks it against
-  its source. Never use an outside result as a black box, and never write "it is well known".
+  its source. Cited results of the project are usable unless people dispute them or their source states something else: state them
+  exactly as the source does, since people check the citations an interesting result relies on. Never use an outside result as a black
+  box, and never write "it is well known".
 - Every symbol is defined: in the project's notation, in a fact you cite, or in "glossary". No hand-waving ("obviously", "routine").
 - Notes are awareness for the other workers, never a correctness source. Failed paths are valuable: record them as dead ends."""
 
@@ -3886,7 +3888,7 @@ PROVER_TOOLS = [
      "inputSchema": {"type": "object", "properties": {"id": {"type": "integer"}}, "required": ["id"]}},
     {"name": "guidance_read", "description": "The lead's current guidance and your lane: read it again after each submission and at least every 20 minutes.",
      "inputSchema": {"type": "object", "properties": {}}},
-    {"name": "cite_result", "description": "Record a result of the literature: its complete statement and its reference (authors, title, year, arxiv or doi, cited_for). It is checked against its source; once confirmed you may cite it.",
+    {"name": "cite_result", "description": "Record a result of the literature: its complete statement and its reference (authors, title, year, arxiv or doi, cited_for). It is checked against its source at once; you may cite it unless the source states something else.",
      "inputSchema": {"type": "object", "properties": {"title": {"type": "string"}, "statement": {"type": "string"},
                      "reference": {"type": "object", "properties": {"authors": {"type": "string"}, "title": {"type": "string"}, "year": {"type": "integer"}, "arxiv": {"type": "string"}, "doi": {"type": "string"}, "cited_for": {"type": "string"}}},
                      "quote": {"type": "string"}}, "required": ["title", "statement", "reference"]}},
@@ -4087,7 +4089,7 @@ class ProverToolbox:
         r = self.api.post(f"/api/prover/rounds/{self.round['id']}/cited", {"title": title, "statement": statement, "reference": ref,
                                                                            "check": {"verdict": answer.get("verdict"), "model": model, "explanation": answer.get("explanation"), "seconds": seconds}})
         self.refresh(force=True)
-        return {"fact_id": r["id"], "label": r["label"], "source_check": answer.get("verdict"), "usable": answer.get("verdict") == "confirmed", "explanation": answer.get("explanation")}
+        return {"fact_id": r["id"], "label": r["label"], "source_check": answer.get("verdict"), "usable": (self.facts.get(r["id"]) or {}).get("usable", False), "explanation": answer.get("explanation")}
 
 
 class ProverGateway:

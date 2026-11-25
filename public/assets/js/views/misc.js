@@ -118,8 +118,11 @@ export const OverviewView = {
         <section v-if="d.reading?.length" class="panel reading-panel"><header><h2><icon name="sparkles" :size="15"/> Worth reading</h2><small class="muted">{{ d.reading.length }}</small></header>
           <p class="muted small">Facts the AI consolidation marked as real progress, that you have not opened since. Most facts are routine: these are worth your time.</p>
           <div v-for="f in d.reading" :key="f.id" class="reading-row">
-            <a class="reading-main" :href="link('facts', f.id)"><span class="reading-top"><code class="key">{{ f.label }}</code><b><math-text :text="f.title"/></b></span>
+            <div class="reading-body"><a class="reading-main" :href="link('facts', f.id)"><span class="reading-top"><code class="key">{{ f.label }}</code><b><math-text :text="f.title"/></b></span>
               <span class="reading-why small"><math-text :text="f.reason"/> <ai-meta compact :model="f.model"/></span></a>
+              <span v-if="f.citations?.count" class="reading-cites small"><icon name="book" :size="12"/> Relies on {{ f.citations.count === 1 ? 'a cited result' : f.citations.count + ' cited results' }} nobody accepted yet:
+                <template v-for="(c, i) in f.citations.facts" :key="c.id"><a :href="link('facts', c.id)" :title="c.title">{{ c.label }}</a><span v-if="c.status === 'source_confirmed'" class="muted"> (source confirmed by AI)</span>{{ i < f.citations.facts.length - 1 ? ', ' : '' }}</template><template v-if="f.citations.count > f.citations.facts.length"> and {{ f.citations.count - f.citations.facts.length }} more</template>.
+                {{ f.citations.count === 1 ? 'Check its source.' : 'Check their sources.' }}</span></div>
             <button class="btn xs ghost" title="Remove it from your suggestions" @click="dismiss(f)">Not for me</button>
           </div></section>
         <section class="panel"><header><h2><icon name="target" :size="15"/> Big questions</h2><a :href="link('questions')">All questions ›</a></header>

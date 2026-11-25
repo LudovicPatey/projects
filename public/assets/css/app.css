@@ -1666,3 +1666,5 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: non
 .reading-top { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; min-width: 0; overflow-wrap: anywhere; }
 .reading-why { color: var(--muted); overflow-wrap: anywhere; }
 .reading-row > .btn { flex: none; }
+.reading-body { display: grid; gap: 4px; flex: 1; min-width: 0; }
+.reading-cites { color: var(--warn); overflow-wrap: anywhere; }

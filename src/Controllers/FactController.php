@@ -197,6 +197,7 @@ final class FactController
             // A definition is a convention, not a claim: it belongs to the project notation, and nothing in it needs a check.
             $f['basis'] = FactBasis::of($f['display_kind'], $f['labels'], trim((string)$f['proof_html']) !== '' || !empty($proofs[$id]));
             if ($f['basis'] === 'cited') $f['status'] = FactBasis::citedStatus($f['retracted_at'], $reviews[$id] ?? [], $checks[$id] ?? [], $f['ai_model']);
+            $f['source_verdict'] = $f['basis'] === 'cited' ? FactBasis::sourceVerdict($checks[$id] ?? [], $f['ai_model']) : null;
             if ($f['display_kind'] === 'definition' && !in_array($f['status'], ['retracted', 'disputed'], true)) $f['status'] = 'definition';
             $f['outside_refs'] = $f['basis'] === 'proved' ? FactBasis::outsideRefs($f['proof_html'], $f['external_refs_json']) : [];
             unset($f['statement_html'], $f['proof_html'], $f['external_refs_json']);
@@ -225,6 +226,31 @@ final class FactController
     public const ESTABLISHED = ['human_checked', 'ai_checked', 'double_checked', 'accepted', 'definition'];
 
     /**
+     * What a proof search may build on, by fact id: more than what people established. A proved fact a verifier accepted (even
+     * the model that wrote it), and a cited result nobody accepted yet, unless people dispute it or its source says otherwise:
+     * people check the citations an interesting result relies on, not all of them. Everything it relies on must be usable too.
+     * @param array<int, array> $byId the facts of graph(), by id @return array<int, bool>
+     */
+    public static function usable(array $byId): array
+    {
+        $usable = [];
+        $use = function (int $id, array $seen = []) use (&$use, &$usable, $byId): bool {
+            if (isset($usable[$id])) return $usable[$id];
+            if (isset($seen[$id]) || !isset($byId[$id])) return false;
+            $f = $byId[$id];
+            if ($f['basis'] === 'cited') $good = FactBasis::citedUsable($f['status'], $f['source_verdict'] ?? null);
+            else {
+                $checked = ($f['review_counts']['correct'] ?? 0) > 0 && !in_array($f['status'], ['disputed', 'proof_disputed', 'retracted'], true);
+                $good = (in_array($f['status'], self::ESTABLISHED, true) || $checked) && !$f['incomplete'];
+            }
+            foreach ($f['deps'] as $d) $good = $good && $use((int)$d, $seen + [$id => true]);
+            return $usable[$id] = $good;
+        };
+        foreach (array_keys($byId) as $id) $use((int)$id);
+        return $usable;
+    }
+
+    /**
      * Everything a proof search merges before it starts, so that it builds on the project instead of starting from scratch:
      * each fact with its text (in the project's notation when a faithful version exists), dependencies, status and whether
      * it may be built on; the strategies of the question; the agreed notation. Proofs and statements are plain text.
@@ -250,18 +276,8 @@ final class FactController
             foreach ($f['deps'] as $d) $good = $good && $ok((int)$d, $seen + [$id => true]);
             return $trusted[$id] = $good;
         };
-        // The native prover builds on more: also what a verifier accepted (even the model that wrote it), and citations an AI
-        // confirmed against their source. It is still not established for people, who see it unchecked.
-        $usable = [];
-        $use = function (int $id, array $seen = []) use (&$use, &$usable, $byId): bool {
-            if (isset($usable[$id])) return $usable[$id];
-            if (isset($seen[$id]) || !isset($byId[$id])) return false;
-            $f = $byId[$id];
-            $checked = ($f['review_counts']['correct'] ?? 0) > 0 && !in_array($f['status'], ['disputed', 'proof_disputed', 'retracted'], true);
-            $good = (in_array($f['status'], self::ESTABLISHED, true) || $f['status'] === 'source_confirmed' || $checked) && !$f['incomplete'];
-            foreach ($f['deps'] as $d) $good = $good && $use((int)$d, $seen + [$id => true]);
-            return $usable[$id] = $good;
-        };
+        $usable = self::usable($byId);
+        $use = fn(int $id): bool => $usable[$id] ?? false;
         $facts = [];
         foreach ($byId as $id => $f) {
             $x = $rev[$id] ?? null;
@@ -493,7 +509,9 @@ final class FactController
         }
         if ($errors || $dry) $pdo->rollBack(); else $pdo->commit();
         if ($errors) Response::json(['error' => count($errors) . ' fact(s) rejected, nothing was saved.', 'errors' => $errors], 422);
-        Response::json(['dry_run' => $dry, 'created' => $created, 'skipped' => $skipped], $dry ? 200 : 201);
+        // The cited results among them are checked against their source by an AI, without waiting for people.
+        $checks = !$dry && $created ? AiTaskController::queueSourceChecks($pid) : 0;
+        Response::json(['dry_run' => $dry, 'created' => $created, 'skipped' => $skipped, 'source_checks_queued' => $checks], $dry ? 200 : 201);
     }
 
     /** Machine-readable description of the format, for AI clients. */

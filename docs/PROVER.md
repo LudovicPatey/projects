@@ -15,7 +15,7 @@ results, notation, consolidation, undo, provenance and revisions.
 
 | Danus | Native prover |
 |---|---|
-| Fact graph: what the verifier accepted | Platform facts. A worker may build on a **usable** fact: established (checked by a person or an independent AI, an accepted citation, a definition), or accepted by the prover's verifier, and everything it relies on too |
+| Fact graph: what the verifier accepted | Platform facts. A worker may build on a **usable** fact: established (checked by a person or an independent AI, a definition), accepted by the prover's verifier, or a cited result that nobody disputes and whose source check did not find something else, and everything it relies on too |
 | Global memory | **Prover notes** of a campaign: conclusion, example, counterexample, proof attempt, plan, dead end, direction, obstacle, verification |
 | Worker: a long Codex session with tools | A long Claude or Codex session in a member's client, with tools served by the client (MCP), backed by the platform |
 | Verifier: a fresh session per submission | A fresh session per submission, in the same client, with only the statement, the proof and the cited facts. Accepted: the fact is created on the platform with the verifier's review. Rejected: a verification note with repair hints |
@@ -26,8 +26,10 @@ results, notation, consolidation, undo, provenance and revisions.
 
 - Text-only mathematics: no code execution, no computer algebra, no solver. The sessions have no shell.
 - A proof builds only on usable facts, cited by id. A result of the literature enters as a **cited result** (statement,
-  reference), checked at once against its source by a separate session; it is usable once confirmed by that check or
-  accepted by a member, and stays a cited result on the platform, which people accept.
+  reference), checked at once against its source by a separate session; it is usable unless people dispute it or that check
+  finds that its source states something else. People do not check every citation, only those an interesting result relies on:
+  a result marked worth reading lists the cited results it relies on that nobody accepted yet. Every cited result of the project,
+  extracted or written by the consolidation, gets a source check automatically, and stays a cited result that people accept.
 - Failed paths are shared as dead ends. Verification outcomes are shared as notes.
 - The lead never creates facts.
 

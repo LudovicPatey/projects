@@ -59,11 +59,34 @@ final class AiTaskController
      */
     public static function queueConsolidation(int $pid): ?int
     {
+        self::queueSourceChecks($pid);
         if (Db::value("SELECT 1 FROM ai_tasks WHERE project_id = ? AND kind IN ('extract', 'consolidate') AND status IN ('pending', 'running')", [$pid])) return null;
         $n = (int)Db::value('SELECT COUNT(*) FROM facts WHERE project_id = ? AND deleted_at IS NULL', [$pid]);
         if ($n < 2) return null;
         $last = (int)Db::value('SELECT COALESCE(MAX(id), 0) FROM facts WHERE project_id = ?', [$pid]);
         return self::insertTask($pid, 'consolidate', null, null, null, null, null, "cons:$last:$n");
+    }
+
+    /**
+     * Every cited result that nobody accepted and that no AI has checked yet gets one source check: confirmed, the native prover
+     * may build on it. Only a person still accepts a citation. Once per revision, whatever the verdict, so a failed check is not retried.
+     * Run after facts arrive (extraction, cited results the consolidation writes) and with each consolidation, which also covers older facts.
+     */
+    public static function queueSourceChecks(int $pid, int $limit = 100): int
+    {
+        $checked = [];
+        foreach (Db::all('SELECT c.fact_id, c.revision_no FROM fact_source_checks c JOIN facts f ON f.id = c.fact_id WHERE f.project_id = ?', [$pid]) as $c) $checked[$c['fact_id'] . ':' . $c['revision_no']] = true;
+        $queued = 0;
+        foreach (FactController::graph($pid)['facts'] as $f) {
+            if ($queued >= $limit) break;
+            if ($f['basis'] !== 'cited' || $f['status'] !== 'unchecked' || $f['retracted_at'] !== null) continue;
+            $rev = (int)$f['current_revision'];
+            $key = 'srcchk:' . $f['id'] . ':' . $rev;
+            if (isset($checked[$f['id'] . ':' . $rev]) || Db::value('SELECT 1 FROM ai_tasks WHERE project_id = ? AND dedupe_key = ?', [$pid, $key])) continue;
+            self::insertTask($pid, 'source_check', 'fact', (int)$f['id'], null, null, null, $key);
+            $queued++;
+        }
+        return $queued;
     }
 
     /** "@AI" in a message or a comment asks for the opinion of whichever AI client runs next. */

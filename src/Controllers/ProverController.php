@@ -294,13 +294,11 @@ final class ProverController
     {
         if (!$deps) return;
         $byId = array_column(FactController::graph($pid)['facts'], null, 'id');
+        $usable = FactController::usable($byId);
         foreach ($deps as $d) {
             $f = $byId[$d] ?? null;
             if (!$f) throw new HttpError(422, "Fact $d is not in this project.");
-            $checked = ($f['review_counts']['correct'] ?? 0) > 0 && !in_array($f['status'], ['disputed', 'proof_disputed', 'retracted'], true);
-            if (!(in_array($f['status'], FactController::ESTABLISHED, true) || $f['status'] === 'source_confirmed' || $checked) || $f['incomplete']) {
-                throw new HttpError(422, "{$f['label']} is not established nor verified yet: verify it before building on it.");
-            }
+            if (!($usable[$d] ?? false)) throw new HttpError(422, "{$f['label']} is not usable yet: verify it, or what it relies on, before building on it.");
         }
     }
 
