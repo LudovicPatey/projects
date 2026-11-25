@@ -1,4 +1,4 @@
-// The "What this computer may do" checkboxes of the client keep every kind of work.
+// The switches of the Work page of the client keep every kind of work.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { test } from 'node:test';
@@ -7,9 +7,9 @@ const source = fs.readFileSync('client/oq.py', 'utf8');
 const KINDS = JSON.parse(source.match(/^KINDS = (\[.*\])$/m)[1]);
 const handler = source.match(/if\(t\.dataset\.k\)\{(draft\.kinds=.*?)\}if\('danus'/)[1];
 const toggle = (checked, changed) => {
-  const boxes = KINDS.map((k) => ({ checked: k === changed ? !checked.includes(k) : checked.includes(k), dataset: { k } }));
+  const boxes = KINDS.map((k) => ({ checked: k === changed ? !checked.includes(k) : checked.includes(k), dataset: { k }, blur() {} }));
   const draft = { kinds: [...checked] };
-  new Function('t', 'draft', 'document', handler)(boxes.find((b) => b.dataset.k === changed), draft, { querySelectorAll: () => boxes });
+  new Function('t', 'draft', 'document', 'render', handler)(boxes.find((b) => b.dataset.k === changed), draft, { querySelectorAll: () => boxes }, () => {});
   return draft.kinds;
 };
 
