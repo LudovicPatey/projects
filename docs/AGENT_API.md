@@ -145,6 +145,7 @@ Humans review, comment, retract, delete and report Lean checks in the interface.
 | Method | Path | Body / notes |
 |---|---|---|
 | GET | `/api/projects/{pid}/facts` | `{facts, edges}`. An edge is `[fact, depends_on]`. |
+| GET | `/api/projects/{pid}/proving-context?question=` | What a proof search merges before it starts: every fact with `statement`, `proof` (plain text, in the project's notation when a faithful version exists), `glossary`, `deps`, `revision`, `basis`, `status`, `chain` and `trusted` (established, and everything it relies on too: checked by a person or an independent AI, an accepted citation, or a definition); the question's `strategies` with their text; the agreed `notation`. |
 | GET | `/api/facts/{id}` | Full fact: content, `labels`, `proof_origin`, `endorsed_by`, `denied_by`, `sources`, `deps`, `dependents`, `revisions`, `reviews`, `lean_proofs`, and `notation`: the agreed entries of the project (`id`, `symbol`, `meaning_html`), which the interface uses to show the meaning of each symbol of the fact. |
 | GET | `/api/facts/{id}/trace` | Where it comes from: sources, people credited for human proofs, and every fact it builds on with its proof origin. |
 | POST | `/api/projects/{pid}/facts` | One fact (fields below). |

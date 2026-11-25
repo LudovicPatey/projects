@@ -221,6 +221,62 @@ final class FactController
         return ['facts' => array_values($byId), 'edges' => $edges];
     }
 
+    /** What a proof search on this computer may build on: established, its whole chain too. */
+    public const ESTABLISHED = ['human_checked', 'ai_checked', 'double_checked', 'accepted', 'definition'];
+
+    /**
+     * Everything a proof search merges before it starts, so that it builds on the project instead of starting from scratch:
+     * each fact with its text (in the project's notation when a faithful version exists), dependencies, status and whether
+     * it may be built on; the strategies of the question; the agreed notation. Proofs and statements are plain text.
+     */
+    public static function provingContext(Request $r): never
+    {
+        $pid = $r->int('pid');
+        Access::member($pid);
+        $byId = array_column(self::graph($pid)['facts'], null, 'id');
+        $rev = [];
+        foreach (Db::all('SELECT r.fact_id, r.revision_no, r.statement_html, r.proof_html, r.glossary_json, r.external_refs_json FROM fact_revisions r
+                          JOIN facts f ON f.id = r.fact_id AND r.revision_no = f.current_revision WHERE f.project_id = ? AND f.deleted_at IS NULL', [$pid]) as $x) $rev[(int)$x['fact_id']] = $x;
+        $notation = [];
+        foreach (Db::all("SELECT p.fact_id, p.statement_html, p.proof_html, p.local_json FROM fact_rephrasings p JOIN facts f ON f.id = p.fact_id AND p.revision_no = f.current_revision
+                          WHERE f.project_id = ? AND p.unchanged = 0 AND COALESCE(p.check_verdict, '') <> 'unfaithful' AND p.notation_hash = ? ORDER BY p.id", [$pid, NotationController::hash($pid)]) as $x) $notation[(int)$x['fact_id']] = $x;
+        // A fact may be built on when it is established, and everything it relies on too.
+        $trusted = [];
+        $ok = function (int $id, array $seen = []) use (&$ok, &$trusted, $byId): bool {
+            if (isset($trusted[$id])) return $trusted[$id];
+            if (isset($seen[$id]) || !isset($byId[$id])) return false;
+            $f = $byId[$id];
+            $good = in_array($f['status'], self::ESTABLISHED, true) && !$f['incomplete'];
+            foreach ($f['deps'] as $d) $good = $good && $ok((int)$d, $seen + [$id => true]);
+            return $trusted[$id] = $good;
+        };
+        $facts = [];
+        foreach ($byId as $id => $f) {
+            $x = $rev[$id] ?? null;
+            if (!$x) continue;
+            $n = $notation[$id] ?? null;
+            $glossary = json_decode((string)($n['local_json'] ?? $x['glossary_json']), true);
+            $facts[] = ['id' => $id, 'label' => $f['label'], 'title' => $f['title'], 'kind' => $f['display_kind'], 'revision' => (int)$x['revision_no'],
+                'basis' => $f['basis'], 'status' => $f['status'], 'chain' => $f['chain'], 'incomplete' => $f['incomplete'], 'trusted' => $ok($id),
+                'ai_model' => $f['ai_model'], 'tool' => $f['tool'], 'external_id' => $f['external_id'], 'deps' => array_map('intval', $f['deps']),
+                'statement' => Sanitizer::toText((string)($n['statement_html'] ?? $x['statement_html'])),
+                'proof' => Sanitizer::toText((string)($n ? ($n['proof_html'] ?: $x['proof_html']) : $x['proof_html'])),
+                'glossary' => is_array($glossary) ? array_map(fn($v) => is_string($v) ? $v : json_encode($v, JSON_UNESCAPED_UNICODE), $glossary) : null,
+                'external_refs' => json_decode((string)$x['external_refs_json'], true) ?: null, 'in_project_notation' => $n !== null];
+        }
+        $qid = (int)($r->query['question'] ?? 0);
+        $strategies = [];
+        if ($qid && Db::value('SELECT 1 FROM open_questions WHERE id = ? AND project_id = ? AND deleted_at IS NULL', [$qid, $pid])) {
+            foreach (Db::all('SELECT s.id, s.title, s.status, s.current_revision, v.body_html, v.ai_model FROM proof_strategies s JOIN strategy_revisions v ON v.strategy_id = s.id AND v.revision_no = s.current_revision
+                              WHERE s.question_id = ? AND s.deleted_at IS NULL ORDER BY s.id', [$qid]) as $x) {
+                $strategies[] = ['id' => (int)$x['id'], 'title' => $x['title'], 'status' => $x['status'], 'revision' => (int)$x['current_revision'], 'body' => Sanitizer::toText((string)$x['body_html']), 'ai_model' => $x['ai_model']];
+            }
+        }
+        $agreed = array_map(fn($e) => ['symbol' => $e['symbol'], 'meaning' => Sanitizer::toText((string)$e['meaning_html']), 'note' => Sanitizer::toText((string)$e['note_html']) ?: null],
+            Db::all("SELECT symbol, meaning_html, note_html FROM notations WHERE project_id = ? AND status = 'agreed' ORDER BY id", [$pid]));
+        Response::json(['project_id' => $pid, 'question_id' => $qid ?: null, 'facts' => $facts, 'strategies' => $strategies, 'notation' => $agreed]);
+    }
+
     /** One fact as the graph sees it: its basis, status and outside references. */
     public static function graphFact(int $pid, int $id): ?array
     {

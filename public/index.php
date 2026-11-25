@@ -107,6 +107,7 @@ $routes = [
     ['POST',   '/api/strategies/{id}/restore',            [QuestionController::class, 'restoreStrategy']],
     // fact database
     ['GET',    '/api/projects/{pid}/facts',               [FactController::class, 'list']],
+    ['GET',    '/api/projects/{pid}/proving-context',     [FactController::class, 'provingContext']],
     ['POST',   '/api/projects/{pid}/facts',               [FactController::class, 'create']],
     ['POST',   '/api/projects/{pid}/facts/batch',         [FactController::class, 'batch']],
     ['GET',    '/api/projects/{pid}/facts/match',         [FactController::class, 'match']],

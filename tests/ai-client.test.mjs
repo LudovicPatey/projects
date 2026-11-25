@@ -435,8 +435,10 @@ test('Danus run: a person can stop it, and its facts are sent', async () => {
   assert.ok(await until(() => { try { return runState(env).status === 'running'; } catch { return false; } }), 'it runs');
   const st = runState(env);
   assert.equal(st.stop_session, 40); assert.equal(st.workers, 2);
-  assert.match(fs.readFileSync(log, 'utf8'), /danus new oq\d+t\d+ --roles high:2/);
+  assert.match(fs.readFileSync(log, 'utf8'), /danus new oq\d+q\d+ --roles high:2/);
   assert.match(fs.readFileSync(log, 'utf8'), /oq-heartbeat[\s\S]*danus stop .* --force/, 'a watchdog stops the workers if the client dies');
+  assert.match(fs.readFileSync(log, 'utf8'), /platform_map\.json[\s\S]*danus start oq\d+q\d+/, 'the project\'s database is merged before Danus starts');
+  assert.ok(!fs.readFileSync(log, 'utf8').includes(annKey.token), 'the key never enters the machine, even with the database');
   assert.equal(oq(['danus', 'stop'], env).status, 0);
   const r = await started;
   assert.equal(r.code, 0, r.out); assert.match(r.out, /stopped, 1 new fact/);
@@ -463,7 +465,7 @@ test('Danus run: at a usage stop it ends, or waits and continues after the reset
   fs.writeFileSync(u, '41');
   let r = await started;
   assert.equal(r.code, 0, r.out); assert.match(r.out, /session usage at 41%/);
-  assert.match(fs.readFileSync(log, 'utf8'), /danus stop oq\d+t\d+ --force/);
+  assert.match(fs.readFileSync(log, 'utf8'), /danus stop oq\d+(?:q\d+)? --force/);
 
   await drain(annKey); log = fakeMachine('ddd4'); const env2 = danusEnv('resume'); const u2 = path.join(tmp, 'u-resume'); usageCodex(u2);
   fs.mkdirSync(env2.OQ_CONFIG_DIR, { recursive: true }); fs.writeFileSync(path.join(env2.OQ_CONFIG_DIR, 'danus.json'), '{"ready":true}');
@@ -491,7 +493,7 @@ test('Danus run: a cancellation on the platform stops it', async () => {
   assert.equal(runState(env).task_id, waiting2.id, 'it takes the chosen request');
   assert.equal((await app.call(ann, 'POST', `/api/ai/tasks/${waiting2.id}/cancel`, {})).status, 200);
   const r = await started;
-  assert.equal(r.code, 0, r.out); assert.match(r.out, /cancelled/); assert.match(fs.readFileSync(log, 'utf8'), /danus stop oq\d+t\d+ --force/);
+  assert.equal(r.code, 0, r.out); assert.match(r.out, /cancelled/); assert.match(fs.readFileSync(log, 'utf8'), /danus stop oq\d+(?:q\d+)? --force/);
 });
 
 test('Danus run: stops at its running time', async () => {
@@ -499,7 +501,7 @@ test('Danus run: stops at its running time', async () => {
   usageCodex(path.join(tmp, 'u-duration')); fs.mkdirSync(env.OQ_CONFIG_DIR, { recursive: true }); fs.writeFileSync(path.join(env.OQ_CONFIG_DIR, 'danus.json'), '{"ready":true}');
   const r = await launch(env, ['--minutes', '1']);
   assert.equal(r.code, 0, r.out); assert.match(r.out, /the time limit of 1 minutes/);
-  assert.match(fs.readFileSync(log, 'utf8'), /danus stop oq\d+t\d+ --force/);
+  assert.match(fs.readFileSync(log, 'utf8'), /danus stop oq\d+(?:q\d+)? --force/);
 });
 
 test('Danus safety: the watchdog in the machine stops workers when the client disappears', async () => {
@@ -519,7 +521,7 @@ test('Danus safety: the watchdog in the machine stops workers when the client di
   const script = line.slice(line.indexOf('bash -lc ') + 9).replaceAll('/opt/danus', home).replace('sleep 30', 'sleep 0.1');
   assert.equal(spawnSync('bash', ['-c', script], { env: { PATH: `${fakes}:/usr/bin:/bin` }, timeout: 5000 }).status, 0);
   assert.ok(await until(() => fs.existsSync(marker), 5000), 'the watchdog fired');
-  assert.match(fs.readFileSync(marker, 'utf8'), /^stop oq\d+t\d+ --force/);
+  assert.match(fs.readFileSync(marker, 'utf8'), /^stop oq\d+(?:q\d+)? --force/);
 });
 
 test('Danus safety: after a crash, a run ends unless it was set to continue', async () => {

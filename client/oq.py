@@ -52,7 +52,7 @@ import webbrowser
 import zipfile
 import zlib
 
-VERSION = "1.13.0"
+VERSION = "1.14.0"
 API_LEVEL = 2  # raise with the server's AiTaskController::API_LEVEL when a client needs new server features
 GITHUB_REPO = "LudovicPatey/projects"
 KINDS = ["extract", "ask", "bib", "derive", "review", "lean", "notation", "consolidate"]
@@ -159,6 +159,9 @@ class Api:
 
     def post(self, path, body=None):
         return json.loads(self.raw("POST", path, body if body is not None else {}))
+
+    def patch(self, path, body=None):
+        return json.loads(self.raw("PATCH", path, body if body is not None else {}))
 
 
 def connect():
@@ -1559,7 +1562,7 @@ def parse_danus(path):
     sections = {parts[i].lower(): parts[i + 1].strip() for i in range(1, len(parts) - 1, 2)}
     if not sections.get("statement"):
         raise Stop(f"{path.name}: no statement section")
-    return {"fact_id": str(meta.get("fact_id") or path.stem), "predecessors": [str(p) for p in meta.get("predecessors") or []],
+    return {"fact_id": str(meta.get("fact_id") or path.stem), "predecessors": [str(p) for p in meta.get("predecessors") or []], "author": str(meta.get("author") or ""),
             "glossary_introduces": meta["glossary_introduces"] if isinstance(meta.get("glossary_introduces"), dict) and meta["glossary_introduces"] else None,
             "external_refs": meta["external_refs"] if isinstance(meta.get("external_refs"), list) and meta["external_refs"] else None,
             "statement": sections["statement"], "proof": sections.get("proof", ""), "intuition": sections.get("intuition", "")}
@@ -1642,14 +1645,24 @@ def danus_order(facts):
     return [by_id[i] for i in queue]
 
 
-def danus_push(api, graph, project, model, dry):
+def danus_push(api, graph, project, model, dry, skip=(), translate=None):
+    """Sends the facts of a Danus graph. `skip`: facts not to send (sent already, or merged from the platform).
+    `translate`: Danus ids of facts that are platform facts, so that what relies on them relies on the platform fact."""
     files = sorted(p for p in (graph / "facts").glob("*.md") if not p.name.startswith("."))
     if not files:
         raise Stop(f"No facts found in {graph / 'facts'}. Give the path of the fact_graph folder.")
-    facts = danus_order([parse_danus(p) for p in files])
+    translate = translate or {}
+    parsed = [parse_danus(p) for p in files if p.stem not in skip and p.stem not in translate]
+    parsed = [f for f in parsed if f["author"] != "platform" and f["fact_id"] not in translate]
+    for f in parsed:
+        f["predecessors"] = [str(translate.get(x, x)) for x in f["predecessors"]]
+    if not parsed:
+        return [], 0
+    facts = danus_order(parsed)
     labels = danus_labels(graph)
     for f in facts:
         f["labels"] = sorted(labels.get(f["fact_id"], {"conclusion"}))
+        f.pop("author", None)
     if dry:
         facts = facts[:BATCH]
     created, skipped = [], 0
@@ -2106,6 +2119,114 @@ LIMA_VERSION = "2.3.0"
 LIMA_SHA256 = {"arm64": "b7af444bd8f91d3c307477e562f2cf3bd7595d62b9429185e4fa841563578cfc", "x86_64": "d58bc7d6b8158d638720d8c8fdb17eb58527dfead6a29a5b60f48a35ee4a65a6"}
 VM_NAME = "oq-danus"
 DANUS_HOME = "/opt/danus"
+# Before every start, the project's facts enter the Danus project, so that it builds on them instead of starting from scratch.
+# It runs inside Danus with Danus's own storage code; the platform's data arrives on its input, and no key enters the machine.
+# Facts established on the platform, with all they rely on, join the fact graph, which Danus builds on. The others become
+# claims in its shared memory, which its verifier may check. Strategies of the team become directions, or dead ends.
+# platform_map.json remembers what was merged, so that the next merge adds only what changed.
+DANUS_MERGE = r'''
+import hashlib, json, sys
+from danus.core import FactGraph, GlobalMemory
+from danus.execution.layout import project_dir
+
+name = sys.argv[1]
+data = json.load(sys.stdin)
+root = project_dir(name)
+if not root.is_dir():
+    raise SystemExit("no Danus project " + name)
+fg, gm = FactGraph(root), GlobalMemory(root)
+path = root / "platform_map.json"
+try:
+    m = json.loads(path.read_text(encoding="utf-8"))
+except (OSError, ValueError):
+    m = {}
+facts, strategies = m.setdefault("facts", {}), m.setdefault("strategies", {})
+own = {str(x) for x in data.get("own_strategies") or []}
+out = {"facts": 0, "claims": 0, "known": 0, "revoked": 0, "strategies": 0}
+by = {str(f["id"]): f for f in data.get("facts") or []}
+BAD = ("disputed", "retracted")
+
+def digest(*parts):
+    return hashlib.sha256(json.dumps(parts, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+
+def refs_text(f):
+    refs = [r for r in f.get("external_refs") or [] if isinstance(r, dict)]
+    return "; ".join(", ".join(str(r[k]) for k in ("authors", "title", "year", "cited_for") if r.get(k)) for r in refs) or "a reference of the project"
+
+def revoke(fid, why):
+    if fid and fg.exists(fid):
+        out["revoked"] += len(fg.revoke(fid, why))
+
+order, seen = [], set()
+def visit(pid, stack=()):
+    if pid in seen or pid in stack or pid not in by:
+        return
+    for d in by[pid]["deps"]:
+        visit(str(d), stack + (pid,))
+    seen.add(pid)
+    order.append(pid)
+for pid in by:
+    visit(pid)
+
+for pid in order:
+    f = by[pid]
+    bad = f["status"] in BAD
+    gloss = {str(k): str(v) for k, v in (f.get("glossary") or {}).items()}
+    h = digest(f["statement"], f["proof"], gloss, sorted(f["deps"]), f["trusted"], bad)
+    old = facts.get(pid) or {}
+    # A fact Danus wrote in this project and sent to the platform is already here.
+    ext = f.get("external_id")
+    if f.get("tool") == "danus" and ext and fg.exists(ext):
+        if bad:
+            revoke(ext, "disputed or retracted on the platform")
+        else:
+            out["known"] += 1
+        facts[pid] = {"h": h, "danus": None if bad else ext, "revision": f["revision"], "own": True}
+        continue
+    if old.get("h") == h and (not old.get("danus") or fg.exists(old["danus"])) and not old.get("own"):
+        continue
+    if old.get("danus") and old["danus"] != ext:
+        revoke(old["danus"], "changed, or no longer established, on the platform")
+    entry = {"h": h, "revision": f["revision"], "danus": None, "gm": old.get("gm"), "gm_h": old.get("gm_h")}
+    if bad:
+        facts[pid] = entry
+        continue
+    preds = [(facts.get(str(d)) or {}).get("danus") for d in f["deps"]]
+    if f["trusted"] and all(preds):
+        proof = f["proof"].strip()
+        if f["basis"] == "cited" or not proof:
+            proof = "Cited result: " + refs_text(f) + ". A member of the project who read the source accepted it."
+        try:
+            entry["danus"] = fg.add(problem_id=name, author="platform", statement=f["statement"], proof=proof, predecessors=preds,
+                                    glossary_introduces=gloss, external_refs=[r for r in f.get("external_refs") or [] if isinstance(r, dict)])
+            out["facts"] += 1
+        except ValueError:
+            entry["danus"] = None  # a revoked predecessor: it stays a claim
+    if not entry["danus"] and entry.get("gm_h") != h:
+        proved = f["basis"] == "proved" and f["proof"].strip()
+        entry["gm"] = gm.append("conclusion", claim=f["statement"],
+                                evidence=f["proof"] if proved else "Stated without proof on the platform: " + refs_text(f),
+                                author="platform", verifiable=bool(proved), links={"predecessors": [p for p in preds if p]},
+                                glossary=gloss, platform_id=f["id"], platform_label=f["label"], platform_status=f["status"])
+        entry["gm_h"] = h
+        out["claims"] += 1
+    facts[pid] = entry
+
+for s in data.get("strategies") or []:
+    sid = str(s["id"])
+    h = digest(s["title"], s["body"], s["status"])
+    if sid in own or (strategies.get(sid) or {}).get("h") == h:
+        continue
+    kind = "dead_end" if s["status"] in ("failed", "abandoned") else "direction"
+    gid = gm.append(kind, claim=s["title"] + " (a strategy of the team, " + s["status"] + ")", evidence=s["body"] or s["title"],
+                    author="platform", verifiable=False, platform_strategy=s["id"])
+    strategies[sid] = {"h": h, "gm": gid}
+    out["strategies"] += 1
+
+path.write_text(json.dumps(m, ensure_ascii=False), encoding="utf-8")
+out["building_on"] = sum(1 for e in facts.values() if e.get("danus"))
+print(json.dumps(out))
+'''
 DANUS_SETUP = f"""set -e
 export DEBIAN_FRONTEND=noninteractive
 sudo -n true 2>/dev/null && SUDO="sudo -n" || SUDO=""
@@ -3069,18 +3190,32 @@ class DanusManager:
             raise Stop(("The ChatGPT sign-in did not finish. Press Set up proving to try again." + detail).strip())
         self.save(login=None)
 
-    def fetch_graph(self, vm, project, target):
-        cmd = vm.command(f"cd {DANUS_HOME}/runtime/projects/{project} && tar -cf - fact_graph global_memory 2>/dev/null")
+    def fetch_graph(self, vm, project, target, incremental=False):
+        """Copies the Danus graph, its shared memory and what the merge recorded. Incremental: only facts not copied yet."""
+        base = f"{DANUS_HOME}/runtime/projects/{project}"
+        facts = target / "fact_graph" / "facts"
+        new = None
+        if incremental and facts.is_dir():
+            p = subprocess.run(vm.command(f"cd {base}/fact_graph/facts 2>/dev/null && ls"), stdin=subprocess.DEVNULL, capture_output=True, text=True, env=vm.env, timeout=120)
+            if p.returncode == 0:
+                have = {x.name for x in facts.glob("*.md")}
+                new = [x for x in p.stdout.split() if re.fullmatch(r"[0-9a-f]{6,64}\.md", x) and x not in have]
+        parts = "$(ls -d fact_graph global_memory platform_map.json 2>/dev/null)" if new is None else \
+            "$(ls -d global_memory platform_map.json 2>/dev/null) " + " ".join(f"fact_graph/facts/{x}" for x in new)
+        cmd = vm.command(f"cd {base} && tar -cf - {parts} 2>/dev/null")
         with tempfile.TemporaryFile() as f:
             p = subprocess.run(cmd, stdin=subprocess.DEVNULL, stdout=f, stderr=subprocess.DEVNULL, env=vm.env, timeout=300)
             if p.returncode not in (0, 1):
                 return False
             f.seek(0)
-            shutil.rmtree(str(target), ignore_errors=True)
-            target.mkdir(parents=True)
+            if new is None:
+                shutil.rmtree(str(target), ignore_errors=True)
+            else:
+                shutil.rmtree(str(target / "global_memory"), ignore_errors=True)  # sent whole each time: it is appended to
+            target.mkdir(parents=True, exist_ok=True)
             with tarfile.open(fileobj=f) as t:
                 safe_extract(t, target)
-        return (target / "fact_graph" / "facts").is_dir()
+        return facts.is_dir()
 
     def remove(self, mode=None):
         current = danus_mode()
@@ -3262,7 +3397,9 @@ class DanusRun:
         try:
             s = self.task(api, s)
             if not name:
-                name = f"oq{s['project_id']}t{s['task_id']}"
+                # One Danus project per question, or per project without one: a later run continues it.
+                qid = danus_question(s)
+                name = f"oq{s['project_id']}q{qid}" if qid else f"oq{s['project_id']}"
                 s = self.write(project_name=name)
             hb = f"{DANUS_HOME}/runtime/oq-heartbeat-{name}"
             while True:
@@ -3294,7 +3431,7 @@ class DanusRun:
                     continue
                 if not running:
                     self.write(status="starting", wait_reason=None, retry_at=None)
-                    self.launch(dm, vm, s, name, hb)
+                    self.launch(api, dm, vm, s, name, hb)
                     running = True
                     last = time.time()
                     self.write(status="running", launched=True)
@@ -3343,7 +3480,7 @@ class DanusRun:
             except OSError:
                 pass
 
-    def launch(self, dm, vm, s, name, hb):
+    def launch(self, api, dm, vm, s, name, hb):
         q = shlex.quote
         vm.start(say)
         dm.assert_isolated(vm)
@@ -3358,17 +3495,115 @@ class DanusRun:
                 raise RuntimeError("The proof search could not be prepared: " + (p.stderr or p.stdout)[-300:])
             ctx = s.get("context") or {}
             parts = [f"# {(ctx.get('project') or {}).get('title', '')}", (ctx.get("project") or {}).get("question", ""), s.get("prompt") or "",
-                     json.dumps(danus_target(ctx), ensure_ascii=False), danus_notation(ctx.get("notation"))]
+                     json.dumps(danus_target(ctx), ensure_ascii=False), danus_notation(ctx.get("notation")), DANUS_DATABASE_NOTE]
             goal = "\n\n".join(x for x in parts if x and x != "{}")
             dm.sh(vm, f"cat > {DANUS_HOME}/runtime/projects/{name}/PROBLEM.md", input_text=goal)
             status = dm.sh(vm, f"cd {DANUS_HOME} && bin/danus status {name} --json")
             for worker in danus_workers(status.stdout):
                 dm.sh(vm, f"cd {DANUS_HOME} && bin/danus assign {name}/{q(worker)} --stdin", input_text=goal)
+        self.merge(api, dm, vm, s, name)
         p = dm.sh(vm, f"cd {DANUS_HOME} && bin/danus start {name}")
         if p.returncode != 0:
             raise RuntimeError("The proof search could not start: " + (p.stderr or p.stdout)[-300:])
         # If this client dies, the workers must not keep spending the subscription.
         dm.sh(vm, f"""touch {hb}; cd {DANUS_HOME}; nohup setsid bash -c 'while sleep 30; do [ -f {hb} ] || exit 0; a=$(( $(date +%s) - $(stat -c %Y {hb} 2>/dev/null || stat -f %m {hb}) )); if [ "$a" -gt 240 ]; then bin/danus stop {name} --force; rm -f {hb}; exit 0; fi; done' >/dev/null 2>&1 &""", timeout=30)
+
+    def merge(self, api, dm, vm, s, name):
+        """Before every start and every resume, the project's database enters the Danus project: Danus builds on it."""
+        qid = danus_question(s)
+        try:
+            ctx = api.get(f"/api/projects/{s['project_id']}/proving-context" + (f"?question={int(qid)}" if qid else ""))
+        except ApiError as e:
+            if e.status in (404, 405):
+                say("This platform does not share its facts with proof searches yet: Danus continues from its own graph.")
+                return
+            raise
+        memo = danus_memo(name)
+        payload = {"facts": ctx.get("facts") or [], "strategies": ctx.get("strategies") or [], "own_strategies": [memo["strategy"]] if memo.get("strategy") else []}
+        p = dm.sh(vm, f"cd {DANUS_HOME} && PY=runtime/venv/bin/python; [ -x $PY ] || PY=python3; $PY -c {shlex.quote(DANUS_MERGE)} {shlex.quote(name)}",
+                  input_text=json.dumps(payload, ensure_ascii=False), timeout=900)
+        if p.returncode != 0:
+            raise RuntimeError("The project's facts could not be merged into the proof search: " + (p.stderr or p.stdout)[-300:])
+        try:
+            done = json.loads((p.stdout or "").strip().splitlines()[-1])
+        except (ValueError, IndexError):
+            return
+        self.write(merged=done)
+        say(f"{time.strftime('%H:%M:%S')}  The project's database is merged: {done.get('building_on', 0)} fact(s) to build on, "
+            f"{done.get('claims', 0)} new claim(s) to check, {done.get('strategies', 0)} strategy(ies), {done.get('revoked', 0)} withdrawn.")
+
+    def checks(self, api, graph, pmap, s):
+        """Danus's verifier on the team's unchecked facts: each verdict becomes a review of that fact on the platform.
+        Returns the Danus facts that are platform facts verified again, so that they are not sent as new ones."""
+        claims = {e["gm"]: int(pid) for pid, e in pmap.items() if e.get("gm")}
+        st = self.read()
+        done, promoted = dict(st.get("checked") or {}), {k: int(v) for k, v in (st.get("promoted") or {}).items()}
+        path = graph / "global_memory" / "verification.jsonl"
+        if not claims or not path.exists():
+            return promoted
+        verdicts = {}
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            try:
+                v = json.loads(line)
+            except ValueError:
+                continue
+            src = (v.get("links") or {}).get("source_id") if isinstance(v, dict) else None
+            if src not in claims:
+                continue
+            if v.get("verdict") == "correct" and v.get("fact_id"):
+                verdicts[src] = ("correct", "")
+                promoted[str(v["fact_id"])] = claims[src]
+            elif verdicts.get(src, ("",))[0] != "correct":
+                verdicts[src] = ("gap", str(v.get("evidence") or ""))
+        for src, (verdict, hints) in verdicts.items():
+            if done.get(src) == verdict:
+                continue
+            body = ("Danus's verifier accepted this proof, assuming the facts it relies on." if verdict == "correct"
+                    else "Danus's verifier did not accept this proof as written. " + hints)[:20000]
+            try:
+                api.post(f"/api/facts/{claims[src]}/reviews", {"verdict": verdict, "statement": "true" if verdict == "correct" else "unsure", "body_text": body, "ai_model": s["model"]})
+            except ApiError:
+                pass  # the model that wrote the fact, or a fact retracted since: nothing to record
+            done[src] = verdict
+        self.write(checked=done, promoted=promoted)
+        return promoted
+
+    def share_strategy(self, api, graph, s, name):
+        """Danus's own summary of the search and its next steps become one strategy of the question, revised as they change."""
+        qid = danus_question(s)
+        if not qid:
+            return
+        def latest(kind):
+            rows = []
+            for line in (graph / "global_memory" / f"{kind}.jsonl").read_text(encoding="utf-8", errors="replace").splitlines() if (graph / "global_memory" / f"{kind}.jsonl").exists() else []:
+                try:
+                    rows.append(json.loads(line))
+                except ValueError:
+                    pass
+            return rows[-1] if rows else None
+        e, g = latest("elaboration"), latest("master_guidance")
+        if not e and not g:
+            return
+        body = "\n\n".join(x for x in [f"**State of the search**\n\n{e.get('claim') or ''}\n\n{e.get('evidence') or ''}" if e else "",
+                                        f"**Next steps**\n\n{g.get('claim') or ''}\n\n{g.get('evidence') or ''}" if g else ""] if x)[:20000]
+        memo = danus_memo(name)
+        h = hashlib.sha256(body.encode("utf-8")).hexdigest()[:16]
+        if memo.get("strategy_hash") == h:
+            return
+        try:
+            if memo.get("strategy"):
+                try:
+                    api.patch(f"/api/strategies/{memo['strategy']}", {"body_text": body, "ai_model": s["model"], "change_note": "New state of the proof search"})
+                except ApiError as err:
+                    if err.status != 404:
+                        raise
+                    memo.pop("strategy")
+            if not memo.get("strategy"):
+                memo["strategy"] = api.post(f"/api/questions/{int(qid)}/strategies", {"title": "Proof search with Danus", "body_text": body, "status": "active", "ai_model": s["model"]})["id"]
+            memo["strategy_hash"] = h
+            danus_memo(name, memo)
+        except ApiError as err:
+            say(f"The state of the proof search could not be shared: {err}")
 
     def sh_stop(self, dm, vm, name, hb):
         dm.sh(vm, f"rm -f {hb}; cd {DANUS_HOME} && bin/danus stop {name} --force", timeout=120)
@@ -3422,10 +3657,21 @@ class DanusRun:
         if not final and s.get("engine") == "claude" and s.get("model") in MODEL_ALIASES:
             return  # facts wait until the exact model is known
         try:
-            if dm.fetch_graph(vm, name, graph) and any(p for p in (graph / "fact_graph" / "facts").glob("*.md") if not p.name.startswith(".")):
-                ids, _ = danus_push(api, graph / "fact_graph", s["project_id"], s["model"], False)
+            if dm.fetch_graph(vm, name, graph, incremental=True) and any(p for p in (graph / "fact_graph" / "facts").glob("*.md") if not p.name.startswith(".")):
+                try:
+                    pmap = json.loads((graph / "platform_map.json").read_text(encoding="utf-8")).get("facts") or {}
+                except (OSError, ValueError):
+                    pmap = {}
+                # Facts merged from the platform, and those its verifier checked again, are the platform's: never sent back.
+                translate = {e["danus"]: int(pid) for pid, e in pmap.items() if e.get("danus")}
+                translate.update(self.checks(api, graph, pmap, s))
+                sent = set(self.read().get("sent") or [])
+                present = {p.stem for p in (graph / "fact_graph" / "facts").glob("*.md") if not p.name.startswith(".")}
+                ids, _ = danus_push(api, graph / "fact_graph", s["project_id"], s["model"], False, skip=sent, translate=translate)
+                self.write(sent=sorted(sent | present))
                 if ids:
                     self.write(facts=list(dict.fromkeys((self.read().get("facts") or []) + ids)))
+                self.share_strategy(api, graph, s, name)
         except (ApiError, Stop, OSError, subprocess.SubprocessError, tarfile.TarError) as e:
             say(f"New facts could not be sent yet: {str(e)[:200]}")
 
@@ -3450,6 +3696,35 @@ class DanusRun:
                 say(f"The platform could not record the end of the run: {e}")
         self.write(status=status, stop_reason=reason, finished_at=time.time(), wait_reason=None, retry_at=None, lease=None)
         say(f"{time.strftime('%H:%M:%S')}  The proof search stopped at {reason}. {len(facts)} new fact(s).")
+
+
+def danus_question(s):
+    """The open question a run works on, if any."""
+    return s.get("question_id") or (s.get("source_id") if s.get("source_type") == "question" else None)
+
+
+def danus_memo(name, value=None):
+    """What this computer remembers of a Danus project: the strategy it keeps on the platform."""
+    path = data_dir() / "danus_projects.json"
+    try:
+        all_ = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        all_ = {}
+    key = f"{site_name(load_config().get('url') or '')}:{name}"
+    if value is None:
+        return dict(all_.get(key) or {})
+    all_[key] = value
+    data_dir().mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(all_, indent=1), encoding="utf-8")
+    return value
+
+
+DANUS_DATABASE_NOTE = """## The project's database
+Before this run, the facts of the project were merged into this Danus project (author "platform").
+Those in the fact graph are established by the team: build on them, cite their fact_id, and do not prove them again.
+The others are in global memory as claims (kind conclusion, author platform): nobody has checked them yet. Do not build on one
+before it passes the verifier; when a claim matters to your subgoal, send it to the verifier with its id as source_id.
+The team's strategies are in global memory as directions, and the abandoned ones as dead ends."""
 
 
 def clean_run(raw):

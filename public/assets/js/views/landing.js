@@ -8,7 +8,7 @@ const FEATURES = [
   {
     kicker: 'Fact database', title: 'See what is known, and what it rests on',
     text: 'Results become facts with a statement, a proof and an intuition, linked by their dependencies. Browse them as a list or as an interactive graph.',
-    points: ['Star the facts that matter, and see how they rely on each other, even in a huge database', 'Labels such as conclusion, counterexample, dead end or plan', 'Accept a result while disputing its proof, and propose another proof', 'One agreed notation, with each paper\'s facts rewritten in it', 'After extraction, an AI reads the whole database and proposes merging duplicates, linking results across papers and tagging subjects', 'Retracting a fact flags everything built on it', 'Import fact graphs from the Danus prover'],
+    points: ['Star the facts that matter, and see how they rely on each other, even in a huge database', 'Labels such as conclusion, counterexample, dead end or plan', 'Accept a result while disputing its proof, and propose another proof', 'One agreed notation, with each paper\'s facts rewritten in it', 'After extraction, an AI reads the whole database, merges duplicates, links results across papers and tags subjects when it is confident, each change undoable, and proposes the rest', 'Retracting a fact flags everything built on it', 'Import fact graphs from the Danus prover'],
     img: 'facts-graph.webp', w: 1600, h: 978, alt: 'Dependency graph of facts next to a selected theorem with its statement, proof and intuition',
   },
   {
@@ -38,7 +38,7 @@ const FEATURES = [
   {
     kicker: 'The AI client', title: 'An app for your computer, with your own limits',
     text: 'The client connects your Claude or ChatGPT account to your projects. It processes new papers, answers @AI and suggests references, then waits whenever you reach a limit you chose.',
-    points: ['A graphic interface, and a full command line for servers', 'Choose which projects are active, and pause the others', 'Set daily caps, working hours, and a share of your ChatGPT limits', 'New kinds of reasoning work arrive from the platform without an update, and each one waits for your approval', 'Start proof searches with a time limit and usage stops, in an isolated machine by default', 'See which clients are online, what each one is doing, and the computing time per project, for standard work and for proving new facts', 'Optionally keep regular backups of your projects on your computer'],
+    points: ['A graphic interface, and a full command line for servers', 'Choose which projects are active, and pause the others', 'Set daily caps, working hours, and a share of your ChatGPT limits', 'New kinds of reasoning work arrive from the platform without an update, and each one waits for your approval', 'Start proof searches that build on the project\'s checked facts and continue earlier searches, with a time limit and usage stops, in an isolated machine by default', 'See which clients are online, what each one is doing, and the computing time per project, for standard work and for proving new facts', 'Optionally keep regular backups of your projects on your computer'],
     src: 'assets/img/guide/app-home.webp', img: 'app-home.webp', w: 1560, h: 1140, alt: 'The AI client showing its status, usage against the limits, and the waiting work of a project',
   },
 ];

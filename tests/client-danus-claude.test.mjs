@@ -122,7 +122,7 @@ test('facts wait for the exact model name, except at the end of a run', () => {
   python(fresh(), `
 m, vm = installed(); run = oq.DanusRun(); calls = []
 class Graph:
-    def fetch_graph(self, *a):
+    def fetch_graph(self, *a, **k):
         calls.append(1); return False
 s = {"engine": "claude", "model": "opus", "project_id": 1}
 run.sync(None, Graph(), vm, "x", pathlib.Path("g"), s); assert not calls

@@ -1,7 +1,7 @@
 {
  "min_version": "1.0.0",
- "client_version": "1.13.0",
- "fingerprint": "a232343509c61016f4f1a7f9c5cbee24b779f005c64f0e73c458ecc8c294bb1a",
+ "client_version": "1.14.0",
+ "fingerprint": "e6fbc71a944ed2ac37d2a58639bdf1bc87aba6fb9b79a6e5672b5b915cd945f1",
  "routes": [
   "GET /api/ai/procedures AiTaskController::procedures",
   "GET /api/bib/{id}/pdf BibController::pdf",
@@ -15,7 +15,9 @@
   "GET /api/projects/{id}/export ExportController::project",
   "GET /api/projects/{id}/notation NotationController::list",
   "GET /api/projects/{pid}/facts FactController::list",
+  "GET /api/projects/{pid}/proving-context FactController::provingContext",
   "GET /api/projects/{pid}/questions QuestionController::list",
+  "GET /api/strategies/{id} QuestionController::showStrategy",
   "PATCH /api/fact-proofs/{proof} FactController::updateProof",
   "PATCH /api/facts/{id} FactController::update",
   "PATCH /api/questions/{id} QuestionController::update",
@@ -46,7 +48,7 @@
   "POST /api/questions/{id}/strategies QuestionController::createStrategy"
  ],
  "items": {
-  "@routes": "4dee92f03ccde61dd496b3b5e9ef13ba8d5ed8cc9851adf97ca36e7cfdc87f9a",
+  "@routes": "24baf0c0a08b2d0edf66ab12771a22e75ff6b734e0ac2e035372cae7e4eadda6",
   "Access::bib": "4ce6afff0a846fdc0218a83afde9ed7a838ce6c7d4310c33367035391d188fa5",
   "Access::commentTarget": "15c0fd168d9186cccd3bc4ccc6ee2acb32110f1a820a8104c1e788a0eb8b54aa",
   "Access::conversation": "a659822c6d28e6779711797fa4fb4bc1fe27d23455bab340414730166a22ff46",
@@ -211,6 +213,7 @@
   "FactController::COMMENT_ROLES": "c626a168b7cdbeb59259fd7889b12a5f12cb48e38ad838c7725616f6f9860e39",
   "FactController::COMPACT": "4058ec82fb1802febc48c8b70a6389278fada4f61fa5869270b032ba6db64d21",
   "FactController::COVERS": "2ad77b5412ab8dc32ed9ddca3ce0976736c57a14c9b76c7d94de7007716ec660",
+  "FactController::ESTABLISHED": "0698b2c4e4d033d9be4103e1798d558ce85b1d7345586b6c70c0d720dabf3ee4",
   "FactController::EXCERPT": "0ed9abffc630a0abb283f23efdd12c7c6f746f83aefc29301f4c7cc304b327a4",
   "FactController::KINDS": "c1cb03543b96c32460ff3f874865d9d8f97582dd618acad872a05c6299f1d7d7",
   "FactController::LABELS": "ece82e6cd7fb0d3fec52e9c118e56da96bddb100ac9b08db290236d0ef77a9a3",
@@ -258,6 +261,7 @@
   "FactController::proof": "d7e3d8c35694e57b80ffe49a074be6df196d3cb67dfbcc5a60f7bc8e212d2f1c",
   "FactController::proposeProof": "5fac4e0914d1988066dda73e48a190264f969627db75b7de0afdbf38ade18953",
   "FactController::provenance": "ee075c6f9668905f148a9797b608c2908934fbbecbcf3131d0a0f3ea4fe5ae7b",
+  "FactController::provingContext": "8866574894e541c165c7ceff7ce773d9f2eed20cafee728d89f48e9b850c91be",
   "FactController::requireAi": "93402e521b4ce6bcc9fe56d4629494537eef316f6651ed64125cbbf5b6f8217b",
   "FactController::review": "59bb45957f2ced186da8a8c6eaa0e6e3e019223ec57ed9d0b4eb0a69a5080721",
   "FactController::reviewProof": "aa15af7bd28e1291d76a15e3e5108446b95d8e974848ba21e9e633f7d41dbbfc",
@@ -361,6 +365,7 @@
   "QuestionController::proposeAnswer": "859c9a737afa1e07a7f459f1cad511c135c7fdb5b5e9473748878fa40542d19e",
   "QuestionController::ratified": "8477e42817c5ed55dd057a61793f831188d51bcffdc813c09086f6d56c1af85f",
   "QuestionController::revision": "442f75b6a0e80d3f418955ca619d94de050bf9dada807718b3a39bda4d44b3e7",
+  "QuestionController::showStrategy": "7a56705da74d8ba2dc441f07df7ea043dc26c61cf51621adf21f6f9d4f519158",
   "QuestionController::strategyLink": "ff485c72dbde3e77faffbcd2b4941b9434ce82bdbee5b35d905b7f4e9d6fcc1f",
   "QuestionController::summary": "0aa7a383c80cb62f4b133281f89e6035632de93392352adb41c8435ff3ffb087",
   "QuestionController::support": "b9df3f68a56d5ee607713b3d874c6a30da6e5a7ba09e1a37183fad713ce47c3e",
@@ -718,6 +723,19 @@
     "+ConsolidationController::toQuestion",
     "+FactController::createCited",
     "+QuestionController::hasRatifiedAnswer"
+   ]
+  },
+  {
+   "date": "2026-11-25",
+   "decision": "compatible",
+   "client_version": "1.14.0",
+   "min_version": "1.0.0",
+   "note": "A new read endpoint for proof searches (proving-context); clients before 1.14.0 do not call it, and 1.14.0 continues without it on an older platform",
+   "changed": [
+    "@routes",
+    "+FactController::ESTABLISHED",
+    "+FactController::provingContext",
+    "+QuestionController::showStrategy"
    ]
   }
  ]
