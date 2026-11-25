@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS projects (
   question_html MEDIUMTEXT NOT NULL,
   status VARCHAR(20) NOT NULL DEFAULT 'open',
   consolidation_auto TINYINT(1) NOT NULL DEFAULT 1, -- the consolidation applies the changes it is confident about
+  sweeps_checked_at DATETIME NULL,       -- when the server last looked for maintenance sweeps that are due (Sweeps)
   created_by INT UNSIGNED NOT NULL,
   created_at DATETIME NOT NULL,
   updated_at DATETIME NOT NULL,

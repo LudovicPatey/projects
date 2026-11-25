@@ -84,7 +84,7 @@ export function queueGroups(groups, tasks, filter = 'all') {
 }
 
 export function taskTitle(t) {
-  const k = t.kind === 'notation' && t.source_type === 'fact' ? 'Rewrite in the project notation' : (AI_KINDS[t.kind]?.label || 'AI task');
+  const k = t.kind === 'notation' && ['fact', 'sweep'].includes(t.source_type) ? 'Rewrite in the project notation' : (AI_KINDS[t.kind]?.label || 'AI task');
   if (t.subject) return `${k}: ${t.subject}`;
   if (t.source_type === 'message') return 'Question in a conversation';
   if (t.source_type === 'comment') return 'Question in a comment';

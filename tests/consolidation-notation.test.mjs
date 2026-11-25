@@ -37,12 +37,13 @@ test('the consolidation reads the notation and the symbols facts define, and may
   await app.call(key, 'POST', `/api/ai/tasks/${t.id}/release`, { lease: t.lease }); await app.call(ann, 'POST', `/api/ai/tasks/${asked.id}/cancel`, {});
 });
 
-test('a probable choice of notation is adopted at once, and the facts are queued to be rewritten in it', async () => {
+test('a probable choice of notation is adopted at once, and the facts wait for a sweep to rewrite them in it', async () => {
   const r = await propose({ action: 'adopt', entry: null, symbol: '\\mathrm{FS}(X)', meaning: 'The non-empty finite sums of $X$.', note: 'Some sources include 0.', variants: [{ symbol: '\\mathrm{FS}(X)', meaning: 'with 0', where: 'a', relation: 'clash' }] }, { confidence: 'medium' });
   assert.equal(r.applied.length, 1, JSON.stringify(r));
   const e = await entry('\\mathrm{FS}(X)');
   assert.equal(e.status, 'agreed'); assert.equal(e.auto_suggestion_id, r.created[0]); assert.equal(e.author_kind, 'agent'); assert.equal(e.variants[0].relation, 'clash');
-  assert.equal(await queued(), 3, 'every fact is rewritten');
+  assert.equal(await queued(), 0, 'no task per fact: a sweep rewrites them once the project is quiet');
+  assert.equal((await entries()).progress.none, 3, 'all three still to rewrite');
   const s = (await app.call(ann, 'GET', `/api/projects/${pid}/consolidation`)).data.suggestions.find((x) => x.id === r.created[0]);
   assert.equal(s.auto_applied, true); assert.equal(s.data.symbol, '\\mathrm{FS}(X)');
   assert.equal((await app.call(ann, 'GET', `/api/facts/${id.a}`)).data.history[0].kind, 'notation');

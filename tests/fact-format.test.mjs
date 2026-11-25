@@ -122,3 +122,14 @@ test('a Danus fact shows the kind its text announces, and other kinds are never 
   foreach ($c as [$k,$t,$s,$w]) if (K::of($k,$t,$s) !== $w) { echo "wrong: $s"; exit(1); }`;
   execFileSync('php', ['-r', php], { encoding: 'utf8' });
 });
+
+test('a preview is never cut inside a formula, so it still typesets', async () => {
+  const { clipMath } = await import('../public/assets/js/fact-format.js');
+  assert.equal(clipMath('short $x$', 220), 'short $x$');
+  const long = 'Let $U$ be a semigroup and $\\{A_i\\}$ a sequence of sets. Then there are sequences $S = \\{s_i\\}$ such that $FS(\\{s_j\\}_{j\\ge i}) \\subseteq A_i$ for all $i$.';
+  const c = clipMath(long, 120);
+  assert.ok(c.endsWith('…')); assert.equal((c.match(/(?<!\\)\$/g) || []).length % 2, 0, c);
+  assert.ok(!c.includes('FS('), 'the formula it would have cut is left out');
+  assert.equal(clipMath('a cost of \\$5 and more words here', 12), 'a cost of…', 'an escaped dollar is text');
+  assert.equal(clipMath('$$\\sum_i x_i$$ and then a long tail of words', 20), '$$\\sum_i x_i$$ and…');
+});

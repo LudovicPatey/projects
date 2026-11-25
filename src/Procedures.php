@@ -80,6 +80,13 @@ remove hypotheses or steps. If nothing has to change, set "unchanged" to true an
 of the rewritten fact that is not a project symbol, including the local entries you defined. In "uses", list each symbol whose meaning matters:
 "symbol" as the fact writes it, "meaning_here", and "project_symbol", the agreed symbol now used. Fill "proof" only if the fact has a proof.
 TXT,
+        'notation_rephrase_batch' => <<<'TXT'
+TASK: "facts_to_rewrite" in task.json lists several facts to write again in the project's agreed notation, listed in "notation".
+Treat each one on its own, as the fact described below, with its own "glossary" and "sources". Answer in "facts", one entry per fact,
+with its "fact_id", in the same order. A fact you cannot rewrite faithfully: leave it out, rather than guess.
+The rules for each fact follow.
+
+TXT,
         'source_check' => <<<'TXT'
 TASK: "fact" in task.json is a cited result: a statement that the project takes from another work, without its proof.
 Check whether its source really states it. "fact.references" names the work it is cited from, and "fact.sources" quote where the project found it.
@@ -108,6 +115,8 @@ the ids it "depends_on", its "topics", its "status" and whether it is already "w
   in "fact", usually the one with a proof, and the duplicate in "other_fact". Only when the statements are equivalent as written, not when one
   is a special case, a strengthening or a variant of the other.
 - "depends": the proof of "fact" uses "other_fact", although this is not recorded, for example a result cited from another source.
+  "used_by" says how many facts rely on each one. A fact with no "depends_on" and a "used_by" of 0 stands alone: read its proof again
+  for the results of the database it uses, and look for the facts that use it.
 - "kind": "fact" has the wrong kind; give the right one in "new_kind". A remark that states a result with a proof is a lemma or a proposition.
 - "question": "fact" is a remark that asks a question that is still open, and is not a result. Give the question a short "title".
   Do not propose this for a remark that other facts depend on.
@@ -153,6 +162,7 @@ TXT,
         'notation_propose' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'entries'], "properties" => ["summary" => ["type" => 'string'], "entries" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'meaning', 'note', 'variants', 'definition_fact_id', 'facts'], "properties" => ["symbol" => ["type" => 'string'], "meaning" => ["type" => 'string'], "note" => ["type" => ['string', 'null']], "variants" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'meaning', 'where', 'relation'], "properties" => ["symbol" => ["type" => 'string'], "meaning" => ["type" => 'string'], "where" => ["type" => 'string'], "relation" => ["type" => 'string', "enum" => ['instance', 'clash']]]]], "definition_fact_id" => ["type" => ['integer', 'null']], "facts" => ["type" => 'array', "items" => ["type" => 'integer']]]]]]],
         'notation_rephrase' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'unchanged', 'statement', 'proof', 'local_notation', 'uses'], "properties" => ["summary" => ["type" => 'string'], "unchanged" => ["type" => 'boolean'], "statement" => ["type" => 'string'], "proof" => ["type" => ['string', 'null']], "local_notation" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'meaning'], "properties" => ["symbol" => ["type" => 'string'], "meaning" => ["type" => 'string']]]], "uses" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'meaning_here', 'project_symbol'], "properties" => ["symbol" => ["type" => 'string'], "meaning_here" => ["type" => 'string'], "project_symbol" => ["type" => 'string']]]]]],
         'consolidate' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'suggestions'], "properties" => ["summary" => ["type" => 'string'], "suggestions" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['kind', 'fact', 'other_fact', 'new_kind', 'title', 'topics', 'ref', 'statement', 'notation', 'reason', 'confidence'], "properties" => ["kind" => ["type" => 'string', "enum" => ['same', 'depends', 'kind', 'question', 'topics', 'cite', 'progress', 'notation']], "notation" => ["type" => ['object', 'null'], "additionalProperties" => false, "required" => ['action', 'entry', 'symbol', 'meaning', 'note', 'variants'], "properties" => ["action" => ["type" => 'string', "enum" => ['adopt', 'local', 'reject']], "entry" => ["type" => ['integer', 'null']], "symbol" => ["type" => ['string', 'null']], "meaning" => ["type" => ['string', 'null']], "note" => ["type" => ['string', 'null']], "variants" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'meaning', 'where', 'relation'], "properties" => ["symbol" => ["type" => 'string'], "meaning" => ["type" => 'string'], "where" => ["type" => 'string'], "relation" => ["type" => 'string', "enum" => ['instance', 'clash']]]]]]], "ref" => ["type" => ['string', 'null']], "statement" => ["type" => ['string', 'null']], "confidence" => ["type" => 'string', "enum" => ['high', 'medium', 'low']], "fact" => ["type" => 'string'], "other_fact" => ["type" => ['string', 'null']], "new_kind" => ["type" => ['string', 'null'], "enum" => ['definition', 'lemma', 'proposition', 'theorem', 'corollary', 'conjecture', 'remark', null]], "title" => ["type" => ['string', 'null']], "topics" => ["type" => 'array', "items" => ["type" => 'string']], "reason" => ["type" => 'string']]]]]],
+        'notation_rephrase_batch' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'facts'], "properties" => ["summary" => ["type" => 'string'], "facts" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['fact_id', 'unchanged', 'statement', 'proof', 'local_notation', 'uses'], "properties" => ["fact_id" => ["type" => 'integer'], "unchanged" => ["type" => 'boolean'], "statement" => ["type" => 'string'], "proof" => ["type" => ['string', 'null']], "local_notation" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'meaning'], "properties" => ["symbol" => ["type" => 'string'], "meaning" => ["type" => 'string']]]], "uses" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'meaning_here', 'project_symbol'], "properties" => ["symbol" => ["type" => 'string'], "meaning_here" => ["type" => 'string'], "project_symbol" => ["type" => 'string']]]]]]]]],
         'source_check_batch' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'checks'], "properties" => ["summary" => ["type" => 'string'], "checks" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['fact_id', 'verdict', 'where', 'explanation'], "properties" => ["fact_id" => ["type" => 'integer'], "verdict" => ["type" => 'string', "enum" => ['confirmed', 'differs', 'not_found']], "where" => ["type" => 'string'], "explanation" => ["type" => 'string']]]]]],
         'source_check' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'verdict', 'where', 'explanation'], "properties" => ["summary" => ["type" => 'string'], "verdict" => ["type" => 'string', "enum" => ['confirmed', 'differs', 'not_found']], "where" => ["type" => 'string'], "explanation" => ["type" => 'string']]],
     ];
@@ -197,8 +207,8 @@ TXT,
     /** The variant of a procedure a task needs: notation proposes entries for the project, or rewrites one fact. */
     private static function variant(array $t): string
     {
-        if ($t['kind'] === 'notation') return $t['source_type'] === 'fact' ? 'notation_rephrase' : 'notation_propose';
-        if ($t['kind'] === 'source_check' && $t['source_type'] === null) return 'source_check_batch';
+        if ($t['kind'] === 'notation') return ['fact' => 'notation_rephrase', 'sweep' => 'notation_rephrase_batch'][$t['source_type']] ?? 'notation_propose';
+        if ($t['kind'] === 'source_check' && in_array($t['source_type'], [null, 'sweep'], true)) return 'source_check_batch';
         return (string)$t['kind'];
     }
 
@@ -206,7 +216,8 @@ TXT,
     public static function recipe(array $t, array $context): array
     {
         $v = self::variant($t);
-        $instructions = self::INSTRUCTIONS[$v];
+        // A batch of rewrites follows the rules of one rewrite, for each fact.
+        $instructions = self::INSTRUCTIONS[$v] . ($v === 'notation_rephrase_batch' ? self::INSTRUCTIONS['notation_rephrase'] : '');
         $prompt = trim((string)($t['prompt_text'] ?? ''));
         if ($prompt !== '' && $t['kind'] !== 'ask') $instructions .= self::REQUEST_NOTE . $prompt;
         $caps = array_values(array_filter(self::capabilities($t['kind']), fn($c) => $c !== 'document' || !empty($context['document'])));
@@ -257,6 +268,19 @@ TXT,
                 return ['summary' => trim($done . ($s ? ", $s set aside (already proposed, rejected, undone or invalid)" : '') . ". $said")];
             case 'source_check':
                 return self::recordSourceCheck($t, $answer, $model, $seconds);
+            case 'notation_rephrase_batch':
+                $mine = array_flip(AiTaskController::batchFacts($t)); $ids = []; $same = 0; $refused = 0;
+                foreach ($answer['facts'] as $x) {
+                    $fid = (int)$x['fact_id'];
+                    if (!isset($mine[$fid]) || in_array($fid, $ids, true)) continue; // only the facts of this batch, once each
+                    try {
+                        NotationController::rephraseFact(Request::internal(['ai_model' => $model, 'generation_seconds' => is_numeric($seconds) ? $seconds / max(1, count($answer['facts'])) : null, 'unchanged' => (bool)$x['unchanged'], 'local_notation' => $x['local_notation'],
+                            'statement_text' => $x['statement'], 'proof_text' => (string)($x['proof'] ?? ''), 'uses' => $x['uses']], ['id' => $fid]));
+                        $ids[] = $fid; if ($x['unchanged']) $same++;
+                    } catch (HttpError) { $refused++; }
+                }
+                $n = count($ids);
+                return ['summary' => trim("$n fact" . ($n === 1 ? '' : 's') . ' written in the project notation' . ($same ? " ($same already were)" : '') . ($refused ? ", $refused refused" : '') . ". $said"), 'fact_ids' => $ids];
             case 'source_check_batch':
                 $ids = []; $by = ['confirmed' => 0, 'differs' => 0, 'not_found' => 0];
                 $mine = array_flip(AiTaskController::batchFacts($t));

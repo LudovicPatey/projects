@@ -128,11 +128,13 @@ test('a fact is rewritten in the agreed notation without touching its reviewed t
   assert.ok(p0.none >= 1);
   const q = await app.call(ann, 'POST', `/api/projects/${pid}/notation/rephrase-all`, {});
   assert.ok(q.data.queued >= 1);
-  assert.equal((await app.call(ann, 'POST', `/api/projects/${pid}/notation/rephrase-all`, {})).data.queued, 0); // not twice
-  const task = await claim();
-  assert.equal(task.source_type, 'fact');
+  assert.equal((await app.call(ann, 'POST', `/api/projects/${pid}/notation/rephrase-all`, {})).data.queued, q.data.queued); // the same sweep
+  assert.equal(await claim(), null, 'a sweep is a recipe: a client without procedures does not take it');
+  const task = await claim([...FEATURES, 'procedures']);
+  assert.equal(task.source_type, 'sweep');
   assert.ok(task.context.notation.every((x) => x.status === 'agreed')); // a rewrite follows only what was agreed
-  const target = task.source_id;
+  const target = task.context.facts_to_rewrite[0].fact_id;
+  await app.call(key, 'POST', `/api/ai/tasks/${task.id}/release`, { lease: task.lease });
   const r = await app.call(key, 'POST', `/api/facts/${target}/rephrasings`, { ai_model: 'claude-opus-5-5', statement_text: 'Every $\\mathrm{NS}(X)$ is infinite.', proof_text: 'Take sums.', uses: [{ symbol: 'FS(X)', meaning_here: 'non-empty sums', project_symbol: '\\mathrm{NS}(X)' }] });
   assert.equal(r.status, 201);
   let f = (await app.call(ann, 'GET', `/api/facts/${target}`)).data;

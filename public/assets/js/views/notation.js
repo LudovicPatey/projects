@@ -2,6 +2,7 @@ import { api, expandFacts } from '../api.js';
 import { link, attempt, toast } from '../store.js';
 import { timeAgo } from '../util.js';
 import { Kpi, StackBar } from '../dashboard.js';
+import { clipMath } from '../fact-format.js';
 import { NOTATION_SEGMENTS, asMath, entryBody, entryError, sharedDraft, splitVariants, toRewrite } from '../notation-model.js';
 
 const entryEditor = `<div class="notation-edit">
@@ -46,6 +47,7 @@ export const NotationPanel = {
   },
   unmounted() { clearInterval(this.timer); },
   methods: {
+    clipMath,
     timeAgo, link, asMath, splitVariants,
     async load() {
       const r = await attempt(() => api.get(`api/projects/${this.pid}/notation`));
@@ -149,7 +151,7 @@ export const NotationPanel = {
             <p class="muted small">Definitions are conventions, not results: they are no longer listed or checked among the facts. Give each one an entry, so that the project agrees on its symbol.</p>
             <article v-for="x in d.definitions" :key="x.id" class="notation-def">
               <div class="notation-def-main"><a :href="link('facts', x.id)"><code class="key">{{ x.label }}</code> <math-text :text="x.title"/></a>
-                <p class="muted small"><math-text :text="x.statement_text.slice(0, 400)"/></p>
+                <p class="muted small"><math-text :text="clipMath(x.statement_text, 400)"/></p>
                 <small v-if="x.used_by" class="muted">Used by {{ x.used_by }} fact{{ x.used_by > 1 ? 's' : '' }}</small></div>
               <div class="notation-actions"><a v-if="x.entry" class="chip-link" :href="link('facts', null, {mode: 'notation', notation: x.entry.id})"><math-text :text="asMath(x.entry.symbol)"/> · {{ x.entry.status }}</a>
                 <button v-else class="btn sm" @click="fromDefinition(x)">Make an entry</button></div>

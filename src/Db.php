@@ -196,6 +196,9 @@ final class Db
         foreach (['highlight_reason TEXT NULL', 'highlight_at DATETIME NULL', 'highlight_model VARCHAR(120) NULL', 'highlight_activity INT UNSIGNED NULL'] as $c) $migrations[] = "ALTER TABLE facts ADD COLUMN $c";
         $migrations[] = 'ALTER TABLE notations ADD COLUMN auto_suggestion_id INT UNSIGNED NULL';
         $migrations[] = 'ALTER TABLE ai_tasks ADD COLUMN priority SMALLINT NOT NULL DEFAULT 50';
+        $migrations[] = 'ALTER TABLE projects ADD COLUMN sweeps_checked_at DATETIME NULL';
+        // Upkeep queued one fact at a time, before sweeps: the sweeps take it over.
+        $migrations[] = "DELETE FROM ai_tasks WHERE status = 'pending' AND kind IN ('notation', 'source_check') AND (dedupe_key LIKE 'nota:%' OR dedupe_key LIKE 'srcchk:%' OR dedupe_key LIKE 'srcb:%')";
         $migrations[] = 'ALTER TABLE ai_tasks ADD COLUMN after_json TEXT NULL';
         $migrations[] = 'CREATE INDEX idx_ai_task_schedule ON ai_tasks (status, priority, id)';
         // Tasks waiting from before the scheduler take their kind's priority. A kind whose priority is the default of 50 needs nothing.

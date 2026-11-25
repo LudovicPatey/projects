@@ -157,22 +157,10 @@ final class NotationController
         $pid = $r->int('id');
         Access::member($pid);
         if (self::hash($pid) === self::EMPTY) throw new HttpError(422, 'Agree on at least one notation entry, or mark one as local, first.');
-        $queued = self::queueRephrasings($pid);
+        // One sweep rewrites them, a batch at a time, starting now rather than when the project is quiet.
+        $queued = count(\App\Sweeps::rewriteCandidates($pid));
+        if ($queued) AiTaskController::queueSweep($pid, 'rewrite', true);
         Response::json(['queued' => $queued, 'progress' => self::progress($pid)], 201);
-    }
-
-    /** Queues the rewrite of every fact that is not written in the current notation yet. Also run by the consolidation when it decides notation. */
-    public static function queueRephrasings(int $pid): int
-    {
-        $hash = self::hash($pid);
-        if ($hash === self::EMPTY) return 0;
-        $queued = 0;
-        foreach (self::states($pid) as $fid => $s) {
-            if (!in_array($s['state'], ['none', 'stale', 'unfaithful'], true) || $s['queued']) continue;
-            AiTaskController::queueNotation($pid, (int)$fid, (int)$s['revision'], $hash);
-            $queued++;
-        }
-        return $queued;
     }
 
     // ----- shared with facts and the AI queue -----
@@ -228,6 +216,9 @@ final class NotationController
         foreach (Db::all("SELECT source_id FROM ai_tasks WHERE project_id = ? AND kind = 'notation' AND source_type = 'fact' AND status IN ('pending', 'running')", [$pid]) as $t) {
             if (isset($out[(int)$t['source_id']])) $out[(int)$t['source_id']]['queued'] = true;
         }
+        // A rewrite sweep waiting or running takes every fact not yet in the notation.
+        if (\App\Sweeps::open($pid, 'rewrite')) foreach ($out as &$s) if (in_array($s['state'], ['none', 'stale', 'unfaithful'], true)) $s['queued'] = true;
+        unset($s);
         return $out;
     }
 
@@ -320,6 +311,7 @@ final class NotationController
         $by = [];
         foreach ($local as $fid => $defs) {
             foreach ($defs as $symbol => $meaning) {
+                $symbol = self::bare((string)$symbol); // $FS(H)$ and FS(H) are one spelling
                 if (self::isProofVariable($symbol)) continue; // A_i, f, q: names of one argument, not notation
                 $k = self::notionKey($symbol);
                 $by[$k] ??= ['symbol' => $symbol, 'spellings' => [], 'facts' => [], 'meanings' => []];
@@ -348,6 +340,7 @@ final class NotationController
      */
     public static function notionKey(string $symbol): string
     {
+        $symbol = self::bare($symbol);
         // \mathrm{FS} and FS are the same name.
         $s = preg_replace('/\\\\(?:mathrm|mathsf|mathbf|mathit|mathcal|operatorname|textrm|text)\s*\{([^{}]*)\}/u', '$1', trim($symbol)) ?? $symbol;
         $s = preg_replace('/\s+/u', '', $s) ?? $s;
@@ -358,9 +351,17 @@ final class NotationController
     }
 
     /** One letter, Latin or Greek, possibly indexed: a variable of one argument, never a notation of the project. */
-    public static function isProofVariable(string $symbol): bool
+    /** A symbol as a fact's notation writes it, $FS(H)$ or FS(H): the same symbol. */
+    public static function bare(string $symbol): string
     {
         $s = trim($symbol);
+        while (preg_match('/^\$+(.*?)\$+$/su', $s, $m) && $m[1] !== '') $s = trim($m[1]);
+        return $s;
+    }
+
+    public static function isProofVariable(string $symbol): bool
+    {
+        $s = self::bare($symbol);
         if (preg_match('/^\\\\(?:mathbb|mathcal|mathrm|mathsf|mathbf|mathfrak)/', $s)) return false; // a named object, such as \mathbb{N}
         return (bool)preg_match('/^(?:[A-Za-z]|\\\\[a-zA-Z]+)(?:[_^](?:\{[A-Za-z0-9,+\-]*\}|[A-Za-z0-9]))*$/u', $s);
     }

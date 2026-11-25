@@ -509,9 +509,7 @@ final class FactController
         }
         if ($errors || $dry) $pdo->rollBack(); else $pdo->commit();
         if ($errors) Response::json(['error' => count($errors) . ' fact(s) rejected, nothing was saved.', 'errors' => $errors], 422);
-        // The cited results among them are checked against their source by an AI, without waiting for people.
-        $checks = !$dry && $created ? AiTaskController::queueSourceChecks($pid) : 0;
-        Response::json(['dry_run' => $dry, 'created' => $created, 'skipped' => $skipped, 'source_checks_queued' => $checks], $dry ? 200 : 201);
+        Response::json(['dry_run' => $dry, 'created' => $created, 'skipped' => $skipped], $dry ? 200 : 201);
     }
 
     /** Machine-readable description of the format, for AI clients. */

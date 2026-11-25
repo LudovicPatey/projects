@@ -41,4 +41,8 @@ return [
 
     // ORCID iDs of the people who read and answer bug reports and feature requests.
     'feedback_admins' => [],
+
+    // Optional: maintenance sweeps (src/Sweeps.php). Upkeep starts once a project has had no new fact for quiet_minutes,
+    // and each kind runs at most every so many hours. consolidate_hours = 0: consolidate only after extractions.
+    // 'sweeps' => ['quiet_minutes' => 30, 'check_minutes' => 5, 'rewrite_hours' => 1, 'source_hours' => 1, 'consolidate_hours' => 24],
 ];

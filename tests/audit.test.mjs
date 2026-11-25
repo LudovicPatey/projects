@@ -53,7 +53,8 @@ test('the key reads the project, its graph, every fact and the notation', async 
   assert.equal(first.data.facts[1].proof_text, 'Proof.'); assert.ok(first.data.facts[1].deps.length === 1);
   const second = await audit('/api/audit/facts?offset=200');
   assert.equal(second.data.facts.length, 6); assert.equal(second.data.next, null);
-  assert.ok((await audit('/api/audit/notation')).data.progress);
+  const nota = (await audit('/api/audit/notation')).data;
+  assert.ok(nota.progress); assert.ok(nota.entries.every((e) => 'decided_by' in e && 'decided_at' in e), 'who settled each entry');
   const keys = (await app.call(ann, 'GET', `/api/projects/${pid}/audit-keys`)).data.keys;
   assert.ok(keys[0].uses >= 5); assert.ok(keys[0].last_used_at);
 });

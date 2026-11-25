@@ -187,9 +187,10 @@ final class ConsolidationController
     /** What the AI reads: every fact in short, with its source, its dependencies and its tags, and what was already proposed. */
     public static function context(int $pid): array
     {
-        $deps = [];
+        $deps = []; $usedBy = [];
         foreach (Db::all('SELECT d.fact_id, d.depends_on_id FROM fact_deps d JOIN facts f ON f.id = d.fact_id WHERE f.project_id = ? AND f.deleted_at IS NULL', [$pid]) as $e) {
             $deps[(int)$e['fact_id']][] = (int)$e['depends_on_id'];
+            $usedBy[(int)$e['depends_on_id']] = ($usedBy[(int)$e['depends_on_id']] ?? 0) + 1;
         }
         $graph = array_column(FactController::graph($pid)['facts'], null, 'id');
         $facts = array_map(fn($f) => [
@@ -198,7 +199,7 @@ final class ConsolidationController
             'has_proof' => trim((string)$f['proof_html']) !== '',
             'source' => Db::value("SELECT COALESCE(b.cite_key, d.title, s.source_type) FROM fact_sources s LEFT JOIN bib_entries b ON s.source_type = 'bib' AND b.id = s.source_id
                                    LEFT JOIN documents d ON s.source_type = 'document' AND d.id = s.source_id WHERE s.fact_id = ? AND s.revision_no = ? AND s.covers <> 'context' LIMIT 1", [$f['id'], $f['current_revision']]),
-            'depends_on' => $deps[(int)$f['id']] ?? [], 'topics' => self::decode($f['topics_json']),
+            'depends_on' => $deps[(int)$f['id']] ?? [], 'used_by' => $usedBy[(int)$f['id']] ?? 0, 'topics' => self::decode($f['topics_json']),
             'basis' => $graph[(int)$f['id']]['basis'] ?? null, 'status' => $graph[(int)$f['id']]['status'] ?? null, 'worth_reading' => $f['highlight_at'] !== null,
             'outside_refs' => array_values(array_map(fn($x) => ['key' => $x['key'], 'label' => $x['label']], array_filter($graph[(int)$f['id']]['outside_refs'] ?? [], fn($x) => !$x['resolved']))),
         ], Db::all('SELECT f.id, f.label, f.kind, f.title, f.current_revision, f.topics_json, f.highlight_at, r.statement_html, r.proof_html FROM facts f
@@ -254,7 +255,6 @@ final class ConsolidationController
                 Db::run('DELETE FROM fact_ref_links WHERE fact_id = ? AND ref_key = ?', [$fid, $ref]);
                 Db::insert('fact_ref_links', ['fact_id' => $fid, 'ref_key' => $ref, 'cited_fact_id' => $cid, 'created_by' => $me, 'created_at' => Db::now()]);
                 $out = ['fact_id' => $fid, 'cited_fact_id' => $cid, 'created' => !$other];
-                if (!$other) AiTaskController::queueSourceChecks($pid); // the new cited result is checked against its source
                 break;
             case 'kind':
                 $kind = (string)($data['kind'] ?? '');
@@ -282,8 +282,6 @@ final class ConsolidationController
         }
         Db::update('fact_suggestions', ['status' => 'accepted', 'decided_by' => $me, 'decided_at' => Db::now(), 'auto_applied' => $auto ? 1 : 0,
             'undo_json' => json_encode($undo, JSON_UNESCAPED_UNICODE)], 'id = :id', ['id' => $s['id']]);
-        // The facts are written again in the new notation. Their reviewed text does not change.
-        if ($s['kind'] === 'notation') $out['rephrasings_queued'] = NotationController::queueRephrasings($pid);
         return $out;
     }
 
@@ -360,8 +358,6 @@ final class ConsolidationController
         }
         Db::update('fact_suggestions', ['status' => 'undone', 'undone_by' => $me, 'undone_at' => $now], 'id = :id', ['id' => $s['id']]);
         Activity::touch($pid, 'fact', $fid, 'updated');
-        // The rewrites made in the notation as it was become current again; the others are queued.
-        if ($s['kind'] === 'notation') $out['rephrasings_queued'] = NotationController::queueRephrasings($pid);
         return $out;
     }
 

@@ -291,3 +291,26 @@ export function parseExternalRefs(list) {
     return items.map((x) => ({ raw: typeof x === 'string' ? x : JSON.stringify(x) }));
   }
 }
+
+/**
+ * Text shortened to about `max` characters for a preview, never inside a formula: a cut inside $…$ or $$…$$ moves back to before
+ * that formula, so the preview still typesets. Then it ends at a word, with an ellipsis.
+ */
+export function clipMath(text, max = 220) {
+  const s = String(text ?? '');
+  if (s.length <= max) return s;
+  let cut = max;
+  // Where each formula opens and closes, up to the cut; an escaped \$ is not a delimiter.
+  let open = -1;
+  for (let i = 0; i < cut; i++) {
+    if (s[i] === '\\') { i++; continue; }
+    if (s[i] !== '$') continue;
+    const dbl = s[i + 1] === '$';
+    open = open === -1 ? i : -1;
+    if (dbl) i++;
+  }
+  if (open !== -1) cut = open;
+  const space = s.lastIndexOf(' ', cut);
+  if (space > cut * 0.6) cut = space;
+  return s.slice(0, cut).replace(/[\s,;:]+$/, '') + '…';
+}

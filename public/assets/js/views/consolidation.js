@@ -2,6 +2,7 @@ import { api } from '../api.js';
 import { link, attempt, toast, store } from '../store.js';
 import { timeAgo } from '../util.js';
 import { Kpi } from '../dashboard.js';
+import { clipMath } from '../fact-format.js';
 import { CONFIDENCE, autoApplied, groupSuggestions, suggestionText, undoLabel } from '../consolidation-model.js';
 
 /** Consolidation, inside Facts: what an AI proposes after reading the whole database, for people to accept or reject. */
@@ -23,7 +24,14 @@ export const ConsolidationPanel = {
   },
   unmounted() { clearInterval(this.timer); },
   methods: {
-    timeAgo, link, suggestionText, undoLabel,
+    timeAgo, link, suggestionText, undoLabel, clipMath,
+    /** A figure opens its section: it scrolls there, and the applied changes unfold. Nothing to show: not a link. */
+    jumpTo(section) {
+      if (!section) return {};
+      return { role: 'button', tabindex: 0, class: 'kpi-link', title: 'Show them',
+        onClick: () => this.$el.querySelector(`[data-cons="${section}"]`)?.scrollIntoView({ block: 'start' }),
+        onKeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.currentTarget.click(); } } };
+    },
     confidence(s) { return CONFIDENCE[s.confidence] || null; },
     async undo(s) {
       if (s.kind === 'same' && !confirm(`Unmerge ${this.fact(s.other_fact_id)?.label} from ${this.fact(s.fact_id)?.label}? It comes back with its sources, dependencies, proof and stars.`)) return;
@@ -61,20 +69,20 @@ export const ConsolidationPanel = {
     },
   },
   template: `<div class="page wide consolidation-page">
-    <header class="page-title"><span class="sh-icon"><icon name="layers" :size="22"/></span><div><h1>Consolidate the facts</h1><p>Extraction reads one source at a time. An AI then reads the whole database and proposes what only the whole shows. People decide.</p></div>
+    <header class="page-title"><span class="sh-icon"><icon name="layers" :size="22"/></span><div><h1>Consolidate the facts</h1><p>Extraction reads one source at a time. An AI then reads the whole database and proposes what only the whole shows. It applies what it is sure of, and people decide the rest.</p></div>
       <div class="seg small mode-seg"><button @click="$emit('mode', 'list')"><icon name="list" :size="13"/> List</button><button @click="$emit('mode', 'graph')"><icon name="graph" :size="13"/> Graph</button><button @click="$emit('mode', 'notation')"><icon name="book" :size="13"/> Notation</button><button class="on" aria-pressed="true"><icon name="layers" :size="13"/> Consolidate</button></div></header>
     <div v-if="!d" class="d-empty">Loading…</div>
     <template v-else>
       <div class="kpi-grid notation-kpis">
-        <kpi icon="lightbulb" :value="waiting" label="to decide" :tone="waiting ? 'warn' : 'neutral'"/>
-        <kpi icon="layers" :value="d.counts.same" label="duplicates" tone="accent"/>
-        <kpi icon="graph" :value="d.counts.depends" label="missing links" tone="accent"/>
-        <kpi icon="sparkles" :value="applied.length" label="applied automatically" tone="neutral"/>
+        <kpi icon="lightbulb" :value="waiting" label="to decide" :tone="waiting ? 'warn' : 'neutral'" v-bind="jumpTo(waiting && groups[0]?.kind)"/>
+        <kpi icon="layers" :value="d.counts.same" label="duplicates" tone="accent" v-bind="jumpTo(d.counts.same && 'same')"/>
+        <kpi icon="graph" :value="d.counts.depends" label="missing links" tone="accent" v-bind="jumpTo(d.counts.depends && 'depends')"/>
+        <kpi icon="sparkles" :value="applied.length" label="applied automatically" tone="neutral" v-bind="jumpTo(applied.length && 'applied')"/>
       </div>
       <div class="notation-grid">
         <div class="notation-main">
           <section v-if="!groups.length" class="panel"><div class="d-empty">No proposal waiting. A consolidation is queued after each round of extractions, and you can ask for one at any time.</div></section>
-          <section v-for="g in groups" :key="g.kind" class="panel">
+          <section v-for="g in groups" :key="g.kind" class="panel" :data-cons="g.kind">
             <header class="ai-head"><h2>{{ g.title }}</h2><small>{{ g.items.length }}</small></header>
             <p class="muted small">{{ g.help }}<template v-if="(g.kind === 'same' || g.kind === 'question') && !owner"> Only an owner applies these.</template></p>
             <div v-if="g.items.length > 1" class="row-gap"><button class="btn sm" :disabled="busy || g.items.every(ownerOnly)" @click="bulk(g, true)"><icon name="check" :size="13"/> Accept all</button><button class="btn sm" :disabled="busy" @click="bulk(g, false)">Reject all</button></div>
@@ -83,7 +91,7 @@ export const ConsolidationPanel = {
                 <b class="cons-what"><math-text :text="suggestionText(s, d.facts)"/></b><span v-if="confidence(s)" class="pill cons-conf" :class="'c-' + s.confidence">{{ confidence(s) }}</span>
                 <div class="cons-facts">
                   <a v-for="id in [s.fact_id, s.other_fact_id].filter(Boolean)" :key="id" class="cons-fact" :href="link('facts', id)">
-                    <code class="key">{{ fact(id)?.label }}</code> <span class="muted small"><math-text :text="(fact(id)?.excerpt || '').slice(0, 220)"/></span></a>
+                    <code class="key">{{ fact(id)?.label }}</code> <span class="muted small"><math-text :text="clipMath(fact(id)?.excerpt, 220)"/></span></a>
                 </div>
                 <blockquote v-if="s.kind === 'cite' && s.data?.statement" class="cons-new small"><span class="muted">New cited result, for {{ s.data.ref_label }}:</span> <math-text :text="s.data.statement"/></blockquote>
                 <p class="cons-reason small"><icon name="sparkles" :size="12"/> <math-text :text="s.reason_text"/> <ai-meta compact :model="s.ai_model" :user="s.ai_user_name" :ms="s.ai_generation_ms"/></p>
@@ -95,7 +103,7 @@ export const ConsolidationPanel = {
             </article>
             <button v-if="g.items.length > 40 && !open[g.kind]" class="link-btn small" @click="open[g.kind] = true">Show the {{ g.items.length - 40 }} others</button>
           </section>
-          <section v-if="applied.length" class="panel">
+          <section v-if="applied.length" class="panel" data-cons="applied">
             <header class="ai-head"><h2><icon name="sparkles" :size="15"/> Applied automatically</h2><small>{{ applied.length }}</small></header>
             <p class="muted small">Changes the AI applied without waiting: those it was confident about, and the notation and tags it found probable. Look them over: each one is in the history of its facts, and can be undone.</p>
             <article v-for="s in applied.slice(0, open.applied ? 1000 : 30)" :key="s.id" class="cons-item">

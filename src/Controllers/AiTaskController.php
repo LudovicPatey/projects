@@ -47,11 +47,6 @@ final class AiTaskController
     }
 
     /** A fact to write again in the agreed notation. One task per revision and notation. */
-    public static function queueNotation(int $pid, int $factId, int $revision, string $hash): void
-    {
-        self::insertTask($pid, 'notation', 'fact', $factId, null, null, null, 'nota:' . $factId . ':' . $revision . ':' . substr($hash, 0, 12));
-    }
-
     /**
      * Once the last waiting extraction of a project is done, an AI reads the whole database again:
      * duplicates across sources, missing dependencies, remarks that are open questions, subject tags.
@@ -59,7 +54,6 @@ final class AiTaskController
      */
     public static function queueConsolidation(int $pid): ?int
     {
-        self::queueSourceChecks($pid);
         if (Db::value("SELECT 1 FROM ai_tasks WHERE project_id = ? AND kind IN ('extract', 'consolidate') AND status IN ('pending', 'running')", [$pid])) return null;
         $n = (int)Db::value('SELECT COUNT(*) FROM facts WHERE project_id = ? AND deleted_at IS NULL', [$pid]);
         if ($n < 2) return null;
@@ -67,42 +61,11 @@ final class AiTaskController
         return self::insertTask($pid, 'consolidate', null, null, null, null, null, "cons:$last:$n");
     }
 
-    /** Cited results checked in one task: one AI session reads a source once for several of them. */
-    public const SOURCE_CHECK_BATCH = 10;
-
-    /**
-     * Every cited result that nobody accepted and that no AI has checked yet gets a source check: confirmed, the native prover
-     * may build on it. Only a person still accepts a citation. Results found in the same source are checked together, by batches,
-     * so that one session reads that source once and the AI list does not fill with one task per fact. Once per revision, whatever
-     * the verdict, so a failed check is not retried. Run after facts arrive (extraction, cited results the consolidation writes)
-     * and with each consolidation, which also covers older facts. @return int the cited results queued
-     */
-    public static function queueSourceChecks(int $pid, int $limit = 100): int
+    /** A maintenance sweep (Sweeps): one task that takes what is stale when a client takes it. $asked: a member asked for it now. */
+    public static function queueSweep(int $pid, string $sweep, bool $asked = false): int
     {
-        $done = [];
-        foreach (Db::all('SELECT c.fact_id, c.revision_no FROM fact_source_checks c JOIN facts f ON f.id = c.fact_id WHERE f.project_id = ?', [$pid]) as $c) $done[$c['fact_id'] . ':' . $c['revision_no']] = true;
-        // What a task already covers, waiting, done or cancelled: one fact (asked by a person, or queued alone before batches), or a batch.
-        foreach (Db::all("SELECT source_type, source_id, dedupe_key, snapshot_json FROM ai_tasks WHERE project_id = ? AND kind = 'source_check'", [$pid]) as $t) {
-            if ($t['source_type'] === null) foreach ((json_decode((string)$t['snapshot_json'], true)['facts'] ?? []) as [$f, $rev]) $done["$f:$rev"] = true;
-            elseif (preg_match('/^srcchk:(\d+):(\d+)$/', (string)$t['dedupe_key'], $m)) $done["$m[1]:$m[2]"] = true;
-        }
-        $groups = []; $n = 0;
-        foreach (FactController::graph($pid)['facts'] as $f) {
-            if ($n >= $limit) break;
-            if ($f['basis'] !== 'cited' || $f['status'] !== 'unchecked' || $f['retracted_at'] !== null) continue;
-            $rev = (int)$f['current_revision'];
-            if (isset($done[$f['id'] . ':' . $rev])) continue;
-            // Where the project found it: its results are checked together, with that document at hand.
-            $src = Db::one("SELECT source_type, source_id FROM fact_sources WHERE fact_id = ? AND revision_no = ? AND covers <> 'context' ORDER BY source_type = 'document' DESC, id LIMIT 1", [$f['id'], $rev]);
-            $groups[$src ? $src['source_type'] . ':' . $src['source_id'] : ''][] = [(int)$f['id'], $rev];
-            $n++;
-        }
-        foreach ($groups as $facts) {
-            foreach (array_chunk($facts, self::SOURCE_CHECK_BATCH) as $batch) {
-                self::insertTask($pid, 'source_check', null, null, null, null, null, 'srcb:' . sha1(json_encode($batch)), null, ['facts' => $batch]);
-            }
-        }
-        return $n;
+        if ($open = \App\Sweeps::open($pid, $sweep)) return $open;
+        return self::insertTask($pid, \App\Sweeps::KINDS[$sweep], 'sweep', null, null, null, null, null, null, null, $asked);
     }
 
     /** The cited results a batch of source checks covers, still in the project, at the revision it was queued for. @return list<int> */
@@ -153,6 +116,7 @@ final class AiTaskController
         $pid = $r->int('id');
         Access::member($pid);
         self::expire();
+        \App\Sweeps::due($pid);
         $me = Auth::id();
         // What runs next first, in the scheduler's order, then the rest, newest first.
         $tasks = array_merge(
@@ -603,6 +567,10 @@ final class AiTaskController
         if (!$kinds) throw new HttpError(422, 'No valid task kind.');
         [$in, $params] = Db::in($kinds);
         $project = (int)$r->input('project_id');
+        // Upkeep that is due is queued now, when someone can do it.
+        foreach ($project ? [$project] : array_map('intval', array_column(Db::all('SELECT project_id FROM project_members WHERE user_id = ?', [$me]), 'project_id')) as $p) {
+            if (Access::isMember($p, $me)) \App\Sweeps::due($p);
+        }
         $only = (int)$r->input('task_id');
         $where = ($project ? ' AND t.project_id = ?' : '') . ($only ? ' AND t.id = ?' : '');
         // A client from before this feature would fail these tasks and use up their attempts.
@@ -612,6 +580,7 @@ final class AiTaskController
         foreach (['review', 'lean'] as $newKind) if (!in_array($newKind, $features, true)) $where .= " AND t.kind <> '$newKind'";
         // A procedure goes to a client that runs recipes and has what it needs, or to one with its own code for it.
         $generic = in_array('procedures', $features, true);
+        if (!$generic) $where .= " AND (t.source_type IS NULL OR t.source_type <> 'sweep')"; // a sweep is a recipe
         $caps = array_values(array_filter((array)$r->input('capabilities', []), 'is_string'));
         foreach (Procedures::ids() as $p) {
             $byRecipe = $generic && !array_diff(Procedures::capabilities($p), $caps);
@@ -651,6 +620,7 @@ final class AiTaskController
                     $reads = in_array('extract_comments', (array)$r->input('features', []), true);
                     if ($c['kind'] === 'extract') Db::update('ai_tasks', ['comments_hash' => $c['source_type'] === 'conversation' ? self::snapshotHash($c) : ($reads ? self::commentsHash(self::extractComments($c)) : null)], 'id = :id', ['id' => $c['id']]);
                     $t = self::row((int)$c['id']);
+                    if ($t['source_type'] === 'sweep' && !($t = \App\Sweeps::take($t))) continue; // nothing left: it finished
                     $ctx = self::context($t);
                     $recipe = $generic && Procedures::has((string)$t['kind']) ? ['recipe' => Procedures::recipe($t, $ctx)] : [];
                     Response::json(['task' => self::present($t) + ['lease' => $lease, 'lease_seconds' => self::LEASE_SECONDS, 'publish_private' => (bool)self::snapshot($t)['shared'], 'context' => $ctx] + $recipe]);
@@ -936,7 +906,18 @@ final class AiTaskController
                 Db::all('SELECT f.id, f.label, f.kind, f.title, f.current_revision, r.statement_html, r.glossary_json FROM facts f JOIN fact_revisions r ON r.fact_id = f.id AND r.revision_no = f.current_revision WHERE f.project_id = ? AND f.deleted_at IS NULL AND f.retracted_at IS NULL ORDER BY f.id LIMIT 400', [$pid]));
         }
         if ($t['kind'] === 'consolidate') $ctx += ConsolidationController::context($pid);
-        if ($t['kind'] === 'source_check' && $type === null) {
+        if ($t['kind'] === 'notation' && $type === 'sweep') {
+            // A batch of facts to write again in the agreed notation, each with what its source meant by its symbols.
+            $ctx['facts_to_rewrite'] = [];
+            foreach (self::batchFacts($t) as $fid) {
+                $f = Db::one('SELECT f.id, f.label, f.title, f.kind, f.current_revision, r.statement_html, r.proof_html, r.glossary_json FROM facts f JOIN fact_revisions r ON r.fact_id = f.id AND r.revision_no = f.current_revision WHERE f.id = ?', [$fid]);
+                $ctx['facts_to_rewrite'][] = ['fact_id' => $fid, 'label' => $f['label'], 'title' => $f['title'], 'kind' => $f['kind'],
+                    'statement' => Sanitizer::toText((string)$f['statement_html']), 'proof' => $f['proof_html'] ? Sanitizer::toText((string)$f['proof_html']) : null,
+                    'glossary' => json_decode((string)$f['glossary_json'], true) ?: null,
+                    'sources' => array_values(array_map(fn($s) => ['label' => $s['label'] ?? $s['type'], 'quote' => $s['quote']], array_filter(FactController::presentSources($fid, (int)$f['current_revision']), fn($s) => !$s['hidden'] && $s['covers'] !== 'context')))];
+            }
+        }
+        if ($t['kind'] === 'source_check' && in_array($type, [null, 'sweep'], true)) {
             // A batch: the cited results found in one source, with that document when the project has it.
             $ctx['cited_results'] = []; $docs = [];
             foreach (self::batchFacts($t) as $fid) {
@@ -1139,7 +1120,13 @@ final class AiTaskController
     {
         $result = json_decode((string)($t['result_json'] ?? ''), true) ?: ['fact_ids' => [], 'suggestion_ids' => [], 'reply' => null];
         $subject = $t['document_title'] ?? $t['bib_title'] ?? $t['conversation_title'] ?? $t['question_title'] ?? $t['strategy_title'] ?? $t['fact_title'] ?? null;
-        if ($t['kind'] === 'source_check' && $t['source_type'] === null) {
+        if ($t['source_type'] === 'sweep' && !(json_decode((string)$t['snapshot_json'], true)['facts'] ?? [])) {
+            // A sweep takes its batch when a client takes it.
+            $subject = $t['kind'] === 'notation' ? 'facts not yet in the project notation' : 'cited results not yet checked';
+        } elseif ($t['kind'] === 'notation' && $t['source_type'] === 'sweep') {
+            $n = count(json_decode((string)$t['snapshot_json'], true)['facts']);
+            $subject = "$n fact" . ($n === 1 ? '' : 's');
+        } elseif ($t['kind'] === 'source_check' && in_array($t['source_type'], [null, 'sweep'], true)) {
             // A batch: how many cited results, and the source they were found in.
             $facts = json_decode((string)$t['snapshot_json'], true)['facts'] ?? [];
             $where = $facts ? Db::value("SELECT COALESCE(d.title, b.cite_key, b.title) FROM fact_sources s LEFT JOIN documents d ON s.source_type = 'document' AND d.id = s.source_id
@@ -1166,13 +1153,14 @@ final class AiTaskController
 
     /** Lower runs sooner. */
     private const PRIORITY = ['ask' => 10, 'review' => 20, 'source_check' => 30, 'bib' => 30, 'consolidate' => 40, 'notation' => 40, 'lean' => 40,
-        'derive' => 50, 'notation_rephrase' => 60, 'extract' => 70];
+        'derive' => 50, 'source_sweep' => 55, 'notation_rephrase' => 60, 'extract' => 70];
     /** A member's own request goes before the same work queued by the platform. */
     private const ASKED_BOOST = 10;
 
     public static function priority(string $kind, ?string $sourceType = null): int
     {
-        return self::PRIORITY[$kind === 'notation' && $sourceType === 'fact' ? 'notation_rephrase' : $kind] ?? 50;
+        if ($sourceType === 'sweep' && $kind === 'source_check') return self::PRIORITY['source_sweep'];
+        return self::PRIORITY[$kind === 'notation' && in_array($sourceType, ['fact', 'sweep'], true) ? 'notation_rephrase' : $kind] ?? 50;
     }
 
     /**
@@ -1184,7 +1172,7 @@ final class AiTaskController
     {
         $on = match (true) {
             $kind === 'consolidate' => ['extract'],
-            $kind === 'notation' && $sourceType === 'fact' => ['consolidate', 'notation'],
+            $kind === 'notation' && in_array($sourceType, ['fact', 'sweep'], true) => ['consolidate', 'notation'],
             default => [],
         };
         if (!$on) return [];
@@ -1198,7 +1186,7 @@ final class AiTaskController
     /** The group a task is shown in: its kind, a rewrite in the project notation apart from a review of the notation. */
     public static function group(array $t): string
     {
-        return $t['kind'] === 'notation' && $t['source_type'] === 'fact' ? 'notation_rephrase' : (string)$t['kind'];
+        return $t['kind'] === 'notation' && in_array($t['source_type'], ['fact', 'sweep'], true) ? 'notation_rephrase' : (string)$t['kind'];
     }
 
     /** The tasks a waiting task still waits for. @return list<int> */
