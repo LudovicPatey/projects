@@ -67,26 +67,52 @@ final class AiTaskController
         return self::insertTask($pid, 'consolidate', null, null, null, null, null, "cons:$last:$n");
     }
 
+    /** Cited results checked in one task: one AI session reads a source once for several of them. */
+    public const SOURCE_CHECK_BATCH = 10;
+
     /**
-     * Every cited result that nobody accepted and that no AI has checked yet gets one source check: confirmed, the native prover
-     * may build on it. Only a person still accepts a citation. Once per revision, whatever the verdict, so a failed check is not retried.
-     * Run after facts arrive (extraction, cited results the consolidation writes) and with each consolidation, which also covers older facts.
+     * Every cited result that nobody accepted and that no AI has checked yet gets a source check: confirmed, the native prover
+     * may build on it. Only a person still accepts a citation. Results found in the same source are checked together, by batches,
+     * so that one session reads that source once and the AI list does not fill with one task per fact. Once per revision, whatever
+     * the verdict, so a failed check is not retried. Run after facts arrive (extraction, cited results the consolidation writes)
+     * and with each consolidation, which also covers older facts. @return int the cited results queued
      */
     public static function queueSourceChecks(int $pid, int $limit = 100): int
     {
-        $checked = [];
-        foreach (Db::all('SELECT c.fact_id, c.revision_no FROM fact_source_checks c JOIN facts f ON f.id = c.fact_id WHERE f.project_id = ?', [$pid]) as $c) $checked[$c['fact_id'] . ':' . $c['revision_no']] = true;
-        $queued = 0;
+        $done = [];
+        foreach (Db::all('SELECT c.fact_id, c.revision_no FROM fact_source_checks c JOIN facts f ON f.id = c.fact_id WHERE f.project_id = ?', [$pid]) as $c) $done[$c['fact_id'] . ':' . $c['revision_no']] = true;
+        // What a task already covers, waiting, done or cancelled: one fact (asked by a person, or queued alone before batches), or a batch.
+        foreach (Db::all("SELECT source_type, source_id, dedupe_key, snapshot_json FROM ai_tasks WHERE project_id = ? AND kind = 'source_check'", [$pid]) as $t) {
+            if ($t['source_type'] === null) foreach ((json_decode((string)$t['snapshot_json'], true)['facts'] ?? []) as [$f, $rev]) $done["$f:$rev"] = true;
+            elseif (preg_match('/^srcchk:(\d+):(\d+)$/', (string)$t['dedupe_key'], $m)) $done["$m[1]:$m[2]"] = true;
+        }
+        $groups = []; $n = 0;
         foreach (FactController::graph($pid)['facts'] as $f) {
-            if ($queued >= $limit) break;
+            if ($n >= $limit) break;
             if ($f['basis'] !== 'cited' || $f['status'] !== 'unchecked' || $f['retracted_at'] !== null) continue;
             $rev = (int)$f['current_revision'];
-            $key = 'srcchk:' . $f['id'] . ':' . $rev;
-            if (isset($checked[$f['id'] . ':' . $rev]) || Db::value('SELECT 1 FROM ai_tasks WHERE project_id = ? AND dedupe_key = ?', [$pid, $key])) continue;
-            self::insertTask($pid, 'source_check', 'fact', (int)$f['id'], null, null, null, $key);
-            $queued++;
+            if (isset($done[$f['id'] . ':' . $rev])) continue;
+            // Where the project found it: its results are checked together, with that document at hand.
+            $src = Db::one("SELECT source_type, source_id FROM fact_sources WHERE fact_id = ? AND revision_no = ? AND covers <> 'context' ORDER BY source_type = 'document' DESC, id LIMIT 1", [$f['id'], $rev]);
+            $groups[$src ? $src['source_type'] . ':' . $src['source_id'] : ''][] = [(int)$f['id'], $rev];
+            $n++;
         }
-        return $queued;
+        foreach ($groups as $facts) {
+            foreach (array_chunk($facts, self::SOURCE_CHECK_BATCH) as $batch) {
+                self::insertTask($pid, 'source_check', null, null, null, null, null, 'srcb:' . sha1(json_encode($batch)), null, ['facts' => $batch]);
+            }
+        }
+        return $n;
+    }
+
+    /** The cited results a batch of source checks covers, still in the project, at the revision it was queued for. @return list<int> */
+    public static function batchFacts(array $t): array
+    {
+        $out = [];
+        foreach ((json_decode((string)($t['snapshot_json'] ?? ''), true)['facts'] ?? []) as [$f, $rev]) {
+            if (Db::value('SELECT 1 FROM facts WHERE id = ? AND project_id = ? AND current_revision = ? AND deleted_at IS NULL', [$f, $t['project_id'], $rev])) $out[] = (int)$f;
+        }
+        return $out;
     }
 
     /** "@AI" in a message or a comment asks for the opinion of whichever AI client runs next. */
@@ -104,14 +130,16 @@ final class AiTaskController
         return preg_match('/(?<![\w@.])@AI\b/iu', $text) === 1;
     }
 
-    private static function insertTask(int $pid, string $kind, ?string $sourceType, ?int $sourceId, ?int $versionId, ?int $conversationId, ?string $prompt, ?string $dedupe, ?int $blobId = null, ?array $snapshot = null): int
+    private static function insertTask(int $pid, string $kind, ?string $sourceType, ?int $sourceId, ?int $versionId, ?int $conversationId, ?string $prompt, ?string $dedupe, ?int $blobId = null, ?array $snapshot = null, bool $asked = false): int
     {
         if ($dedupe !== null) {
             $old = Db::value('SELECT id FROM ai_tasks WHERE project_id = ? AND dedupe_key = ?', [$pid, $dedupe]);
             if ($old) return (int)$old;
         }
         $now = Db::now();
+        $after = self::dependencies($pid, $kind, $sourceType);
         return Db::insert('ai_tasks', [
+            'priority' => self::priority($kind, $sourceType) - ($asked ? self::ASKED_BOOST : 0), 'after_json' => $after ? json_encode($after) : null,
             'project_id' => $pid, 'kind' => $kind, 'status' => 'pending', 'source_type' => $sourceType, 'source_id' => $sourceId,
             'version_id' => $versionId, 'source_blob_id' => $blobId, 'conversation_id' => $conversationId, 'prompt_text' => $prompt, 'snapshot_json' => $snapshot ? json_encode($snapshot) : null,
             'requested_by' => Auth::id(), 'dedupe_key' => $dedupe, 'created_at' => $now, 'updated_at' => $now,
@@ -126,7 +154,10 @@ final class AiTaskController
         Access::member($pid);
         self::expire();
         $me = Auth::id();
-        $tasks = Db::all(self::listSql() . ' WHERE t.project_id = ? AND ' . self::visibleSql('t') . ' ORDER BY t.id DESC LIMIT 200', [$pid, $me]);
+        // What runs next first, in the scheduler's order, then the rest, newest first.
+        $tasks = array_merge(
+            Db::all(self::listSql() . " WHERE t.project_id = ? AND t.status IN ('running', 'pending') AND " . self::visibleSql('t') . " ORDER BY t.status = 'running' DESC, t.priority, t.id LIMIT 300", [$pid, $me]),
+            Db::all(self::listSql() . " WHERE t.project_id = ? AND t.status NOT IN ('running', 'pending') AND " . self::visibleSql('t') . ' ORDER BY t.id DESC LIMIT 200', [$pid, $me]));
         $counts = ['pending' => 0, 'running' => 0, 'done' => 0, 'failed' => 0, 'cancelled' => 0];
         foreach (Db::all('SELECT t.status, COUNT(*) AS n FROM ai_tasks t WHERE t.project_id = ? AND ' . self::visibleSql('t') . ' GROUP BY t.status', [$pid, $me]) as $c) {
             $counts[$c['status']] = (int)$c['n'];
@@ -138,7 +169,7 @@ final class AiTaskController
         $suggestions = Db::all(
             "SELECT s.*, u.name AS ai_user_name, d.name AS decided_by_name FROM bib_suggestions s LEFT JOIN users u ON u.id = s.ai_user_id LEFT JOIN users d ON d.id = s.decided_by
              WHERE s.project_id = ? ORDER BY CASE s.status WHEN 'proposed' THEN 0 ELSE 1 END, s.id DESC LIMIT 100", [$pid]);
-        Response::json(['tasks' => array_map([self::class, 'present'], $tasks), 'counts' => $counts, 'clients' => $clients, 'computers' => self::computers($pid),
+        Response::json(['tasks' => array_map([self::class, 'present'], $tasks), 'groups' => self::groups($pid, $me), 'counts' => $counts, 'clients' => $clients, 'computers' => self::computers($pid),
             'suggestions' => array_map([self::class, 'presentSuggestion'], $suggestions)]);
     }
 
@@ -191,7 +222,7 @@ final class AiTaskController
             }
             $snapshot = self::conversationSnapshot($pid, $sourceId, $private);
         }
-        $id = self::insertTask($pid, $kind, $sourceType, $sourceId, $versionId, $sourceType === 'conversation' ? $sourceId : null, $prompt !== '' ? $prompt : null, null, $blobId, $snapshot);
+        $id = self::insertTask($pid, $kind, $sourceType, $sourceId, $versionId, $sourceType === 'conversation' ? $sourceId : null, $prompt !== '' ? $prompt : null, null, $blobId, $snapshot, !Auth::isAi());
         if ($snapshot['shared'] ?? false) {
             $subject = (string)Db::value('SELECT subject FROM conversations WHERE id = ?', [$sourceId]);
             foreach (Db::all("SELECT u.id FROM conversation_participants cp JOIN users u ON u.id = cp.user_id WHERE cp.conversation_id = ? AND u.kind = 'human' AND u.id <> ?", [$sourceId, Auth::id()]) as $u) {
@@ -594,9 +625,10 @@ final class AiTaskController
                 "SELECT t.* FROM ai_tasks t JOIN project_members m ON m.project_id = t.project_id AND m.user_id = ?
                  WHERE t.kind IN $in AND (t.status = 'pending' OR (t.status = 'running' AND t.lease_until < ?))
                    AND (t.not_before IS NULL OR t.not_before <= ?) AND " . self::visibleSql('t') . "$where
-                 ORDER BY CASE t.kind WHEN 'ask' THEN 0 ELSE 1 END, t.id LIMIT 100 OFFSET $offset",
+                 ORDER BY t.priority, t.id LIMIT 100 OFFSET $offset",
                 array_merge([$me], $params, [$now, $now, $me], $project ? [$project] : [], $only ? [$only] : []));
             foreach ($candidates as $c) {
+                if (self::waitingFor($c)) continue; // after the tasks it depends on
                 if ($c['kind'] === 'extract' && $c['source_type'] === 'conversation' && ($why = self::conversationBlocked($c))) {
                     Db::run("UPDATE ai_tasks SET status = 'failed', lease_hash = NULL, lease_until = NULL, error_text = ?, finished_at = ?, updated_at = ? WHERE id = ? AND status IN ('pending', 'running')", [$why, $now, $now, $c['id']]);
                     continue;
@@ -904,6 +936,19 @@ final class AiTaskController
                 Db::all('SELECT f.id, f.label, f.kind, f.title, f.current_revision, r.statement_html, r.glossary_json FROM facts f JOIN fact_revisions r ON r.fact_id = f.id AND r.revision_no = f.current_revision WHERE f.project_id = ? AND f.deleted_at IS NULL AND f.retracted_at IS NULL ORDER BY f.id LIMIT 400', [$pid]));
         }
         if ($t['kind'] === 'consolidate') $ctx += ConsolidationController::context($pid);
+        if ($t['kind'] === 'source_check' && $type === null) {
+            // A batch: the cited results found in one source, with that document when the project has it.
+            $ctx['cited_results'] = []; $docs = [];
+            foreach (self::batchFacts($t) as $fid) {
+                $f = Db::one('SELECT f.id, f.label, f.title, f.current_revision, r.statement_html, r.external_refs_json FROM facts f JOIN fact_revisions r ON r.fact_id = f.id AND r.revision_no = f.current_revision WHERE f.id = ?', [$fid]);
+                $srcs = array_values(array_filter(FactController::presentSources($fid, (int)$f['current_revision']), fn($s) => !$s['hidden'] && $s['covers'] !== 'context'));
+                $ctx['cited_results'][] = ['id' => $fid, 'label' => $f['label'], 'title' => $f['title'], 'statement' => Sanitizer::toText((string)$f['statement_html']),
+                    'references' => json_decode((string)$f['external_refs_json'], true), 'sources' => array_map(fn($s) => ['type' => $s['type'], 'label' => $s['label'] ?? $s['type'], 'page' => $s['page'] ?? null, 'quote' => $s['quote']], $srcs)];
+                $doc = Db::value("SELECT source_id FROM fact_sources WHERE fact_id = ? AND revision_no = ? AND source_type = 'document' AND covers <> 'context' LIMIT 1", [$fid, $f['current_revision']]);
+                if ($doc) $docs[(int)$doc] = true;
+            }
+            if (count($docs) === 1) $ctx['document'] = self::documentContext((int)array_key_first($docs), null);
+        }
         if ($t['kind'] === 'extract') {
             $ctx['comments'] = array_slice(array_map(function ($c) {
                 $a = json_decode((string)$c['anchor_json'], true);
@@ -1094,17 +1139,102 @@ final class AiTaskController
     {
         $result = json_decode((string)($t['result_json'] ?? ''), true) ?: ['fact_ids' => [], 'suggestion_ids' => [], 'reply' => null];
         $subject = $t['document_title'] ?? $t['bib_title'] ?? $t['conversation_title'] ?? $t['question_title'] ?? $t['strategy_title'] ?? $t['fact_title'] ?? null;
+        if ($t['kind'] === 'source_check' && $t['source_type'] === null) {
+            // A batch: how many cited results, and the source they were found in.
+            $facts = json_decode((string)$t['snapshot_json'], true)['facts'] ?? [];
+            $where = $facts ? Db::value("SELECT COALESCE(d.title, b.cite_key, b.title) FROM fact_sources s LEFT JOIN documents d ON s.source_type = 'document' AND d.id = s.source_id
+                                         LEFT JOIN bib_entries b ON s.source_type = 'bib' AND b.id = s.source_id WHERE s.fact_id = ? AND s.covers <> 'context' ORDER BY s.source_type = 'document' DESC, s.id LIMIT 1", [$facts[0][0]]) : null;
+            $subject = count($facts) . ' cited result' . (count($facts) === 1 ? '' : 's') . ($where ? " found in $where" : '');
+        }
         foreach (['id', 'project_id', 'source_id', 'version_id', 'conversation_id', 'requested_by', 'claimed_by', 'attempts'] as $k) $t[$k] = $t[$k] === null ? null : (int)$t[$k];
         $out = array_intersect_key($t, array_flip(['id', 'project_id', 'kind', 'status', 'source_type', 'source_id', 'version_id', 'conversation_id', 'prompt_text', 'requested_by', 'requested_by_name',
             'claimed_by', 'claimed_by_name', 'client_name', 'started_at', 'ai_model', 'ai_generation_ms', 'attempts', 'summary_text', 'error_text', 'created_at', 'updated_at', 'finished_at']));
         $waiting = $t['status'] === 'pending' ? self::extractedBy($t) : [];
-        return $out + ['subject' => $subject, 'result' => $result, 'already_done_by' => $waiting];
+        return $out + ['subject' => $subject, 'result' => $result, 'already_done_by' => $waiting, 'priority' => (int)($t['priority'] ?? 50),
+            'group' => self::group($t), 'waits_for' => in_array($t['status'], ['pending', 'running'], true) ? self::waitingFor($t) : []];
     }
 
     private static function presentSuggestion(array $s): array
     {
         foreach (['id', 'project_id', 'task_id', 'bib_id', 'decided_by', 'ai_user_id', 'ai_generation_ms'] as $k) $s[$k] = $s[$k] === null ? null : (int)$s[$k];
         return $s;
+    }
+
+    // ----- the scheduler -----
+    // AI clients take the waiting task of lowest priority first, then the oldest, among those whose dependencies are finished.
+    // Light work someone waits for goes before heavy background work: an @AI question before the extraction of a long paper.
+
+    /** Lower runs sooner. */
+    private const PRIORITY = ['ask' => 10, 'review' => 20, 'source_check' => 30, 'bib' => 30, 'consolidate' => 40, 'notation' => 40, 'lean' => 40,
+        'derive' => 50, 'notation_rephrase' => 60, 'extract' => 70];
+    /** A member's own request goes before the same work queued by the platform. */
+    private const ASKED_BOOST = 10;
+
+    public static function priority(string $kind, ?string $sourceType = null): int
+    {
+        return self::PRIORITY[$kind === 'notation' && $sourceType === 'fact' ? 'notation_rephrase' : $kind] ?? 50;
+    }
+
+    /**
+     * The tasks this one must wait for, among those open now. A consolidation reads the whole database: after the extractions
+     * that are adding facts to it. A fact rewritten in the project notation: after the consolidation or the review of the notation
+     * that may change that notation. @return list<int>
+     */
+    private static function dependencies(int $pid, string $kind, ?string $sourceType): array
+    {
+        $on = match (true) {
+            $kind === 'consolidate' => ['extract'],
+            $kind === 'notation' && $sourceType === 'fact' => ['consolidate', 'notation'],
+            default => [],
+        };
+        if (!$on) return [];
+        $out = [];
+        foreach (Db::all("SELECT id, kind, source_type FROM ai_tasks WHERE project_id = ? AND status IN ('pending', 'running') ORDER BY id", [$pid]) as $t) {
+            if (in_array(self::group($t), $on, true)) $out[] = (int)$t['id'];
+        }
+        return $out;
+    }
+
+    /** The group a task is shown in: its kind, a rewrite in the project notation apart from a review of the notation. */
+    public static function group(array $t): string
+    {
+        return $t['kind'] === 'notation' && $t['source_type'] === 'fact' ? 'notation_rephrase' : (string)$t['kind'];
+    }
+
+    /** The tasks a waiting task still waits for. @return list<int> */
+    public static function waitingFor(array $t): array
+    {
+        $after = array_map('intval', json_decode((string)($t['after_json'] ?? ''), true) ?: []);
+        if (!$after) return [];
+        [$in, $p] = Db::in($after);
+        return array_map('intval', array_column(Db::all("SELECT id FROM ai_tasks WHERE id IN $in AND status IN ('pending', 'running')", $p), 'id'));
+    }
+
+    /**
+     * The queue by kind, since the order is the scheduler's: for each kind, its tasks since the oldest one still open (or of the
+     * last 7 days when none is), by status, so that a bar shows how many are done. Running work first, then what runs next.
+     */
+    private static function groups(int $pid, int $me): array
+    {
+        $week = gmdate('Y-m-d H:i:s', time() - 7 * 86400);
+        $rows = Db::all("SELECT t.id, t.kind, t.source_type, t.status, t.created_at, t.priority, t.after_json FROM ai_tasks t WHERE t.project_id = ? AND " . self::visibleSql('t') . "
+                         AND (t.status IN ('pending', 'running') OR t.created_at >= ?) ORDER BY t.id", [$pid, $me, $week]);
+        $by = [];
+        foreach ($rows as $t) $by[self::group($t)][] = $t;
+        $out = [];
+        foreach ($by as $g => $list) {
+            $open = array_values(array_filter($list, fn($t) => in_array($t['status'], ['pending', 'running'], true)));
+            $since = $open ? min(array_column($open, 'created_at')) : $week;
+            $counts = ['pending' => 0, 'running' => 0, 'done' => 0, 'failed' => 0, 'cancelled' => 0];
+            foreach ($list as $t) if ($t['created_at'] >= $since) $counts[$t['status']]++;
+            $pending = array_values(array_filter($open, fn($t) => $t['status'] === 'pending'));
+            $out[] = ['group' => $g, 'counts' => $counts, 'total' => array_sum($counts), 'since' => $since, 'latest' => max(array_column($list, 'created_at')),
+                'priority' => $pending ? min(array_map(fn($t) => (int)$t['priority'], $pending)) : null,
+                // Every waiting task waits for others: say so rather than look stuck.
+                'blocked' => $pending && !$counts['running'] && !array_filter($pending, fn($t) => !self::waitingFor($t))];
+        }
+        usort($out, fn($a, $b) => [$b['counts']['running'] > 0, $a['priority'] === null, $a['priority'] ?? 0, $b['latest']] <=> [$a['counts']['running'] > 0, $b['priority'] === null, $b['priority'] ?? 0, $a['latest']]);
+        return $out;
     }
 
     /** Running tasks whose client vanished after its last attempt stop being offered. */

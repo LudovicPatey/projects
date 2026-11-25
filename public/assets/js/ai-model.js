@@ -6,7 +6,7 @@ export const AI_KINDS = {
   bib: { label: 'Find references', short: 'References', icon: 'book', hint: 'Search the literature. A person validates each suggestion.', needs: null },
   derive: { label: 'Prove new facts', short: 'Proof search', icon: 'graph', hint: 'Waits until a member starts a proof search from their AI client, with their own time and usage limits. Results arrive unchecked.', needs: null },
   review: { label: 'Independent review', short: 'Review', icon: 'check-circle', hint: 'A model independent of the author checks the proof and records a verdict.', needs: 'fact' },
-  notation: { label: 'Review the notation', short: 'Notation', icon: 'book', hint: 'Looks at the notation every fact defines for itself, and proposes making shared symbols global, with one meaning per symbol. People decide.', needs: null },
+  notation: { label: 'Review the notation', short: 'Notation', icon: 'book', hint: 'Looks at the notation every fact defines for itself, and proposes making shared symbols global, with one meaning per symbol. The consolidation settles them, and people can confirm or undo its choices.', needs: null },
   consolidate: { label: 'Consolidate the facts', short: 'Consolidation', icon: 'layers', hint: 'Reads the whole facts database and proposes what no single extraction sees: the same result in two sources, missing dependencies, remarks that are open questions, subject tags, and the cited results that proofs use. Queued after each round of extractions. People decide.', needs: null },
   source_check: { label: 'Check the source', short: 'Source check', icon: 'book', hint: 'Reads the source of a result cited without proof, and says whether it states the result as written. Evidence only: a person still accepts the citation.', needs: 'fact' },
   lean: { label: 'Lean proof', short: 'Lean', icon: 'code', hint: 'Writes a Lean proof, kept only if it compiles. A person must still compare the Lean statement with the fact.', needs: 'fact' },
@@ -53,8 +53,38 @@ export function filterTasks(tasks, filter) {
   return tasks;
 }
 
+/** A group of the queue in a few words: a rewrite in the project notation is not a review of the notation. */
+export function groupLabel(group) {
+  if (group === 'notation_rephrase') return 'Rewrite facts in the project notation';
+  if (group === 'source_check') return 'Check the sources of cited results';
+  return AI_KINDS[group]?.label || 'AI tasks';
+}
+
+/** "3 of 12 done · 1 running · 8 waiting · 1 failed", and why nothing starts when every waiting task waits for others. */
+export function groupSummary(g) {
+  const c = g.counts || {};
+  const finished = (c.done || 0) + (c.failed || 0) + (c.cancelled || 0);
+  const parts = [`${c.done || 0} of ${g.total} done`];
+  if (c.running) parts.push(`${c.running} running`);
+  if (c.pending) parts.push(`${c.pending} waiting`);
+  if (c.failed) parts.push(`${c.failed} failed`);
+  if (c.cancelled) parts.push(`${c.cancelled} cancelled`);
+  if (g.blocked) parts.push('after other work');
+  else if (finished === g.total && g.total) parts.push('finished');
+  return parts.join(' · ');
+}
+
+/**
+ * The queue by kind, in the scheduler's order (the server's): each group with its tasks, those that will run first first.
+ * A filter keeps the groups that have tasks in it, with only those tasks.
+ */
+export function queueGroups(groups, tasks, filter = 'all') {
+  return (groups || []).map((g) => ({ ...g, label: groupLabel(g.group), tasks: filterTasks((tasks || []).filter((t) => t.group === g.group), filter) }))
+    .filter((g) => filter === 'all' || g.tasks.length);
+}
+
 export function taskTitle(t) {
-  const k = AI_KINDS[t.kind]?.label || 'AI task';
+  const k = t.kind === 'notation' && t.source_type === 'fact' ? 'Rewrite in the project notation' : (AI_KINDS[t.kind]?.label || 'AI task');
   if (t.subject) return `${k}: ${t.subject}`;
   if (t.source_type === 'message') return 'Question in a conversation';
   if (t.source_type === 'comment') return 'Question in a comment';

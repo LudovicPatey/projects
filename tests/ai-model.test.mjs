@@ -115,3 +115,23 @@ test('the download page offers a GitHub release only when it is safe and compati
   assert.equal(mergeRelease({ installers: [local] }, release).installers[0], local, 'a newer local installer stays');
   assert.equal(mergeRelease({ installers: [{ system: 'mac-arm64', version: '1.0.0' }] }, release).installers[0].url, url);
 });
+
+test('the queue shows one group per kind, in the server\'s order, with its tasks and how far it got', async () => {
+  const { queueGroups, groupLabel, groupSummary } = await import('../public/assets/js/ai-model.js');
+  const counts = (o) => ({ pending: 0, running: 0, done: 0, failed: 0, cancelled: 0, ...o });
+  const groups = [{ group: 'notation_rephrase', counts: counts({ done: 3, running: 1, pending: 8 }), total: 12, blocked: false },
+    { group: 'extract', counts: counts({ pending: 2 }), total: 2, blocked: true }, { group: 'ask', counts: counts({ done: 1, failed: 1 }), total: 2, blocked: false }];
+  const tasks = [{ id: 5, group: 'notation_rephrase', status: 'running' }, { id: 4, group: 'extract', status: 'pending' }, { id: 3, group: 'ask', status: 'failed' }, { id: 2, group: 'notation_rephrase', status: 'done' }];
+  const all = queueGroups(groups, tasks);
+  assert.deepEqual(all.map((g) => [g.group, g.label, g.tasks.map((t) => t.id)]), [['notation_rephrase', 'Rewrite facts in the project notation', [5, 2]], ['extract', 'Extract facts', [4]], ['ask', 'Ask a question', [3]]]);
+  assert.deepEqual(queueGroups(groups, tasks, 'failed').map((g) => g.group), ['ask'], 'a filter keeps the groups that have tasks in it');
+  assert.equal(groupSummary(groups[0]), '3 of 12 done · 1 running · 8 waiting');
+  assert.equal(groupSummary(groups[1]), '0 of 2 done · 2 waiting · after other work');
+  assert.equal(groupSummary(groups[2]), '1 of 2 done · 1 failed · finished');
+  assert.equal(groupLabel('source_check'), 'Check the sources of cited results');
+});
+
+test('a rewrite of one fact is not called a review of the notation', () => {
+  assert.equal(taskTitle({ kind: 'notation', source_type: 'fact', subject: 'Lemma 2' }), 'Rewrite in the project notation: Lemma 2');
+  assert.equal(taskTitle({ kind: 'notation', source_type: null }), 'Review the notation');
+});

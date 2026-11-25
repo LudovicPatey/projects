@@ -2,16 +2,17 @@ import { api, expandFacts } from '../api.js';
 import { store, link, attempt, refreshCounters, toast } from '../store.js';
 import { timeAgo, fullDate } from '../util.js';
 import { Pill, Kpi, StackBar } from '../dashboard.js';
-import { bibProgress, privateExtractionNotice, clientStatus, computeTime, timeByKind, CLIENT_PERIODS, AI_KINDS, TASK_SEGMENTS, TASK_STATUS, filterTasks, requestBody, requestError, resultLinks, suggestionLink, taskActions, taskTitle } from '../ai-model.js';
+import { bibProgress, privateExtractionNotice, clientStatus, computeTime, timeByKind, CLIENT_PERIODS, AI_KINDS, TASK_SEGMENTS, TASK_STATUS, filterTasks, requestBody, requestError, resultLinks, suggestionLink, taskActions, taskTitle, queueGroups, groupSummary } from '../ai-model.js';
 
 export const AiView = {
   components: { Pill, Kpi, StackBar },
   props: { pid: Number, id: Number, query: Object },
   data() {
-    return { d: null, filter: 'all', period: 'd7', draft: { kind: 'bib', prompt: '', document: '', question: '', fact: '' }, documents: [], references: [], conversations: [], questions: [], facts: [], busy: false, timer: null, bibData: null };
+    return { d: null, filter: 'all', period: 'd7', draft: { kind: 'bib', prompt: '', document: '', question: '', fact: '' }, documents: [], references: [], conversations: [], questions: [], facts: [], busy: false, timer: null, bibData: null, openGroups: {} };
   },
   computed: {
     tasks() { return filterTasks(this.d?.tasks || [], this.filter); },
+    queue() { return queueGroups(this.d?.groups, this.d?.tasks, this.filter); },
     task() { return (this.d?.tasks || []).find((t) => t.id === this.id) || null; },
     proposed() { return (this.d?.suggestions || []).filter((s) => s.status === 'proposed'); },
     decided() { return (this.d?.suggestions || []).filter((s) => s.status !== 'proposed').slice(0, 5); },
@@ -42,7 +43,7 @@ export const AiView = {
     'query.suggestion': { handler() { this.reveal(); } },
   },
   methods: {
-    link, timeAgo, fullDate, taskTitle, resultLinks, suggestionLink, clientStatus, computeTime,
+    link, timeAgo, fullDate, taskTitle, groupSummary, resultLinks, suggestionLink, clientStatus, computeTime,
     async load() {
       const r = await attempt(() => api.get(`api/projects/${this.pid}/ai`));
       if (r) { this.d = r; this.$nextTick(() => this.reveal()); }
@@ -140,12 +141,23 @@ export const AiView = {
               <div class="seg small"><button v-for="f in [['all','All'],['open','Open'],['done','Done'],['failed','Failed']]" :key="f[0]" :class="{on: filter === f[0]}" @click="filter = f[0]">{{ f[1] }}</button></div></header>
             <stack-bar :counts="d.counts" :segments="segments" label="Tasks by status"/>
             <div class="ai-list">
-              <a v-for="t in tasks" :key="t.id" class="ai-row" :class="{active: t.id === id}" :href="t.id === id ? link('ai') : link('ai', t.id)">
-                <span class="action-icon t-info"><icon :name="kinds[t.kind]?.icon || 'sparkles'" :size="14"/></span>
-                <span class="ai-row-main"><b><math-text :text="taskTitle(t)"/></b><small>{{ t.requested_by_name || 'Platform' }} · {{ timeAgo(t.created_at) }}<template v-if="t.ai_model"> · {{ t.ai_model }}</template><template v-if="t.already_done_by?.length"> · waits for a model not weaker than {{ t.already_done_by.join(', ') }}</template></small></span>
-                <span class="pill" :class="'t-' + statuses[t.status].tone">{{ statuses[t.status].short }}</span>
-              </a>
-              <div v-if="!tasks.length" class="d-empty">No task here. Upload a file, write @AI in a discussion, or make a request.</div>
+              <div v-for="g in queue" :key="g.group" class="ai-qgroup" :class="{open: openGroups[g.group]}">
+                <button type="button" class="ai-row ai-group" :aria-expanded="!!openGroups[g.group]" @click="openGroups[g.group] = !openGroups[g.group]">
+                  <span class="action-icon t-info"><icon :name="kinds[g.group === 'notation_rephrase' ? 'notation' : g.group]?.icon || 'sparkles'" :size="14"/></span>
+                  <span class="ai-row-main"><b>{{ g.label }}</b>
+                    <span class="ai-progress" role="img" :aria-label="groupSummary(g)"><i v-for="s in segments" v-show="g.counts[s[0]]" :key="s[0]" :style="{flexGrow: g.counts[s[0]], background: s[2]}"></i><i v-if="g.counts.cancelled" :style="{flexGrow: g.counts.cancelled}" class="off"></i></span>
+                    <small>{{ groupSummary(g) }}</small></span>
+                  <icon name="chevron" :size="15"/>
+                </button>
+                <template v-if="openGroups[g.group] || g.tasks.some((x) => x.id === id)">
+                  <a v-for="t in g.tasks.slice(0, 60)" :key="t.id" class="ai-row ai-row-in" :class="{active: t.id === id}" :href="t.id === id ? link('ai') : link('ai', t.id)">
+                    <span class="ai-row-main"><b><math-text :text="t.subject || taskTitle(t)"/></b><small>{{ t.requested_by_name || 'Platform' }} · {{ timeAgo(t.created_at) }}<template v-if="t.ai_model"> · {{ t.ai_model }}</template><template v-if="t.waits_for?.length"> · after {{ t.waits_for.length }} other task{{ t.waits_for.length > 1 ? 's' : '' }}</template><template v-if="t.already_done_by?.length"> · waits for a model not weaker than {{ t.already_done_by.join(', ') }}</template></small></span>
+                    <span class="pill" :class="'t-' + statuses[t.status].tone">{{ statuses[t.status].short }}</span>
+                  </a>
+                  <small v-if="g.tasks.length > 60" class="muted ai-more">And {{ g.tasks.length - 60 }} more.</small>
+                </template>
+              </div>
+              <div v-if="!queue.length" class="d-empty">No task here. Upload a file, write @AI in a discussion, or make a request.</div>
             </div>
           </section>
         </div>

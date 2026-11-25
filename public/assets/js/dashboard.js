@@ -80,7 +80,9 @@ export const ActivityFeed = {
   methods: { timeAgo, fullDate, activityVerb, href(x) { return refHref(x.ref, this.pid); } },
   template: `<ol class="feed"><li v-for="x in items" :key="x.id">
       <avatar v-if="x.actor" :name="x.actor.name" :id="x.actor.id" :kind="x.actor.kind" :size="26"/><span v-else class="feed-ai"><icon name="bot" :size="14"/></span>
-      <div><p><b>{{ x.actor ? x.actor.name : 'An AI client' }}</b> {{ activityVerb(x.kind) }} <a :href="href(x)"><icon :name="types[x.ref.type].icon" :size="12"/> <math-text :text="x.ref.label"/></a></p>
+      <div><p v-if="(x.count || 1) > 1"><b>{{ x.actor ? x.actor.name : 'An AI client' }}</b> {{ activityVerb(x.kind) }} {{ x.count }} {{ types[x.ref.type].plural.toLowerCase() }}:
+        <template v-for="(r, i) in [x.ref, ...(x.more || [])]" :key="r.key"><a :href="href({ ref: r })"><icon :name="types[r.type].icon" :size="12"/> <math-text :text="r.label"/></a>{{ i < (x.more || []).length ? ', ' : '' }}</template><template v-if="x.count > 1 + (x.more || []).length"> and {{ x.count - 1 - x.more.length }} more</template></p>
+      <p v-else><b>{{ x.actor ? x.actor.name : 'An AI client' }}</b> {{ activityVerb(x.kind) }} <a :href="href(x)"><icon :name="types[x.ref.type].icon" :size="12"/> <math-text :text="x.ref.label"/></a></p>
       <time :title="fullDate(x.at)">{{ timeAgo(x.at) }}</time></div></li>
     <li v-if="!items.length" class="d-empty">No activity yet.</li></ol>`,
 };

@@ -52,7 +52,7 @@ import webbrowser
 import zipfile
 import zlib
 
-VERSION = "1.18.0"
+VERSION = "1.18.1"
 API_LEVEL = 2  # raise with the server's AiTaskController::API_LEVEL when a client needs new server features
 GITHUB_REPO = "LudovicPatey/projects"
 KINDS = ["extract", "ask", "bib", "derive", "review", "lean", "notation", "consolidate"]
@@ -5730,7 +5730,7 @@ UI_HTML = r'''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta n
 :root{color-scheme:light dark;--bg:#f4f5f8;--panel:#fff;--line:#e3e6ec;--text:#1c2230;--muted:#667085;--accent:#4338ca;--soft:#eef0ff;--good:#0f766e;--goodbg:#e6f6f3;--warn:#b45309;--warnbg:#fff6e6;--bad:#b42318;--badbg:#fdecea;--rail:#1e1b4b}
 @media(prefers-color-scheme:dark){:root{--bg:#12131c;--panel:#1b1d2a;--line:#2d3042;--text:#e8e9f2;--muted:#a0a5b8;--accent:#a5a7ff;--soft:#2a2b52;--good:#5eead4;--goodbg:#123a36;--warn:#fbbf24;--warnbg:#3a2d10;--bad:#fca5a5;--badbg:#431c1c;--rail:#171634}}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
-.app{display:grid;grid-template-columns:190px minmax(0,1fr);min-height:100vh}nav{background:var(--rail);color:#fff;padding:18px 10px;display:flex;flex-direction:column;gap:3px}
+.app{display:grid;grid-template-columns:190px minmax(0,1fr);min-height:100vh;align-items:start}nav{background:var(--rail);color:#fff;padding:18px 10px;display:flex;flex-direction:column;gap:3px;position:sticky;top:0;height:100vh;overflow-y:auto}
 .brand{font-weight:800;font-size:15px;padding:2px 10px 16px}nav button{all:unset;cursor:pointer;padding:9px 11px;border-radius:8px;color:#c7c9f0;font-weight:600}nav button:hover,nav button:focus-visible{background:#ffffff18}nav button.on{background:#ffffff24;color:#fff}
 main{padding:24px;max-width:980px;width:100%}h1{font-size:23px;margin:0 0 3px}.sub{color:var(--muted);margin:0 0 18px}h2{font-size:15px;margin:0 0 10px}
 .panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:14px}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.grid .panel{margin:0 0 0}.stack{display:grid;gap:14px;margin-bottom:14px}
@@ -5750,7 +5750,7 @@ button.link{all:unset;cursor:pointer;color:var(--accent);font-weight:600}button.
 .savebar{position:sticky;bottom:12px;z-index:5;display:flex;align-items:center;gap:8px;margin-top:14px;padding:10px 12px 10px 16px;border:1px solid var(--accent);border-radius:10px;background:var(--panel);box-shadow:0 8px 24px #0002}.savebar span{flex:1;font-weight:650}
 @media(max-width:900px){.presets{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:680px){.wrow{grid-template-columns:minmax(0,1fr)}.wmodel{padding-left:47px}.wrow>.btn{justify-self:start;margin-left:47px}.hours{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media(max-width:680px){.app{display:block}nav{flex-direction:row;overflow-x:auto;padding:8px}.brand{display:none}nav button{flex:none}.ver{margin:0 0 0 auto;flex:none;display:flex;align-items:center;gap:8px;padding:0 6px}.ver small:first-child,.ver a{display:none}.update{flex-wrap:wrap}main{padding:16px}.grid{grid-template-columns:minmax(0,1fr)}.hero{flex-wrap:wrap}.hero .btn{width:100%}}
+@media(max-width:680px){.app{display:block}nav{flex-direction:row;overflow-x:auto;padding:8px;position:static;height:auto}.brand{display:none}nav button{flex:none}.ver{margin:0 0 0 auto;flex:none;display:flex;align-items:center;gap:8px;padding:0 6px}.ver small:first-child,.ver a{display:none}.update{flex-wrap:wrap}main{padding:16px}.grid{grid-template-columns:minmax(0,1fr)}.hero{flex-wrap:wrap}.hero .btn{width:100%}}
 </style></head><body><div class="app"><nav aria-label="Sections"><div class="brand">Open Questions AI</div><button data-v="home">Home</button><button data-v="work">Work</button><button data-v="limits">Limits</button><button data-v="danus">Prove new facts</button><button data-v="backup">Backups</button><button data-v="account">Accounts</button><div class=ver id=ver></div></nav><main id="m">Loading…</main></div>
 <script>
 const T='__TOKEN__';const VIEWS=['home','work','limits','danus','backup','account'];let S=null,view=VIEWS.includes(location.hash.slice(1))?location.hash.slice(1):'home',draft=null,msg='',paint=0,R=null,O={},checking=false,updating=false,BD=null,CF={},connectErr='',connecting=false,pressing=false;

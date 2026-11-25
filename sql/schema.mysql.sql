@@ -702,6 +702,8 @@ CREATE TABLE IF NOT EXISTS ai_tasks (
   prompt_text TEXT NULL,
   requested_by INT UNSIGNED NULL,
   dedupe_key VARCHAR(60) NULL,
+  priority SMALLINT NOT NULL DEFAULT 50,  -- lower runs sooner: the scheduler's order (AiTaskController::PRIORITY)
+  after_json TEXT NULL,                   -- ids of the tasks it waits for: it is offered once none of them is waiting or running
   attempts INT UNSIGNED NOT NULL DEFAULT 0,
   not_before DATETIME NULL,
   lease_hash CHAR(64) NULL,
@@ -720,6 +722,7 @@ CREATE TABLE IF NOT EXISTS ai_tasks (
   finished_at DATETIME NULL,
   UNIQUE KEY uq_ai_task_dedupe (project_id, dedupe_key),
   KEY idx_ai_task_queue (status, kind, id),
+  KEY idx_ai_task_schedule (status, priority, id),
   FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
   FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
   FOREIGN KEY (requested_by) REFERENCES users(id) ON DELETE SET NULL,
@@ -829,4 +832,20 @@ CREATE TABLE IF NOT EXISTS fact_highlight_dismissals (
   created_at DATETIME NOT NULL,
   PRIMARY KEY (user_id, fact_id),
   FOREIGN KEY (fact_id) REFERENCES facts(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Keeps a device signed in when its PHP session is gone (a phone closing the tab, the host clearing idle sessions).
+-- The cookie holds the selector and a secret; only the secret's hash is stored. Signing out removes the row.
+CREATE TABLE IF NOT EXISTS login_tokens (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  user_id INT UNSIGNED NOT NULL,
+  selector CHAR(24) NOT NULL,
+  token_hash CHAR(64) NOT NULL,
+  user_agent VARCHAR(255) NULL,
+  created_at DATETIME NOT NULL,
+  last_used_at DATETIME NOT NULL,
+  expires_at DATETIME NOT NULL,
+  UNIQUE KEY uq_login_selector (selector),
+  KEY idx_login_user (user_id),
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

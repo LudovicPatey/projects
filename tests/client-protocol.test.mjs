@@ -13,9 +13,15 @@ const CLIENT = path.resolve('client/oq.py');
 let app; let ann; let key; let tmp;
 
 const asClient = (url, ua) => fetch(app.base + url, { headers: { Authorization: `Bearer ${key}`, ...(ua ? { 'User-Agent': ua } : {}) } });
-const setMinimum = (v) => {
+// The running server may serve its cached copy of the file for a moment: wait until it reports the new minimum.
+const setMinimum = async (v) => {
   const f = path.join(app.dir, 'src/ClientProtocol.php');
   fs.writeFileSync(f, fs.readFileSync(f, 'utf8').replace(/const MIN_VERSION = '[^']+'/, `const MIN_VERSION = '${v}'`));
+  for (let i = 0; i < 50; i++) {
+    if ((await (await fetch(`${app.base}/api/client/info`)).json()).min_version === v) return;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  throw new Error(`the server did not take the minimum ${v}`);
 };
 
 before(async () => {
@@ -70,7 +76,7 @@ test('code is read through strings and comments, and cosmetic edits do not count
 });
 
 test('the platform refuses an official client older than the minimum, and only that', async () => {
-  setMinimum('1.9.0');
+  await setMinimum('1.9.0');
   try {
     const old = await asClient('/api/projects', 'open-questions-client/1.8.0');
     assert.equal(old.status, 426);
@@ -80,11 +86,11 @@ test('the platform refuses an official client older than the minimum, and only t
     assert.equal((await asClient('/api/projects', 'curl/8.0')).status, 200);
     assert.equal((await asClient('/api/projects')).status, 200);
     assert.equal((await (await fetch(`${app.base}/api/client/info`)).json()).min_version, '1.9.0');
-  } finally { setMinimum(serverMinimum()); }
+  } finally { await setMinimum(serverMinimum()); }
 });
 
 test('a client below the minimum stops and says to update', async () => {
-  setMinimum('99.0.0');
+  await setMinimum('99.0.0');
   try {
     const bin = path.join(tmp, 'bin'); fs.mkdirSync(bin, { recursive: true });
     fs.writeFileSync(path.join(bin, 'claude'), '#!/bin/sh\n[ "$1" = "--version" ] && echo "1.0 (Claude Code)"\necho "{}"\n', { mode: 0o755 });
@@ -93,5 +99,5 @@ test('a client below the minimum stops and says to update', async () => {
     assert.notEqual(r.status, 0);
     assert.match(r.stdout + r.stderr, /Update required/);
     assert.match(r.stdout + r.stderr, /99\.0\.0/);
-  } finally { setMinimum(serverMinimum()); }
+  } finally { await setMinimum(serverMinimum()); }
 });

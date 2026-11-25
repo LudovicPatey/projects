@@ -195,6 +195,14 @@ final class Db
         $migrations[] = 'ALTER TABLE projects ADD COLUMN consolidation_auto TINYINT(1) NOT NULL DEFAULT 1';
         foreach (['highlight_reason TEXT NULL', 'highlight_at DATETIME NULL', 'highlight_model VARCHAR(120) NULL', 'highlight_activity INT UNSIGNED NULL'] as $c) $migrations[] = "ALTER TABLE facts ADD COLUMN $c";
         $migrations[] = 'ALTER TABLE notations ADD COLUMN auto_suggestion_id INT UNSIGNED NULL';
+        $migrations[] = 'ALTER TABLE ai_tasks ADD COLUMN priority SMALLINT NOT NULL DEFAULT 50';
+        $migrations[] = 'ALTER TABLE ai_tasks ADD COLUMN after_json TEXT NULL';
+        $migrations[] = 'CREATE INDEX idx_ai_task_schedule ON ai_tasks (status, priority, id)';
+        // Tasks waiting from before the scheduler take their kind's priority. A kind whose priority is the default of 50 needs nothing.
+        foreach (['ask' => 10, 'review' => 20, 'source_check' => 30, 'bib' => 30, 'consolidate' => 40, 'lean' => 40, 'extract' => 70] as $k => $v) {
+            $migrations[] = "UPDATE ai_tasks SET priority = $v WHERE kind = '$k' AND priority = 50 AND status IN ('pending', 'running')";
+        }
+        $migrations[] = "UPDATE ai_tasks SET priority = CASE WHEN source_type = 'fact' THEN 60 ELSE 40 END WHERE kind = 'notation' AND priority = 50 AND status IN ('pending', 'running')";
         $migrations[] = "ALTER TABLE prover_campaigns ADD COLUMN lead_mode VARCHAR(12) NOT NULL DEFAULT 'periodic'";
         // MySQL cut kinds longer than 10 characters, such as "consolidate": room for procedure names, and the cut rows repaired.
         if (!self::isSqlite()) $migrations[] = 'ALTER TABLE ai_tasks MODIFY kind VARCHAR(40) NOT NULL';

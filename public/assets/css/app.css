@@ -1471,6 +1471,16 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: non
 .ai-row-main b { overflow: hidden; font-size: 13.5px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .ai-row-main small { overflow: hidden; color: var(--muted); font-size: 11.5px; text-overflow: ellipsis; white-space: nowrap; }
 .ai-row .pill { flex: none; }
+.ai-group { width: 100%; border: 0; background: none; font: inherit; text-align: left; cursor: pointer; }
+.ai-group .ai-row-main b, .ai-group .ai-row-main small { white-space: normal; }
+.ai-group > svg { flex: none; color: var(--muted); transition: transform .15s; }
+.ai-qgroup.open .ai-group > svg { transform: rotate(180deg); }
+.ai-qgroup + .ai-qgroup { border-top: 1px solid var(--line-2); }
+.ai-progress { display: flex; gap: 2px; height: 6px; margin: 3px 0 1px; border-radius: 3px; overflow: hidden; background: var(--line-2); }
+.ai-progress i { display: block; min-width: 3px; }
+.ai-progress i.off { background: var(--line); }
+.ai-row-in { margin-left: 18px; border-left: 2px solid var(--line-2); border-radius: 0 8px 8px 0; }
+.ai-more { display: block; margin: 4px 0 8px 30px; }
 .ai-sugg { display: flex; align-items: flex-start; gap: 12px; padding: 12px 0; border-top: 1px solid var(--line-2); }
 .ai-sugg.active { margin-inline: -8px; padding-inline: 8px; border-radius: 8px; background: var(--accent-2); }
 .ai-sugg-main { flex: 1; display: grid; gap: 3px; min-width: 0; }

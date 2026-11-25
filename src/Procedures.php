@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace App;
 
+use App\Controllers\AiTaskController;
 use App\Controllers\ConsolidationController;
 use App\Controllers\NotationController;
 
@@ -88,6 +89,17 @@ different, for example with other hypotheses, a weaker conclusion or another set
 or could not read the work. In "where", give the theorem number and page when you found it, or an empty string. In "explanation", say what the
 work states, quoting it briefly, and how it differs when it does. You do not judge whether the result is true, only what the work says.
 TXT,
+        'source_check_batch' => <<<'TXT'
+TASK: "cited_results" in task.json lists results that the project takes from other works, without their proofs, found in the same source.
+For each one, check whether the work it is cited from really states it. "references" names that work, and "sources" quote where the
+project found the result. When the folder has the text of a source (document.txt or paper.pdf), read it. Otherwise use web search to
+find each work and the result in it; several results often come from the same work, so read it once.
+Answer in "checks", one entry per result, with its "fact_id". "verdict": "confirmed" if the work states this result, as written or in an
+equivalent form; "differs" if it states something different, for example with other hypotheses, a weaker conclusion or another setting;
+"not_found" if you could not find the result in it, or could not read the work. In "where", give the theorem number and page when you
+found it, or an empty string. In "explanation", say what the work states, quoting it briefly, and how it differs when it does. You do not
+judge whether a result is true, only what the work says.
+TXT,
         'consolidate' => <<<'TXT'
 TASK: consolidate the facts database of this project. Facts were extracted one source at a time, so no extraction
 saw the others. "fact_texts" in task.json lists every fact in short: its id, label, kind, title, statement, whether it has a proof, its source,
@@ -141,6 +153,7 @@ TXT,
         'notation_propose' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'entries'], "properties" => ["summary" => ["type" => 'string'], "entries" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'meaning', 'note', 'variants', 'definition_fact_id', 'facts'], "properties" => ["symbol" => ["type" => 'string'], "meaning" => ["type" => 'string'], "note" => ["type" => ['string', 'null']], "variants" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'meaning', 'where', 'relation'], "properties" => ["symbol" => ["type" => 'string'], "meaning" => ["type" => 'string'], "where" => ["type" => 'string'], "relation" => ["type" => 'string', "enum" => ['instance', 'clash']]]]], "definition_fact_id" => ["type" => ['integer', 'null']], "facts" => ["type" => 'array', "items" => ["type" => 'integer']]]]]]],
         'notation_rephrase' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'unchanged', 'statement', 'proof', 'local_notation', 'uses'], "properties" => ["summary" => ["type" => 'string'], "unchanged" => ["type" => 'boolean'], "statement" => ["type" => 'string'], "proof" => ["type" => ['string', 'null']], "local_notation" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'meaning'], "properties" => ["symbol" => ["type" => 'string'], "meaning" => ["type" => 'string']]]], "uses" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'meaning_here', 'project_symbol'], "properties" => ["symbol" => ["type" => 'string'], "meaning_here" => ["type" => 'string'], "project_symbol" => ["type" => 'string']]]]]],
         'consolidate' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'suggestions'], "properties" => ["summary" => ["type" => 'string'], "suggestions" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['kind', 'fact', 'other_fact', 'new_kind', 'title', 'topics', 'ref', 'statement', 'notation', 'reason', 'confidence'], "properties" => ["kind" => ["type" => 'string', "enum" => ['same', 'depends', 'kind', 'question', 'topics', 'cite', 'progress', 'notation']], "notation" => ["type" => ['object', 'null'], "additionalProperties" => false, "required" => ['action', 'entry', 'symbol', 'meaning', 'note', 'variants'], "properties" => ["action" => ["type" => 'string', "enum" => ['adopt', 'local', 'reject']], "entry" => ["type" => ['integer', 'null']], "symbol" => ["type" => ['string', 'null']], "meaning" => ["type" => ['string', 'null']], "note" => ["type" => ['string', 'null']], "variants" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'meaning', 'where', 'relation'], "properties" => ["symbol" => ["type" => 'string'], "meaning" => ["type" => 'string'], "where" => ["type" => 'string'], "relation" => ["type" => 'string', "enum" => ['instance', 'clash']]]]]]], "ref" => ["type" => ['string', 'null']], "statement" => ["type" => ['string', 'null']], "confidence" => ["type" => 'string', "enum" => ['high', 'medium', 'low']], "fact" => ["type" => 'string'], "other_fact" => ["type" => ['string', 'null']], "new_kind" => ["type" => ['string', 'null'], "enum" => ['definition', 'lemma', 'proposition', 'theorem', 'corollary', 'conjecture', 'remark', null]], "title" => ["type" => ['string', 'null']], "topics" => ["type" => 'array', "items" => ["type" => 'string']], "reason" => ["type" => 'string']]]]]],
+        'source_check_batch' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'checks'], "properties" => ["summary" => ["type" => 'string'], "checks" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['fact_id', 'verdict', 'where', 'explanation'], "properties" => ["fact_id" => ["type" => 'integer'], "verdict" => ["type" => 'string', "enum" => ['confirmed', 'differs', 'not_found']], "where" => ["type" => 'string'], "explanation" => ["type" => 'string']]]]]],
         'source_check' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'verdict', 'where', 'explanation'], "properties" => ["summary" => ["type" => 'string'], "verdict" => ["type" => 'string', "enum" => ['confirmed', 'differs', 'not_found']], "where" => ["type" => 'string'], "explanation" => ["type" => 'string']]],
     ];
 
@@ -185,6 +198,7 @@ TXT,
     private static function variant(array $t): string
     {
         if ($t['kind'] === 'notation') return $t['source_type'] === 'fact' ? 'notation_rephrase' : 'notation_propose';
+        if ($t['kind'] === 'source_check' && $t['source_type'] === null) return 'source_check_batch';
         return (string)$t['kind'];
     }
 
@@ -243,6 +257,18 @@ TXT,
                 return ['summary' => trim($done . ($s ? ", $s set aside (already proposed, rejected, undone or invalid)" : '') . ". $said")];
             case 'source_check':
                 return self::recordSourceCheck($t, $answer, $model, $seconds);
+            case 'source_check_batch':
+                $ids = []; $by = ['confirmed' => 0, 'differs' => 0, 'not_found' => 0];
+                $mine = array_flip(AiTaskController::batchFacts($t));
+                foreach ($answer['checks'] as $c) {
+                    $fid = (int)$c['fact_id'];
+                    if (!isset($mine[$fid]) || in_array($fid, $ids, true)) continue; // only the results of this batch, once each
+                    self::recordSourceCheck(['source_id' => $fid] + $t, $c + ['summary' => ''], $model, $seconds);
+                    $ids[] = $fid; $by[$c['verdict']]++;
+                }
+                $n = count($ids);
+                $what = implode(', ', array_filter([$by['confirmed'] ? "{$by['confirmed']} confirmed" : '', $by['differs'] ? "{$by['differs']} differ" : '', $by['not_found'] ? "{$by['not_found']} not found" : '']));
+                return ['summary' => trim("$n cited result" . ($n === 1 ? '' : 's') . ' checked' . ($what ? " ($what)" : '') . ". $said"), 'fact_ids' => $ids];
         }
         throw new HttpError(422, 'Unknown procedure.');
     }

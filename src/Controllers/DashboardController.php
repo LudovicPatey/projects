@@ -9,6 +9,9 @@ use App\{Access, Auth, Db, HttpError, References, Request, Response};
 final class DashboardController
 {
     private const FEED = 14;
+    /** Lines of the feed group what one actor did to several items of one kind within this time. */
+    private const FEED_GROUP_SECONDS = 6 * 3600;
+    private const FEED_GROUP_SHOWN = 1;
     private const SAMPLE = 5;
     private const SETTLED = ['solved', 'refuted', 'abandoned'];
     private const FEED_TYPES = ['conversation' => 'conversation', 'fact' => 'fact', 'document' => 'document', 'bib' => 'bib',
@@ -208,7 +211,7 @@ final class DashboardController
     {
         [$in, $types] = Db::in($only ?? array_keys(self::FEED_TYPES));
         $rows = Db::all("SELECT a.id, a.item_type, a.item_id, a.kind, a.actor_id, a.created_at, u.name AS actor, u.kind AS actor_kind
-                         FROM activity a LEFT JOIN users u ON u.id = a.actor_id WHERE a.project_id = ? AND a.item_type IN $in ORDER BY a.id DESC LIMIT 120", array_merge([$pid], $types));
+                         FROM activity a LEFT JOIN users u ON u.id = a.actor_id WHERE a.project_id = ? AND a.item_type IN $in ORDER BY a.id DESC LIMIT 600", array_merge([$pid], $types));
         $keys = [];
         foreach ($rows as $a) if (isset(self::FEED_TYPES[$a['item_type']])) $keys[] = self::FEED_TYPES[$a['item_type']] . ':' . $a['item_id'];
         $refs = References::resolve($pid, $me, $keys);
@@ -221,9 +224,19 @@ final class DashboardController
             $once = "{$a['actor_id']}|{$a['kind']}|{$ref['key']}"; // repeated edits make one line
             if (isset($seen[$once])) continue;
             $seen[$once] = true;
-            $out[] = ['id' => (int)$a['id'], 'kind' => $a['kind'], 'at' => $a['created_at'], 'actor' => $a['actor_id'] ? ['id' => (int)$a['actor_id'], 'name' => $a['actor'], 'kind' => $a['actor_kind']] : null,
-                'ref' => array_intersect_key($ref, array_flip(['type', 'id', 'key', 'label', 'title', 'status', 'link']))];
+            $short = array_intersect_key($ref, array_flip(['type', 'id', 'key', 'label', 'title', 'status', 'link']));
+            // The same person or AI doing the same to several items in a row, such as an extraction adding 40 facts, makes one line.
+            $last = $out ? count($out) - 1 : null;
+            if ($last !== null && ($out[$last]['actor']['id'] ?? null) === ($a['actor_id'] ? (int)$a['actor_id'] : null) && $out[$last]['kind'] === $a['kind']
+                && $out[$last]['ref']['type'] === $short['type'] && strtotime($out[$last]['first_at']) - strtotime($a['created_at']) <= self::FEED_GROUP_SECONDS) {
+                $out[$last]['count']++;
+                $out[$last]['first_at'] = $a['created_at'];
+                if (count($out[$last]['more']) < self::FEED_GROUP_SHOWN) $out[$last]['more'][] = $short;
+                continue;
+            }
             if (count($out) >= self::FEED) break;
+            $out[] = ['id' => (int)$a['id'], 'kind' => $a['kind'], 'at' => $a['created_at'], 'first_at' => $a['created_at'], 'count' => 1, 'more' => [],
+                'actor' => $a['actor_id'] ? ['id' => (int)$a['actor_id'], 'name' => $a['actor'], 'kind' => $a['actor_kind']] : null, 'ref' => $short];
         }
         return $out;
     }

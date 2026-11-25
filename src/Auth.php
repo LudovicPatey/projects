@@ -39,6 +39,57 @@ final class Auth
         ]);
         session_start();
         if (empty($_SESSION['csrf'])) $_SESSION['csrf'] = bin2hex(random_bytes(32));
+        if (empty($_SESSION['uid']) && isset($_COOKIE[self::LOGIN_COOKIE])) self::resume((string)$_COOKIE[self::LOGIN_COOKIE]);
+    }
+
+    // ----- staying signed in -----
+    // A PHP session ends when the browser drops its cookie (a phone closing the tab) or when the host clears idle sessions,
+    // often after 24 minutes. A sign-in therefore also leaves a long-lived cookie on the device: a random selector and a secret,
+    // whose hash only is stored. It signs the device in again when its session is gone. Signing out removes it.
+
+    public const LOGIN_COOKIE = 'crp_login';
+    public const LOGIN_DAYS = 60;
+
+    private static function remember(int $uid): void
+    {
+        $selector = bin2hex(random_bytes(12));
+        $secret = bin2hex(random_bytes(32));
+        $now = Db::now();
+        Db::insert('login_tokens', ['user_id' => $uid, 'selector' => $selector, 'token_hash' => hash('sha256', $secret), 'user_agent' => mb_substr((string)($_SERVER['HTTP_USER_AGENT'] ?? ''), 0, 255),
+            'created_at' => $now, 'last_used_at' => $now, 'expires_at' => gmdate('Y-m-d H:i:s', time() + self::LOGIN_DAYS * 86400)]);
+        self::loginCookie("$selector.$secret", time() + self::LOGIN_DAYS * 86400);
+    }
+
+    /** Signs the device in again from its login cookie. A wrong secret for a known selector looks like a stolen cookie: the token goes. */
+    private static function resume(string $cookie): void
+    {
+        if (!preg_match('/^([0-9a-f]{24})\.([0-9a-f]{64})$/', $cookie, $m)) { self::loginCookie('', 1); return; }
+        $t = Db::one('SELECT l.id, l.user_id, l.token_hash, l.expires_at, l.last_used_at FROM login_tokens l JOIN users u ON u.id = l.user_id AND u.kind = \'human\' WHERE l.selector = ?', [$m[1]]);
+        if (!$t || !hash_equals((string)$t['token_hash'], hash('sha256', $m[2])) || $t['expires_at'] < Db::now()) {
+            if ($t) Db::run('DELETE FROM login_tokens WHERE id = ?', [$t['id']]);
+            self::loginCookie('', 1);
+            return;
+        }
+        session_regenerate_id(true);
+        $_SESSION['uid'] = (int)$t['user_id'];
+        self::$user = null;
+        // Used again: it lasts another 60 days, on the server and in the browser.
+        $until = time() + self::LOGIN_DAYS * 86400;
+        Db::update('login_tokens', ['last_used_at' => Db::now(), 'expires_at' => gmdate('Y-m-d H:i:s', $until)], 'id = :id', ['id' => $t['id']]);
+        self::loginCookie($cookie, $until);
+    }
+
+    private static function forget(): void
+    {
+        $c = (string)($_COOKIE[self::LOGIN_COOKIE] ?? '');
+        if (preg_match('/^([0-9a-f]{24})\./', $c, $m)) Db::run('DELETE FROM login_tokens WHERE selector = ?', [$m[1]]);
+        if ($c !== '') self::loginCookie('', 1);
+    }
+
+    private static function loginCookie(string $value, int $expires): void
+    {
+        if (headers_sent()) return;
+        setcookie(self::LOGIN_COOKIE, $value, ['expires' => $expires, 'path' => '/', 'secure' => str_starts_with(Config::appUrl(), 'https://'), 'httponly' => true, 'samesite' => 'Lax']);
     }
 
     public static function csrf(): string { return $_SESSION['csrf'] ?? ''; }
@@ -155,10 +206,15 @@ final class Auth
         session_regenerate_id(true);
         $_SESSION['uid'] = $id;
         self::$user = null;
+        self::forget(); // another account may have been signed in on this device
+        self::remember($id);
+        // Expired tokens of everyone, now and then.
+        if (random_int(1, 50) === 1) Db::run('DELETE FROM login_tokens WHERE expires_at < ?', [Db::now()]);
     }
 
     public static function logout(): void
     {
+        self::forget();
         $_SESSION = [];
         if (session_status() === PHP_SESSION_ACTIVE) session_destroy();
     }
