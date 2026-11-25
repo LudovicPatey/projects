@@ -760,3 +760,58 @@ CREATE TABLE IF NOT EXISTS bib_suggestions (
   FOREIGN KEY (ai_user_id) REFERENCES users(id) ON DELETE SET NULL,
   FOREIGN KEY (decided_by) REFERENCES users(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- The native prover: a campaign on a question (or the whole project) that every member's client can work on.
+CREATE TABLE IF NOT EXISTS prover_campaigns (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  project_id INT UNSIGNED NOT NULL,
+  question_id INT UNSIGNED NULL,
+  goal_text TEXT NULL,
+  status VARCHAR(10) NOT NULL DEFAULT 'active', -- active, paused, done
+  guidance_json MEDIUMTEXT NULL,          -- the last lead round: summary, elaboration, guidance, lanes
+  strategy_id INT UNSIGNED NULL,          -- the strategy of the question it keeps revised
+  lead_at DATETIME NULL,
+  created_by INT UNSIGNED NOT NULL,
+  created_at DATETIME NOT NULL,
+  updated_at DATETIME NOT NULL,
+  KEY idx_campaign_project (project_id, status),
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- One session of one client: a worker on a lane, or the lead.
+CREATE TABLE IF NOT EXISTS prover_rounds (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  campaign_id INT UNSIGNED NOT NULL,
+  kind VARCHAR(8) NOT NULL,               -- worker, lead
+  lane INT UNSIGNED NULL,
+  engine VARCHAR(12) NOT NULL,            -- claude, codex
+  ai_model VARCHAR(120) NULL,
+  ai_user_id INT UNSIGNED NULL,
+  user_id INT UNSIGNED NOT NULL,
+  client_name VARCHAR(120) NULL,
+  status VARCHAR(10) NOT NULL DEFAULT 'running', -- running, done, failed
+  started_at DATETIME NOT NULL,
+  finished_at DATETIME NULL,
+  seconds INT UNSIGNED NOT NULL DEFAULT 0,
+  facts INT UNSIGNED NOT NULL DEFAULT 0,
+  rejected INT UNSIGNED NOT NULL DEFAULT 0,
+  notes INT UNSIGNED NOT NULL DEFAULT 0,
+  summary_text TEXT NULL,
+  KEY idx_round_campaign (campaign_id, status),
+  FOREIGN KEY (campaign_id) REFERENCES prover_campaigns(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- What the workers share: findings, dead ends, verification outcomes. Awareness, never a fact.
+CREATE TABLE IF NOT EXISTS prover_notes (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  campaign_id INT UNSIGNED NOT NULL,
+  round_id INT UNSIGNED NULL,
+  kind VARCHAR(16) NOT NULL,              -- conclusion, example, counterexample, proof_attempt, plan, dead_end, direction, obstacle, verification
+  claim TEXT NOT NULL,
+  evidence MEDIUMTEXT NULL,
+  fact_id INT UNSIGNED NULL,
+  ai_model VARCHAR(120) NULL,
+  created_at DATETIME NOT NULL,
+  KEY idx_note_campaign (campaign_id, id),
+  FOREIGN KEY (campaign_id) REFERENCES prover_campaigns(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

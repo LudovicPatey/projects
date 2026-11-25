@@ -250,6 +250,18 @@ final class FactController
             foreach ($f['deps'] as $d) $good = $good && $ok((int)$d, $seen + [$id => true]);
             return $trusted[$id] = $good;
         };
+        // The native prover builds on more: also what a verifier accepted (even the model that wrote it), and citations an AI
+        // confirmed against their source. It is still not established for people, who see it unchecked.
+        $usable = [];
+        $use = function (int $id, array $seen = []) use (&$use, &$usable, $byId): bool {
+            if (isset($usable[$id])) return $usable[$id];
+            if (isset($seen[$id]) || !isset($byId[$id])) return false;
+            $f = $byId[$id];
+            $checked = ($f['review_counts']['correct'] ?? 0) > 0 && !in_array($f['status'], ['disputed', 'proof_disputed', 'retracted'], true);
+            $good = (in_array($f['status'], self::ESTABLISHED, true) || $f['status'] === 'source_confirmed' || $checked) && !$f['incomplete'];
+            foreach ($f['deps'] as $d) $good = $good && $use((int)$d, $seen + [$id => true]);
+            return $usable[$id] = $good;
+        };
         $facts = [];
         foreach ($byId as $id => $f) {
             $x = $rev[$id] ?? null;
@@ -257,7 +269,7 @@ final class FactController
             $n = $notation[$id] ?? null;
             $glossary = json_decode((string)($n['local_json'] ?? $x['glossary_json']), true);
             $facts[] = ['id' => $id, 'label' => $f['label'], 'title' => $f['title'], 'kind' => $f['display_kind'], 'revision' => (int)$x['revision_no'],
-                'basis' => $f['basis'], 'status' => $f['status'], 'chain' => $f['chain'], 'incomplete' => $f['incomplete'], 'trusted' => $ok($id),
+                'basis' => $f['basis'], 'status' => $f['status'], 'chain' => $f['chain'], 'incomplete' => $f['incomplete'], 'trusted' => $ok($id), 'usable' => $use($id),
                 'ai_model' => $f['ai_model'], 'tool' => $f['tool'], 'external_id' => $f['external_id'], 'deps' => array_map('intval', $f['deps']),
                 'statement' => Sanitizer::toText((string)($n['statement_html'] ?? $x['statement_html'])),
                 'proof' => Sanitizer::toText((string)($n ? ($n['proof_html'] ?: $x['proof_html']) : $x['proof_html'])),
@@ -1003,6 +1015,12 @@ final class FactController
         }
         if (count($queue) !== count($items)) throw new HttpError(422, 'The dependencies of this batch contain a cycle.');
         return $queue;
+    }
+
+    /** A fact written by the native prover, in a transaction of its own. @return int its id */
+    public static function addFact(int $pid, array $it, bool $cited = false): int
+    {
+        return Db::tx(fn() => self::ingest($pid, $it, [], $cited));
     }
 
     /** $cited: a cited result written from an outside reference of a proof, which names that reference instead of quoting a source. */

@@ -814,7 +814,27 @@ export const ARTICLES = [
       warn('Danus runs its agents with full access to the computer, and its authors recommend an isolated, disposable machine. A request can contain text from other members, so run `serve` only on such a machine.'),
       warn('Imported facts arrive as **unchecked**. The Danus verifier is itself an AI that reads the proof in natural language. It **does not produce or check a Lean proof**, and the platform cannot confirm that it ran.'),
     ],
-    related: ['ai-client', 'fact-labels'],
+    related: ['ai-client', 'fact-labels', 'native-prover'],
+  },
+  {
+    slug: 'native-prover', category: 'ai', title: 'The native prover (experimental)', summary: 'A proof search on the project\'s own facts, shared by every member\'s client.',
+    keywords: 'native prover campaign round lead worker lane verifier verify cite literature notes dead end comparison danus experimental mcp tools',
+    blocks: [
+      p('The native prover searches for proofs like [Danus](help:danus), whose instructions it adapts, but it works directly on the project\'s facts: there is nothing to copy or translate. It runs beside Danus while the two are compared.'),
+      table(['', 'What it is'],
+        ['**Campaign**', 'A proof search on a question, or on the whole project. Every member\'s client can join it, within its own limits.'],
+        ['**Lead**', 'A round every 30 minutes: one client sums up the state of the search, gives guidance and splits the work into **lanes**. The summary becomes a revision of the strategy **Proof search with the native prover** on the question.'],
+        ['**Worker**', 'A round: a session of at most 30 minutes on one lane. The AI searches the facts and the notes, shares notes, and submits results.'],
+        ['**Verifier**', 'A fresh session that sees only the statement, the proof and the facts it cites. Accepted, the result becomes a fact, with the verifier\'s review. Rejected, its repair hints are shared as a note.']),
+      list('A proof may build only on facts that are established or that the verifier accepted, with everything they rely on. An unchecked fact must be verified first.', 'A result of the literature becomes a [cited result](help:reviews), checked against its source at once. People still accept it.', 'The verifier is the other AI when your computer has both Claude and ChatGPT: its acceptance then counts as an independent check.', 'The sessions have no shell: they read, search the web, and use the prover\'s tools. Your platform key stays in the client.'),
+      h('Run it'),
+      cmd('python3 oq.py prove run --project ID --question ID --workers 2 --minutes 120', 'Join or start a campaign'),
+      cmd('python3 oq.py prove stop', 'Stop after the rounds in progress'),
+      cmd('python3 oq.py prove status --project ID', 'The campaigns of a project, with their rounds, facts and summary'),
+      cmd('python3 oq.py prove stats --project ID', 'Danus and the native prover side by side: computing time, facts, facts per hour, and what became of them'),
+      warn('It is experimental and starts only from the command line. Like Danus, it is the heaviest use of your subscription: your [usage limits](help:ai-client) apply between rounds, and each round has its own time limit.'),
+    ],
+    related: ['danus', 'ai-client', 'reviews'],
   },
 
   {
@@ -908,7 +928,7 @@ export const VIEW_HELP = { overview: 'question', questions: 'open-questions', co
 /** The article covering each server feature. Adding a controller without help makes the tests fail. */
 export const CONTROLLER_HELP = {
   AuthController: 'account', FeedbackController: 'feedback', ProjectController: 'question', DashboardController: 'question', ReferenceController: 'references', QuestionController: 'open-questions', AgentController: 'project-agents', KeyController: 'ai-client', AiTaskController: 'ai-work', BibController: 'bibliography',
-  DocumentController: 'files', FactController: 'facts-overview', NotationController: 'notation', ConsolidationController: 'consolidation', AdminController: 'administration', AuditController: 'administration', ConversationController: 'conversations', CommentController: 'comments',
+  DocumentController: 'files', FactController: 'facts-overview', NotationController: 'notation', ConsolidationController: 'consolidation', ProverController: 'native-prover', AdminController: 'administration', AuditController: 'administration', ConversationController: 'conversations', CommentController: 'comments',
   NotificationController: 'notifications', ExportController: 'download-project', SearchController: 'search', HelpController: 'welcome',
 };
 

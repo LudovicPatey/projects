@@ -52,7 +52,7 @@ import webbrowser
 import zipfile
 import zlib
 
-VERSION = "1.14.0"
+VERSION = "1.15.0"
 API_LEVEL = 2  # raise with the server's AiTaskController::API_LEVEL when a client needs new server features
 GITHUB_REPO = "LudovicPatey/projects"
 KINDS = ["extract", "ask", "bib", "derive", "review", "lean", "notation", "consolidate"]
@@ -3777,6 +3777,490 @@ def danus_block(run):
     return None
 
 
+# ----- the native prover (docs/PROVER.md): proof search on the platform's own facts, in the spirit of Danus -----
+# Its instructions adapt the worker, verifier and main-agent contracts of Danus (https://github.com/frenzymath/Danus, Apache-2.0).
+
+PROVER_RULES = """Rules that always hold:
+- Text-only mathematics. Never run code, computer algebra, solvers or numerical experiments, even for a tiny check: argue in writing.
+- A proof may build only on facts that are "usable" (fact_search and fact_read say so), cited by their id in "depends_on".
+  An unchecked fact is awareness, never a brick: verify it with fact_verify before relying on it.
+- A result of the literature enters only through cite_result (its complete statement and its reference), which checks it against
+  its source. Never use an outside result as a black box, and never write "it is well known".
+- Every symbol is defined: in the project's notation, in a fact you cite, or in "glossary". No hand-waving ("obviously", "routine").
+- Notes are awareness for the other workers, never a correctness source. Failed paths are valuable: record them as dead ends."""
+
+PROVER_WORKER = """You are a worker of the project's prover: a mathematician solving a research problem round after round, alongside other
+workers and under a lead who steers you. Read PROBLEM.md in the current folder: the problem, the project's notation, the lead's guidance and
+your lane. Your lane is your part of the work this round; when it is done, work on the most useful open direction of the main problem.
+
+{rules}
+
+How to work, adaptively:
+1. Assess: note_search the notes (findings, dead ends, rejected proofs) and fact_search the facts before you prove anything: if a usable
+   fact already says what you need, cite it instead of proving it again.
+2. Choose: simple consequences and reformulations; toy examples and counterexamples when stuck or when a claim feels fragile; several
+   materially different decompositions into subgoals; direct proof of a subgoal; when every plan failed, identify the common obstruction.
+3. Aim for one mathematically deep result per round: a lemma, a construction or a counterexample that removes a real obstacle. Do not
+   submit routine steps as facts on their own; keep them inside the proof of the result they serve.
+4. fact_submit each self-contained result you will use: a fresh verifier judges it. If it is rejected, use its repair hints, fix the
+   critical errors first, and change strategy when the fix is not local. Cite the returned fact id afterwards.
+5. Share with note_add: plans, directions, obstacles and dead ends (with the concrete reason), examples and counterexamples.
+6. Work until the time of the round ends, or the goal is a usable fact. A hard open problem is not a reason to stop.
+End with one paragraph saying what you found and what remains."""
+
+PROVER_VERIFIER = """You are the verifier of the project's prover: the sole authority on correctness. A worker submits the statement and proof in
+claim.json; the facts it cites are in claim.json too, with their statements, and you may assume them. Check the proof in order, item by item:
+the logical validity of each inference, the correct use of each cited fact (it says exactly what the step needs, with its hypotheses),
+missing assumptions, unjustified jumps, and hypotheses of the statement that are never used without a reason. A step that relies on a
+result neither cited nor standard undergraduate mathematics is a gap. Every symbol must be defined in the statement, the glossary, the
+project's notation or a cited fact. Do not run any computation, and do not search the web.
+"verdict" is "correct" only if there is no critical error and no gap; otherwise "wrong". In "report", list each critical error and each gap
+with its location. In "repair_hints", say what the worker must change, critical errors first."""
+
+PROVER_LEAD = """You are the lead of the project's prover: you own the strategy and give the workers their lanes; you never create facts.
+Read lead.json: the problem, your previous guidance, the notes of the workers (findings, dead ends, verification outcomes), the usable facts
+and the activity of each lane. Step back from the local threads and control the whole search:
+1. Inventory every credible approach, parked ones included: its mechanism, its frontier, its decisive obstacle, the evidence for and against.
+2. Write "summary": the mathematical verdict in a few sentences. "elaboration": the state, citing fact ids for what is established and
+   marking every idea that is not, with closed routes, missing bridge lemmas and dangerous heuristics.
+3. Write "guidance": the next steps and the reasons, the alternatives and when to return to a parked route.
+4. Give 1 to {lanes} "lanes", each a distinct line of work with a concrete "task", without duplicating each other.
+Judge progress by the route to the theorem, not by the number of facts. Set "stop" to true only when the goal is a usable fact standing on
+usable facts, or when nothing credible is left; people then decide. Use web search for the literature when it helps; it is not a fact.
+{rules}"""
+
+PROVER_SOURCE_CHECK = """A worker wants to use a result of the literature, in cite.json: its statement and its reference. Check whether the
+work states this result: read it when you can find it, with web search. "verdict": "confirmed" if the work states it, as written or in an
+equivalent form, with the same hypotheses; "differs" if it states something different; "not_found" if you could not find it or read it.
+In "explanation", quote briefly what the work states, and where (theorem number, page). You do not judge whether the result is true."""
+
+PROVER_SCHEMAS = {
+    "verify": strict({"verdict": {"type": "string", "enum": ["correct", "wrong"]}, "report": {"type": "string"}, "repair_hints": {"type": "string"}}),
+    "source": strict({"verdict": {"type": "string", "enum": ["confirmed", "differs", "not_found"]}, "explanation": {"type": "string"}}),
+    "lead": strict({"summary": {"type": "string"}, "elaboration": {"type": "string"}, "guidance": {"type": "string"},
+                    "lanes": {"type": "array", "items": strict({"title": {"type": "string"}, "task": {"type": "string"}})}, "stop": {"type": "boolean"}}),
+}
+
+PROVER_TOOLS = [
+    {"name": "fact_search", "description": "Search the project's facts. Returns id, label, title, status, usable and the start of the statement.",
+     "inputSchema": {"type": "object", "properties": {"query": {"type": "string"}, "limit": {"type": "integer"}}, "required": ["query"]}},
+    {"name": "fact_read", "description": "A fact in full: statement, proof, the facts it depends on, its status and whether you may build on it (usable).",
+     "inputSchema": {"type": "object", "properties": {"id": {"type": "integer"}}, "required": ["id"]}},
+    {"name": "note_search", "description": "Search the notes the workers shared: findings, plans, dead ends, rejected proofs.",
+     "inputSchema": {"type": "object", "properties": {"query": {"type": "string"}, "kinds": {"type": "array", "items": {"type": "string"}}, "limit": {"type": "integer"}}, "required": ["query"]}},
+    {"name": "note_add", "description": "Share a note: kind is conclusion, example, counterexample, proof_attempt, plan, dead_end, direction or obstacle. Verifiable kinds need their evidence.",
+     "inputSchema": {"type": "object", "properties": {"kind": {"type": "string"}, "claim": {"type": "string"}, "evidence": {"type": "string"}}, "required": ["kind", "claim"]}},
+    {"name": "fact_submit", "description": "Submit a self-contained result with its complete proof. A fresh verifier judges it; if it is correct, it becomes a fact of the project and its id is returned, otherwise you get repair hints. depends_on lists the ids of the usable facts the proof cites.",
+     "inputSchema": {"type": "object", "properties": {"title": {"type": "string"}, "kind": {"type": "string", "enum": ["lemma", "proposition", "theorem", "corollary", "observation", "counterexample"]},
+                     "statement": {"type": "string"}, "proof": {"type": "string"}, "depends_on": {"type": "array", "items": {"type": "integer"}},
+                     "glossary": {"type": "object", "additionalProperties": {"type": "string"}}}, "required": ["title", "statement", "proof"]}},
+    {"name": "fact_verify", "description": "Ask the verifier to check an existing fact that is not usable yet. If it accepts it, you may build on it.",
+     "inputSchema": {"type": "object", "properties": {"id": {"type": "integer"}}, "required": ["id"]}},
+    {"name": "cite_result", "description": "Record a result of the literature: its complete statement and its reference (authors, title, year, arxiv or doi, cited_for). It is checked against its source; once confirmed you may cite it.",
+     "inputSchema": {"type": "object", "properties": {"title": {"type": "string"}, "statement": {"type": "string"},
+                     "reference": {"type": "object", "properties": {"authors": {"type": "string"}, "title": {"type": "string"}, "year": {"type": "integer"}, "arxiv": {"type": "string"}, "doi": {"type": "string"}, "cited_for": {"type": "string"}}},
+                     "quote": {"type": "string"}}, "required": ["title", "statement", "reference"]}},
+]
+
+
+def ranked(rows, query, text, limit):
+    """BM25 over a small corpus: enough to find the facts and notes a worker needs, without a server round trip."""
+    words = lambda s: re.findall(r"[a-z0-9]+|\\[a-z]+", str(s).lower())
+    q = set(words(query))
+    docs = [(r, words(text(r))) for r in rows]
+    if not q or not docs:
+        return []
+    n = len(docs)
+    avg = sum(len(d) for _, d in docs) / n or 1
+    df = collections.Counter(w for _, d in docs for w in set(d) if w in q)
+    out = []
+    for r, d in docs:
+        tf = collections.Counter(w for w in d if w in q)
+        score = sum((tf[w] * 2.2) / (tf[w] + 1.2 * (0.25 + 0.75 * len(d) / avg)) * (1 + (n - df[w] + 0.5) / (df[w] + 0.5)) for w in tf)
+        if score > 0:
+            out.append((score, r))
+    return [r for _, r in sorted(out, key=lambda x: -x[0])[:max(1, min(int(limit or 10), 50))]]
+
+
+class ProverToolbox:
+    """What a worker's tools do, for one round. It holds the platform key; the AI never sees it."""
+
+    def __init__(self, api, campaign, round_, opts, workdir):
+        self.api, self.campaign, self.round, self.opts, self.workdir = api, campaign, round_, opts, workdir
+        self.lock = threading.Lock()
+        self.facts, self.notes, self.loaded, self.last_note = {}, [], 0, 0
+        self.refresh(force=True)
+
+    def refresh(self, force=False):
+        if not force and time.time() - self.loaded < 120:
+            return
+        q = f"?question={self.campaign['question_id']}" if self.campaign.get("question_id") else ""
+        ctx = self.api.get(f"/api/projects/{self.campaign['project_id']}/proving-context{q}")
+        self.facts = {f["id"]: f for f in ctx.get("facts") or [] if f.get("status") != "retracted"}
+        self.notation = ctx.get("notation") or []
+        new = self.api.get(f"/api/prover/campaigns/{self.campaign['id']}/notes?since={self.last_note}").get("notes") or []
+        self.notes += new
+        if new:
+            self.last_note = new[-1]["id"]
+        self.loaded = time.time()
+
+    def brief(self, f):
+        return {"id": f["id"], "label": f["label"], "title": f["title"], "kind": f["kind"], "status": f["status"], "usable": f.get("usable", False),
+                "statement": f["statement"][:600]}
+
+    def call(self, name, args):
+        with self.lock:
+            fn = getattr(self, "tool_" + name, None)
+            if not fn:
+                raise ValueError(f"Unknown tool {name}.")
+            return fn(**{k: v for k, v in (args or {}).items() if k in fn.__code__.co_varnames})
+
+    def tool_fact_search(self, query, limit=10):
+        self.refresh()
+        return {"results": [self.brief(f) for f in ranked(list(self.facts.values()), query, lambda f: f"{f['label']} {f['title']} {f['statement']}", limit)]}
+
+    def tool_fact_read(self, id):
+        self.refresh()
+        f = self.facts.get(int(id))
+        if not f:
+            return {"error": f"No fact {id} in this project."}
+        return {**self.brief(f), "statement": f["statement"], "proof": f["proof"], "depends_on": f["deps"], "glossary": f.get("glossary"),
+                "references": f.get("external_refs"), "basis": f.get("basis")}
+
+    def tool_note_search(self, query, kinds=None, limit=10):
+        self.refresh()
+        rows = [n for n in self.notes if not kinds or n["kind"] in kinds]
+        return {"results": [{k: n.get(k) for k in ("id", "kind", "claim", "evidence", "fact_id")} for n in ranked(rows, query, lambda n: f"{n['kind']} {n['claim']} {n.get('evidence') or ''}", limit)]}
+
+    def tool_note_add(self, kind, claim, evidence=""):
+        r = self.api.post(f"/api/prover/rounds/{self.round['id']}/notes", {"kind": kind, "claim": claim, "evidence": evidence})
+        self.notes.append({"id": r["id"], "kind": kind, "claim": claim, "evidence": evidence, "fact_id": None})
+        return {"id": r["id"]}
+
+    def unusable(self, ids):
+        self.refresh(force=True)
+        return [i for i in ids if not (self.facts.get(i) or {}).get("usable")]
+
+    def verify(self, statement, proof, deps, glossary):
+        """A fresh verifier session, in its own folder, with only the claim and the facts it cites."""
+        cited = [{"id": i, "label": self.facts[i]["label"], "statement": self.facts[i]["statement"]} for i in deps if i in self.facts]
+        with tempfile.TemporaryDirectory(prefix="oq-verify-") as tmp:
+            folder = pathlib.Path(os.path.realpath(tmp))
+            (folder / "claim.json").write_text(json.dumps({"statement": statement, "proof": proof, "glossary": glossary or {}, "cited_facts": cited,
+                                                            "project_notation": self.notation}, ensure_ascii=False, indent=1), encoding="utf-8")
+            prompt = f"{SAFETY}\n\n{PROVER_VERIFIER}\n\nRead claim.json in the current folder to begin."
+            answer, model, seconds = run_ai(self.opts.verifier, prompt, PROVER_SCHEMAS["verify"], folder, self.opts.verifier_model, False, self.opts.verify_timeout)
+        return answer, model, seconds
+
+    def tool_fact_submit(self, title, statement, proof, kind="lemma", depends_on=None, glossary=None):
+        deps = sorted({int(x) for x in depends_on or []})
+        bad = self.unusable(deps)
+        if bad:
+            return {"accepted": False, "error": f"Facts {bad} are not usable yet: verify them with fact_verify, or do without them."}
+        answer, model, seconds = self.verify(statement, proof, deps, glossary)
+        if answer.get("verdict") != "correct":
+            self.api.post(f"/api/prover/rounds/{self.round['id']}/rejected", {"statement": statement, "hints": f"{answer.get('repair_hints') or ''}\n\n{answer.get('report') or ''}"})
+            return {"accepted": False, "repair_hints": answer.get("repair_hints"), "report": answer.get("report")}
+        r = self.api.post(f"/api/prover/rounds/{self.round['id']}/facts", {"title": title, "kind": kind, "statement": statement, "proof": proof, "depends_on": deps,
+                                                                           "glossary": glossary or {}, "ai_model": self.opts.model_used,
+                                                                           "verifier": {"model": model, "report": answer.get("report") or "", "seconds": seconds}})
+        self.refresh(force=True)
+        return {"accepted": True, "fact_id": r["id"], "label": r["label"]}
+
+    def tool_fact_verify(self, id):
+        self.refresh()
+        f = self.facts.get(int(id))
+        if f and f.get("usable"):
+            return {"accepted": True, "usable": True, "note": "Already usable: there is nothing to verify."}
+        if not f or not f.get("proof"):
+            return {"error": "This fact has no proof here to verify."}
+        bad = self.unusable(f["deps"])
+        if bad:
+            return {"accepted": False, "error": f"It relies on facts {bad} that are not usable yet: verify those first."}
+        answer, model, seconds = self.verify(f["statement"], f["proof"], f["deps"], f.get("glossary"))
+        ok = answer.get("verdict") == "correct"
+        try:
+            self.api.post(f"/api/facts/{f['id']}/reviews", {"verdict": "correct" if ok else "gap", "statement": "true" if ok else "unsure", "ai_model": model, "generation_seconds": seconds,
+                                                            "body_text": ("The prover's verifier accepted this proof, assuming the facts it relies on. " if ok else "The prover's verifier did not accept this proof. ")
+                                                            + (answer.get("report") or "")})
+        except ApiError as e:
+            return {"accepted": ok, "note": f"The verdict could not be recorded: {e}"}
+        self.refresh(force=True)
+        return {"accepted": ok, "usable": (self.facts.get(f["id"]) or {}).get("usable", False), "repair_hints": None if ok else answer.get("repair_hints")}
+
+    def tool_cite_result(self, title, statement, reference, quote=""):
+        with tempfile.TemporaryDirectory(prefix="oq-cite-") as tmp:
+            folder = pathlib.Path(os.path.realpath(tmp))
+            (folder / "cite.json").write_text(json.dumps({"statement": statement, "reference": reference, "quote": quote}, ensure_ascii=False, indent=1), encoding="utf-8")
+            answer, model, seconds = run_ai(self.opts.verifier, f"{SAFETY}\n\n{PROVER_SOURCE_CHECK}\n\nRead cite.json in the current folder to begin.", PROVER_SCHEMAS["source"],
+                                            folder, self.opts.verifier_model, True, self.opts.verify_timeout)
+        ref = {k: v for k, v in (reference or {}).items() if v not in (None, "")}
+        r = self.api.post(f"/api/prover/rounds/{self.round['id']}/cited", {"title": title, "statement": statement, "reference": ref,
+                                                                           "check": {"verdict": answer.get("verdict"), "model": model, "explanation": answer.get("explanation"), "seconds": seconds}})
+        self.refresh(force=True)
+        return {"fact_id": r["id"], "label": r["label"], "source_check": answer.get("verdict"), "usable": answer.get("verdict") == "confirmed", "explanation": answer.get("explanation")}
+
+
+class ProverGateway:
+    """The address the tools process reaches: on this computer only, with a token valid for one round."""
+
+    def __init__(self, toolbox):
+        self.toolbox, self.token = toolbox, secrets.token_urlsafe(24)
+        box, token = toolbox, self.token
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_POST(self):
+                if not hmac.compare_digest(self.headers.get("X-OQ-Token", ""), token) or self.path != "/tool":
+                    self.send_response(403); self.end_headers(); return
+                try:
+                    body = json.loads(self.rfile.read(min(int(self.headers.get("Content-Length") or 0), 2_000_000)) or b"{}")
+                    out = {"result": box.call(str(body.get("name")), body.get("arguments") or {})}
+                except (ApiError, ValueError, TypeError, RuntimeError, LimitReached, OSError) as e:
+                    out = {"error": str(e)[:2000]}
+                data = json.dumps(out, ensure_ascii=False).encode("utf-8")
+                self.send_response(200); self.send_header("Content-Type", "application/json"); self.send_header("Content-Length", str(len(data))); self.end_headers()
+                self.wfile.write(data)
+
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.port = self.server.server_address[1]
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+
+def cmd_prover_tools(a):
+    """The tools of a worker, as an MCP server on standard input and output, launched by Claude or Codex for one round."""
+    def send(msg):
+        sys.stdout.write(json.dumps(msg, ensure_ascii=False) + "\n")
+        sys.stdout.flush()
+    for line in sys.stdin:
+        try:
+            msg = json.loads(line)
+        except ValueError:
+            continue
+        mid, method = msg.get("id"), msg.get("method")
+        if mid is None:
+            continue  # a notification
+        if method == "initialize":
+            send({"jsonrpc": "2.0", "id": mid, "result": {"protocolVersion": (msg.get("params") or {}).get("protocolVersion") or "2025-06-18",
+                                                          "capabilities": {"tools": {}}, "serverInfo": {"name": "prover", "version": VERSION}}})
+        elif method == "tools/list":
+            send({"jsonrpc": "2.0", "id": mid, "result": {"tools": PROVER_TOOLS}})
+        elif method == "tools/call":
+            p = msg.get("params") or {}
+            try:
+                req = urllib.request.Request(f"http://127.0.0.1:{int(a.port)}/tool", data=json.dumps({"name": p.get("name"), "arguments": p.get("arguments") or {}}).encode("utf-8"),
+                                             headers={"Content-Type": "application/json", "X-OQ-Token": a.token}, method="POST")
+                with urllib.request.urlopen(req, timeout=7200) as res:
+                    out = json.loads(res.read())
+            except (OSError, ValueError) as e:
+                out = {"error": f"The prover's tools are not reachable: {e}"}
+            text = json.dumps(out.get("result") if "result" in out else {"error": out.get("error")}, ensure_ascii=False)
+            send({"jsonrpc": "2.0", "id": mid, "result": {"content": [{"type": "text", "text": text}], "isError": "error" in out}})
+        elif method == "ping":
+            send({"jsonrpc": "2.0", "id": mid, "result": {}})
+        else:
+            send({"jsonrpc": "2.0", "id": mid, "error": {"code": -32601, "message": f"Unknown method {method}"}})
+    return 0
+
+
+def tools_command(gateway):
+    """How the AI tool launches the tools process: this client, with the address and the token of the round."""
+    me = [sys.executable] if getattr(sys, "frozen", False) else [sys.executable, os.path.realpath(__file__)]
+    return me + ["prover-tools", "--port", str(gateway.port), "--token", gateway.token]
+
+
+def worker_command(provider, gateway, workdir, model, web):
+    cmd = tools_command(gateway)
+    if provider == "claude":
+        config = {"mcpServers": {"prover": {"command": cmd[0], "args": cmd[1:]}}}
+        tools = "Read,WebSearch" if web else "Read"
+        out = ["claude", "-p", "--output-format", "json", "--mcp-config", json.dumps(config), "--strict-mcp-config", "--tools", tools,
+               "--allowedTools", "mcp__prover", *(["WebSearch"] if web else []), "--permission-mode", "dontAsk"]
+    else:
+        server = "{command=" + json.dumps(cmd[0]) + ",args=" + json.dumps(cmd[1:]) + ",tool_timeout_sec=7200}"
+        out = ["codex"] + (["--search"] if web else []) + ["exec", "--sandbox", "read-only", "--skip-git-repo-check", "--ephemeral", "--json",
+                                                           "-c", f"mcp_servers.prover={server}", "-C", str(workdir)]
+    if model:
+        out += ["--model", model]
+    return out + (["-"] if provider == "codex" else [])
+
+
+def prover_problem(campaign, toolbox, round_):
+    g = campaign.get("guidance") or {}
+    lane = round_.get("lane_task")
+    parts = [f"# Problem\n\nCampaign {campaign['id']} of project {campaign['project_id']}.", campaign.get("goal") or "",
+             f"Question: {toolbox.question}" if getattr(toolbox, "question", None) else "",
+             danus_notation(toolbox.notation and [{"symbol": e["symbol"], "meaning": e["meaning"], "note": e.get("note")} for e in toolbox.notation]),
+             f"## The lead's guidance\n\n{g.get('summary') or ''}\n\n{g.get('guidance') or ''}" if g else "## The lead's guidance\n\nNone yet: start from the problem.",
+             f"## Your lane: {lane['title']}\n\n{lane['task']}" if lane else "## Your lane\n\nFree: choose the most useful open direction."]
+    return "\n\n".join(x for x in parts if x)
+
+
+def prover_round(api, campaign, round_, opts):
+    """One round: a worker session with the tools, or the lead's structured answer."""
+    with tempfile.TemporaryDirectory(prefix="oq-prove-") as tmp:
+        workdir = pathlib.Path(os.path.realpath(tmp))
+        box = ProverToolbox(api, campaign, round_, opts, workdir)
+        q = campaign.get("question_id")
+        if q:
+            try:
+                question = api.get(f"/api/questions/{q}")
+                box.question = f"{question.get('title') or ''}\n\n{html_text(question.get('statement_html') or '')}"
+            except ApiError:
+                box.question = None
+        if round_["kind"] == "lead":
+            usable = [box.brief(f) for f in box.facts.values() if f.get("usable")][-400:]
+            stats = api.get(f"/api/prover/campaigns/{campaign['id']}").get("recent_rounds") or []
+            (workdir / "lead.json").write_text(json.dumps({"problem": prover_problem(campaign, box, {}), "previous": campaign.get("guidance"), "notes": box.notes[-300:],
+                                                           "usable_facts": usable, "rounds": stats[:60]}, ensure_ascii=False, indent=1), encoding="utf-8")
+            prompt = f"{SAFETY}\n\n" + PROVER_LEAD.format(lanes=max(1, opts.workers * 2), rules=PROVER_RULES) + "\n\nRead lead.json in the current folder to begin."
+            answer, model, seconds = run_ai(opts.provider, prompt, PROVER_SCHEMAS["lead"], workdir, opts.model, True, opts.round_seconds)
+            api.post(f"/api/prover/rounds/{round_['id']}/lead", {**answer, "generation_seconds": seconds})
+            return round(seconds), str(answer.get("summary") or "")[:500]
+        (workdir / "PROBLEM.md").write_text(prover_problem(campaign, box, round_), encoding="utf-8")
+        gate = ProverGateway(box)
+        started = time.time()
+        try:
+            cmd = worker_command(opts.provider, gate, workdir, opts.model, True)
+            cmd[0] = shutil.which(cmd[0]) or cmd[0]
+            env = {**safe_env(opts.provider), "MCP_TOOL_TIMEOUT": "7200000", "MCP_TIMEOUT": "60000"}
+            prompt = f"{SAFETY}\n\n" + PROVER_WORKER.format(rules=PROVER_RULES) + "\n\nRead PROBLEM.md in the current folder to begin."
+            try:
+                p = subprocess.run(cmd, input=prompt, text=True, encoding="utf-8", capture_output=True, cwd=str(workdir), env=env, timeout=opts.round_seconds)
+                out = p.stdout
+                Ledger().add(seconds=time.time() - started, tokens=count_tokens(opts.provider, out))
+                if p.returncode != 0:
+                    check_limit_text((p.stderr or out or "")[-2000:])
+                    raise RuntimeError(f"{opts.provider} stopped with an error: {(p.stderr or out or '').strip()[-300:]}")
+                try:
+                    said = str(json.loads(out).get("result") or "") if opts.provider == "claude" else out.strip().splitlines()[-1]
+                except (ValueError, IndexError):
+                    said = ""
+            except subprocess.TimeoutExpired:
+                Ledger().add(seconds=time.time() - started)
+                said = "The round reached its time limit; its facts and notes are kept."
+        finally:
+            gate.close()
+        return round(time.time() - started), said[:1000]
+
+
+class ProverRun:
+    """`oq.py prove run`: rounds until a stop, in parallel workers, within the limits of this computer."""
+
+    def __init__(self, api, opts):
+        self.api, self.opts = api, opts
+        self.flag = data_dir() / "prover_stop"
+        self.until = time.time() + opts.minutes * 60 if opts.minutes else None
+        self.facts = 0
+
+    def stopping(self):
+        return self.flag.exists() or (self.until and time.time() >= self.until)
+
+    def worker(self, n, campaign_id):
+        while not self.stopping():
+            allowed, why, retry, _ = guard(self.opts.provider)
+            if not allowed:
+                say(f"{time.strftime('%H:%M:%S')}  Worker {n} on hold: {why}")
+                if self.opts.once:
+                    return
+                time.sleep(min(300, max(30, (retry or time.time() + 60) - time.time())))
+                continue
+            try:
+                got = self.api.post(f"/api/prover/campaigns/{campaign_id}/rounds", {"engine": self.opts.provider, "ai_model": self.opts.model_used, "client_name": f"{platform.node() or 'computer'} (prover)"})
+            except ApiError as e:
+                say(f"{time.strftime('%H:%M:%S')}  Worker {n} stops: {e}")
+                return
+            r, c = got["round"], got["campaign"]
+            what = "lead" if r["kind"] == "lead" else f"lane {r['lane'] + 1}" + (f": {r['lane_task']['title']}" if r.get("lane_task") else "")
+            say(f"{time.strftime('%H:%M:%S')}  Worker {n}: round {r['id']}, {what}")
+            try:
+                seconds, said = prover_round(self.api, c, r, self.opts)
+                self.api.post(f"/api/prover/rounds/{r['id']}/finish", {"seconds": seconds, "summary": said})
+                say(f"{time.strftime('%H:%M:%S')}  Worker {n}: round {r['id']} done in {seconds // 60} min. {said[:200]}")
+            except LimitReached as e:
+                Ledger().block(str(e), e.until or time.time() + 1800)
+                self.safe_finish(r, str(e))
+            except Exception as e:  # noqa: BLE001 - a round that fails is recorded as failed, and the worker goes on
+                self.safe_finish(r, f"{type(e).__name__}: {e}")
+                say(f"{time.strftime('%H:%M:%S')}  Worker {n}: round {r['id']} failed: {str(e)[:300]}")
+            if self.opts.once:
+                return
+
+    def safe_finish(self, r, error):
+        try:
+            self.api.post(f"/api/prover/rounds/{r['id']}/finish", {"error": error[:900] or "failed"})
+        except ApiError:
+            pass
+
+
+def cmd_prove(a):
+    api, _ = connect()
+    if a.action == "stop":
+        data_dir().mkdir(parents=True, exist_ok=True)
+        (data_dir() / "prover_stop").write_text("stop", encoding="utf-8")
+        print("The prover stops after the rounds in progress.")
+        return 0
+    if not a.project:
+        raise Stop("Give the project: --project ID.")
+    if a.action == "stats":
+        s = api.get(f"/api/projects/{a.project}/prover/stats")
+        for engine, x in s.items():
+            rate = f"{x['facts_per_hour']} per hour" if x.get("facts_per_hour") is not None else "no computing time"
+            print(f"{engine:7}  {x['facts']} facts, {round(x['seconds'] / 3600, 1)} h, {rate}; established {x['established']}, checked by a person {x['checked_by_a_person']}, "
+                  f"disputed {x['disputed']}, retracted {x['retracted']}, used by other facts {x['used_by_other_facts']}"
+                  + (f", rejected by the verifier {x['rejected_by_verifier']}" if "rejected_by_verifier" in x else ""))
+        return 0
+    if a.action == "status":
+        for c in api.get(f"/api/projects/{a.project}/prover/campaigns").get("campaigns") or []:
+            print(f"#{c['id']}  {c['status']:6}  question {c['question_id'] or '-'}  {c['rounds']} rounds, {c['facts']} facts, {c['rejected']} rejected, {round(c['seconds'] / 3600, 1)} h"
+                  + (f"\n      {c['guidance']['summary'][:300]}" if c.get("guidance") else ""))
+        return 0
+    a.provider = detect_provider(a.provider)
+    a.model = a.model or chosen_model(a.provider, "derive")
+    a.model_used = known_model(a.provider, a.model)
+    if not a.model_used or a.model_used in MODEL_ALIASES:
+        # Facts record the exact model: one tiny request tells which model the alias stands for today.
+        with tempfile.TemporaryDirectory(prefix="oq-probe-") as tmp:
+            _, used, _ = run_ai(a.provider, "Answer with the word ok.", strict({"ok": {"type": "string"}}), pathlib.Path(os.path.realpath(tmp)), a.model, False, 300)
+        remember_alias(a.model, used)
+        a.model_used = used or a.model or "unspecified"
+    others = [p for p in ("claude", "codex") if p != a.provider and shutil.which(p) and tool_signed_in(p)]
+    # Another engine checks the work when there is one: its acceptance then counts as an independent check.
+    a.verifier = a.verifier or (others[0] if others else a.provider)
+    a.verifier_model = a.verifier_model or (chosen_model(a.verifier, "review") if a.verifier != a.provider else a.model)
+    a.round_seconds = max(5, a.round_minutes) * 60
+    a.verify_timeout = 1800
+    if not 1 <= a.workers <= 8:
+        raise Stop("workers must be between 1 and 8.")
+    c = api.post(f"/api/projects/{a.project}/prover/campaigns", {"question_id": a.question, "goal": a.goal or ""})
+    try:
+        (data_dir() / "prover_stop").unlink()
+    except OSError:
+        pass
+    run = ProverRun(api, a)
+    say(f"Campaign {c['id']}: {a.workers} worker(s) on {a.provider} ({a.model or 'default model'}), verified on {a.verifier} ({a.verifier_model or 'default model'}). "
+        f"Stop with: python3 oq.py prove stop")
+    threads = [threading.Thread(target=run.worker, args=(i + 1, c["id"]), daemon=True) for i in range(a.workers)]
+    for t in threads:
+        t.start()
+        time.sleep(2)  # the first one takes the lead round
+    try:
+        for t in threads:
+            while t.is_alive():
+                t.join(1)
+    except KeyboardInterrupt:
+        (data_dir() / "prover_stop").write_text("stop", encoding="utf-8")
+        say("Stopping after the rounds in progress.")
+    say("The prover stopped.")
+    return 0
+
+
 # ----- installing and signing in to the AI tools -----
 
 CLAUDE_APP_TEAM = "Q6L2SF6YDW"  # Anthropic's Apple developer team
@@ -5057,6 +5541,24 @@ def parser():
     d.add_argument("--timeout", type=int, default=86400)
     d.add_argument("--command", help="for serve: how to run Danus, with {task} and {graph}")
     d.set_defaults(fn=cmd_danus)
+    pv = sub.add_parser("prove", help="the native prover: proof search on the project's own facts (experimental)")
+    pv.add_argument("action", choices=["run", "stop", "status", "stats"])
+    pv.add_argument("--project", type=int)
+    pv.add_argument("--question", type=int, help="the question to work on (default: the whole project)")
+    pv.add_argument("--goal", help="instructions for the campaign")
+    pv.add_argument("--workers", type=int, default=2, help="parallel workers on this computer, 1 to 8")
+    pv.add_argument("--minutes", type=int, default=120, help="running time of this computer, 0 for no limit")
+    pv.add_argument("--round-minutes", type=int, default=30, help="maximum length of one worker session")
+    pv.add_argument("--provider", choices=["claude", "codex"], help="the AI of the workers and the lead")
+    pv.add_argument("--model")
+    pv.add_argument("--verifier", choices=["claude", "codex"], help="the AI of the verifier (default: the other one when it is installed)")
+    pv.add_argument("--verifier-model")
+    pv.add_argument("--once", action="store_true", help="one round per worker, then stop")
+    pv.set_defaults(fn=cmd_prove)
+    pt = sub.add_parser("prover-tools", help=argparse.SUPPRESS)
+    pt.add_argument("--port", type=int, required=True)
+    pt.add_argument("--token", required=True)
+    pt.set_defaults(fn=cmd_prover_tools)
     return ap
 
 

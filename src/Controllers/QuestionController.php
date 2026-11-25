@@ -541,7 +541,7 @@ final class QuestionController
 
     // ---------------------------------------------------------------------
 
-    private static function revision(int $sid, int $no, string $title, string $status, string $html, string $note, ?string $model, array $stamp): void
+    public static function revision(int $sid, int $no, string $title, string $status, string $html, string $note, ?string $model, array $stamp): void
     {
         Db::insert('strategy_revisions', $stamp + ['strategy_id' => $sid, 'revision_no' => $no, 'title' => $title, 'status' => $status, 'body_html' => $html,
             'change_note' => $note, 'author_id' => Auth::id(), 'ai_model' => $model, 'created_at' => Db::now()]);

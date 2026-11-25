@@ -5,7 +5,7 @@ require __DIR__ . '/../src/bootstrap.php';
 
 use App\{Auth, Config, HttpError, Request, Response};
 use App\Controllers\{AgentController, AiTaskController, AuthController, BibController, CommentController, ConsolidationController, ConversationController, DashboardController,
-    DocumentController, ExportController, FactController, FeedbackController, HelpController, KeyController, AdminController, AuditController, NotationController, NotificationController, ProjectController, QuestionController, ReferenceController, SearchController};
+    DocumentController, ExportController, FactController, FeedbackController, HelpController, KeyController, AdminController, AuditController, NotationController, NotificationController, ProjectController, ProverController, QuestionController, ReferenceController, SearchController};
 
 $routes = [
     // auth
@@ -108,6 +108,20 @@ $routes = [
     // fact database
     ['GET',    '/api/projects/{pid}/facts',               [FactController::class, 'list']],
     ['GET',    '/api/projects/{pid}/proving-context',     [FactController::class, 'provingContext']],
+    // the native prover (docs/PROVER.md)
+    ['POST',   '/api/projects/{pid}/prover/campaigns',    [ProverController::class, 'start']],
+    ['GET',    '/api/projects/{pid}/prover/campaigns',    [ProverController::class, 'list']],
+    ['GET',    '/api/projects/{pid}/prover/stats',        [ProverController::class, 'stats']],
+    ['GET',    '/api/prover/campaigns/{id}',              [ProverController::class, 'show']],
+    ['POST',   '/api/prover/campaigns/{id}/status',       [ProverController::class, 'setStatus']],
+    ['POST',   '/api/prover/campaigns/{id}/rounds',       [ProverController::class, 'claim']],
+    ['GET',    '/api/prover/campaigns/{id}/notes',        [ProverController::class, 'notes']],
+    ['POST',   '/api/prover/rounds/{id}/finish',          [ProverController::class, 'finish']],
+    ['POST',   '/api/prover/rounds/{id}/lead',            [ProverController::class, 'lead']],
+    ['POST',   '/api/prover/rounds/{id}/notes',           [ProverController::class, 'addNote']],
+    ['POST',   '/api/prover/rounds/{id}/facts',           [ProverController::class, 'addFact']],
+    ['POST',   '/api/prover/rounds/{id}/rejected',        [ProverController::class, 'rejected']],
+    ['POST',   '/api/prover/rounds/{id}/cited',           [ProverController::class, 'addCited']],
     ['POST',   '/api/projects/{pid}/facts',               [FactController::class, 'create']],
     ['POST',   '/api/projects/{pid}/facts/batch',         [FactController::class, 'batch']],
     ['GET',    '/api/projects/{pid}/facts/match',         [FactController::class, 'match']],

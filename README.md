@@ -57,6 +57,7 @@ The platform centralizes and displays the research. All AI computation runs on t
 - **Questions:** `@AI` in a message or comment, or **Ask AI** in a conversation, queues a task, and the answer appears in the same thread.
 - **References:** the AI suggests checkable references, and a person accepts or rejects each one.
 - **Derivation:** the AI derives new facts, or `oq.py danus` synchronizes a Danus fact graph.
+- **Native prover (experimental):** `oq.py prove` runs a proof search on the project's own facts, in the spirit of Danus (whose Apache-2.0 instructions it adapts): campaigns shared by members' clients, lead rounds that give lanes and revise a strategy, worker sessions with tools served by the client over MCP, a fresh verifier before any fact is created, cited results checked against their source, and `oq.py prove stats` to compare with Danus. See `docs/PROVER.md`.
 
 The client is one Python file with no dependency, [`client/oq.py`](client/oq.py). The help center has step-by-step guides with screenshots for Claude and ChatGPT.
 
