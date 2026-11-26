@@ -26,8 +26,12 @@ test('the letters a symbol is written with are its parameters; names and terms i
   assert.deepEqual(inferParams("\\mathcal{D}' \\leq \\mathcal{D}"), ['\\mathcal{D}']);
   for (const s of ['\\mathrm{FIN}', '\\mathcal{U}', '\\mathbb{N}', 'P-condition', 'full-match (HT)', 'apart']) assert.deepEqual(inferParams(s), [], s);
   assert.deepEqual(paramsOf({ symbol: 'Y \\leq X', params: [{ name: 'X', type: 'infinite block sequences' }] }), [{ name: 'Y', type: '' }, { name: 'X', type: 'infinite block sequences' }]);
-  assert.equal(colorParams('Y \\leq X', BLOCKS), '\\htmlClass{oq-pm oq-pm-0}{Y} \\leq \\htmlClass{oq-pm oq-pm-1}{X}');
+  assert.equal(colorParams('Y \\leq X', BLOCKS), '{\\htmlClass{oq-pm oq-pm-0}{Y}} \\leq {\\htmlClass{oq-pm oq-pm-1}{X}}');
   assert.ok(trustParams({ command: '\\htmlClass', class: 'oq-pm oq-pm-1' }));
+  // A colored index stays one argument of ^ and _, and a letter after a font command without braces is the name.
+  assert.equal(colorParams('\\mathsf{RT}^n_k', paramsOf({ symbol: '\\mathsf{RT}^n_k' })), '\\mathsf{RT}^{\\htmlClass{oq-pm oq-pm-0}{n}}_{\\htmlClass{oq-pm oq-pm-1}{k}}');
+  assert.deepEqual(inferParams('\\mathsf D^2_2'), []);
+  assert.equal(colorParams('\\mathsf D^2_2', [{ name: 'D', type: 'x' }]), '\\mathsf D^2_2');
   assert.ok(!trustParams({ command: '\\htmlClass', class: 'evil' }));
 });
 

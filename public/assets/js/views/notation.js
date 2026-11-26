@@ -22,6 +22,12 @@ const NotationSymbol = {
       el.textContent = text;
       if (!window.renderMathInElement) { this.retry = setTimeout(() => this.paint(), 400); return; } // KaTeX is loaded with defer
       window.renderMathInElement(el, { delimiters: [{ left: '$', right: '$', display: false }], throwOnError: false, trust: trustParams });
+      if (params.length && el.querySelector('.katex-error')) {
+        // Colors that KaTeX cannot place: the symbol as written, uncolored, rather than its source in red.
+        el.textContent = asMath(this.symbol);
+        window.renderMathInElement(el, { delimiters: [{ left: '$', right: '$', display: false }], throwOnError: false });
+        return;
+      }
       el.querySelectorAll('.oq-pm').forEach((n) => {
         const i = [...n.classList].map((c) => c.match(/^oq-pm-(\d+)$/)).find(Boolean);
         const q = i && params[+i[1]];
@@ -43,8 +49,8 @@ const entryEditor = `<div class="notation-edit">
 const entryView = (by, actions) => `<div class="notation-symbol"><notation-symbol :symbol="e.symbol" :params="e.params"/></div>
   <div class="notation-body"><rich-content :html="e.meaning_html"/>
     <div v-if="e.params?.length" class="notation-scope" :class="{untyped: !scopeOf(e).typed}"><span class="scope-label">Applies to</span>
-      <span v-for="g in paramGroups(e.params)" :key="g.type" class="pm-group"><template v-for="(p, j) in g.params" :key="p.name"><span class="pm-name" :class="'pm-' + (p.i % 4)"><math-text :text="'$' + p.name + '$'"/></span>{{ j < g.params.length - 1 ? ', ' : '' }}</template>: <span :class="{'muted': !g.type}">{{ g.type || 'type not stated' }}</span></span>
-      <small v-if="!scopeOf(e).typed" class="scope-hint">Say what they are with Edit: the entry then applies to those objects only, and the same symbol between other objects keeps its meaning.</small>
+      <span v-for="g in paramGroups(e.params)" :key="g.type" class="pm-group"><template v-for="(p, j) in g.params" :key="p.name"><span class="pm-name" :class="'pm-' + (p.i % 4)"><math-text :text="'$' + p.name + '$'"/></span>{{ j < g.params.length - 1 ? ', ' : '' }}</template>: <span :class="{'pm-missing': !g.type}">{{ g.type || 'type not stated yet' }}</span></span>
+      <small v-if="!scopeOf(e).typed" class="scope-hint">The AI fills in the types when it reviews the notation, or say them with Edit. Until then, the meaning says what the entry applies to.</small>
       <small v-else class="scope-hint">The same symbol between other objects keeps its own meaning.</small></div>
     <p v-if="e.note_text" class="notation-note"><icon name="lightbulb" :size="13"/> <math-text :text="e.note_text"/></p>
     <template v-for="g in [['instances', 'In particular settings'], ['clashes', 'Other meanings in sources']]" :key="g[0]"><div v-if="splitVariants(e.variants)[g[0]].length" class="notation-variants-group" :class="'g-' + g[0]"><small>{{ g[1] }}</small>

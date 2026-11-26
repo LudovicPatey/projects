@@ -1,7 +1,7 @@
 {
  "min_version": "1.0.0",
  "client_version": "1.20.0",
- "fingerprint": "83e2745b29503f5e590b8407d48b6a925bc08d2d4a28a3c8c6d2769a5d2583b6",
+ "fingerprint": "eabd86b5b9476c97b59a1f57362239c0f995fab2fb17f9d16253b00a2d1cd218",
  "routes": [
   "GET /api/ai/procedures AiTaskController::procedures",
   "GET /api/bib/{id}/pdf BibController::pdf",
@@ -356,7 +356,7 @@
   "NotationController::forFact": "65d51bb42828719a499dc4af7dc104fc448d144aaa72e405603194c243d7dee2",
   "NotationController::forTask": "2eff98c10ba336fdfd526f1a3a3690bcaed424dd3b5733d131ccc0e6d24063bd",
   "NotationController::hash": "454e66c296c866b45eda4ac13dc5e2308438ae1cbac419e09c2c025675516731",
-  "NotationController::inferParams": "2597bf4eaa6d6b198363a1c0cc6926304af2ca5b8e97cd04bbc8cb07c2bc632e",
+  "NotationController::inferParams": "d8987e802b74f3398f741b344c790a26244673564d49905bf1c1ccd3ca045dec",
   "NotationController::isProofVariable": "123de275951aa6bbde9309700f854268bbf60a60e3dddcd82a8b55906689476f",
   "NotationController::key": "5a9316d22ecabb2fc5424251872a380862fd040b2d583566b09ee9101dfedd18",
   "NotationController::list": "fbecc3f6cd4de3fc0a92ba806931e4b860bb82814e5a0dd29a1def4b0022a3ce",
@@ -1266,6 +1266,16 @@
     "+NotationController::params",
     "+NotationController::paramsOf",
     "+NotationController::typed"
+   ]
+  },
+  {
+   "date": "2026-11-26",
+   "decision": "compatible",
+   "client_version": "1.20.0",
+   "min_version": "1.0.0",
+   "note": "Parameters no longer include the letter after a font command written without braces; the field stays optional",
+   "changed": [
+    "NotationController::inferParams"
    ]
   }
  ]

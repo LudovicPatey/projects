@@ -575,9 +575,14 @@ final class NotationController
         // A term in words, such as P-condition or full-match (HT), has no parameter.
         if (preg_match('/(?<!\\\\)\b[A-Za-z]+-[A-Za-z]/', $s) || array_filter($toks, fn($t) => preg_match('/^[A-Za-z]{4,}$/', $t))) return [];
         $out = [];
+        $prev = '';
         foreach ($toks as $t) {
+            if (trim($t) === '') continue;
             $letter = preg_match('/^[A-Za-z]$/', $t) || preg_match('/^\\\\(?:mathcal|mathscr|mathfrak|mathbf|boldsymbol)\s*\{/', $t);
-            if ($letter) $out[self::paramKey($t)] ??= preg_replace('/\s+/', '', $t);
+            // After a font command written without braces, \mathsf D, the letter is the name.
+            $named = preg_match('/^\\\\(?:mathrm|mathsf|mathit|mathbf|mathcal|mathscr|mathfrak|mathbb|boldsymbol|operatorname|textrm|text|rm|sf|bf|it|cal)$/', $prev);
+            if ($letter && !$named) $out[self::paramKey($t)] ??= preg_replace('/\s+/', '', $t);
+            $prev = $t;
         }
         // A symbol that is one letter only, such as \mathcal{U}, is a name, not a parameter.
         return count(array_filter($toks, fn($t) => trim($t) !== '')) === 1 ? [] : array_values($out);
