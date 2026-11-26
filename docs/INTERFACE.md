@@ -56,6 +56,10 @@ Assume a newcomer who must understand each screen from what it says, without the
 - Works at 1440, 1024, 800 and 375 pixels: run `scripts/visual-audit.js` on each affected view and dialog, then look at a screenshot.
 - `select.sm` beside `btn sm`; never `background:` or a small right padding on a `select`.
 - Status colors always come with a word or an icon, never color alone.
+- Cards side by side keep their controls on one line at the bottom, at one height across a row: a text whose length varies goes on
+  its own line above them, never in the row of buttons.
+- Before committing an interface change: the audit and a screenshot at each width, on realistic data (long names and labels, every
+  state), not on a test page with short texts.
 
 ## 6. Help follows the interface
 

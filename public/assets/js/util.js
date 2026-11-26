@@ -15,18 +15,14 @@ export function timeAgo(s) {
 }
 
 /**
- * When a researcher became a member, in words that say who did what: an owner adds a researcher by ORCID iD, and the researcher
- * signs in later, or never. "joined" only when they signed in before or as they became a member (the creator of the project, or
- * an account that already existed). The first sign-in is recorded since 2026-11-26: before, only that they signed in is known.
+ * When a researcher became a member, in words that say who did what: the creator of the project created it; an owner adds the
+ * others by ORCID iD, and they sign in later, or never. When a member first signed in is not said: the platform did not record it
+ * for those who signed in before 26 November 2026, and their next sign-in would read as a first one.
  */
 export function memberSince(m) {
-  const added = parseDate(m?.joined_at);
-  if (!added) return '';
-  if (!m.has_logged_in) return `added ${timeAgo(m.joined_at)}, has not signed in yet`;
-  const first = parseDate(m.first_login_at);
-  if (!first) return `added ${timeAgo(m.joined_at)}`;
-  if (first.getTime() <= added.getTime() + 60000) return `joined ${timeAgo(m.joined_at)}`;
-  return `added ${timeAgo(m.joined_at)}, first signed in ${timeAgo(m.first_login_at)}`;
+  if (!parseDate(m?.joined_at)) return '';
+  if (m.created_project) return `created the project ${timeAgo(m.joined_at)}`;
+  return m.has_logged_in ? `added ${timeAgo(m.joined_at)}` : `added ${timeAgo(m.joined_at)}, has not signed in yet`;
 }
 
 export function fullDate(s) {

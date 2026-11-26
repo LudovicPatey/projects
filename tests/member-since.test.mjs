@@ -13,27 +13,26 @@ let app;
 before(async () => { app = await startApp(); });
 after(() => app?.stop());
 
-test('the first sign-in is recorded once, and the member list gives it with the date they were added', async () => {
+test('the member list says who created the project, who was added, and who has not signed in yet', async () => {
   const owner = await app.signIn(OWNER);
   const pid = (await app.call(owner, 'POST', '/api/projects', { title: 'Members', question_html: '<p>Q</p>' })).data.id;
   const added = (await app.call(owner, 'POST', `/api/projects/${pid}/members`, { orcid: ADDED })).data.members.find((m) => m.orcid === ADDED);
-  assert.equal(added.has_logged_in, 0); assert.equal(added.first_login_at, null);
+  assert.equal(added.has_logged_in, 0);
   assert.match(memberSince(added), /^added just now, has not signed in yet$/);
   const me = (await app.call(owner, 'GET', `/api/projects/${pid}`)).data.members.find((m) => m.orcid === OWNER);
-  assert.equal(memberSince(me), 'joined just now', 'the creator signed in before the project existed');
+  assert.equal(memberSince(me), 'created the project just now');
+  await app.signIn(OWNER);
+  const again = (await app.call(owner, 'GET', `/api/projects/${pid}`)).data.members.find((m) => m.orcid === OWNER);
+  assert.equal(memberSince(again), 'created the project just now', 'a sign-in after the change is never shown as a first one');
   const them = await app.signIn(ADDED);
   const member = async () => (await app.call(them, 'GET', `/api/projects/${pid}`)).data.members.find((m) => m.orcid === ADDED);
-  const first = (await member()).first_login_at;
-  assert.ok(first, 'their first sign-in is recorded');
-  await app.signIn(ADDED);
-  assert.equal((await member()).first_login_at, first, 'and kept at the next one');
+  assert.equal(memberSince(await member()), 'added just now');
 });
 
-test('the words: added, first signed in, joined, and the feed says who added whom', () => {
+test('the words: created the project, added, has not signed in yet; and the feed says who added whom', () => {
   const ago = (d) => new Date(Date.now() - d * 86400000).toISOString().slice(0, 19).replace('T', ' ');
   assert.equal(memberSince({ joined_at: ago(2), has_logged_in: 0 }), 'added 2 d ago, has not signed in yet');
-  assert.equal(memberSince({ joined_at: ago(2), has_logged_in: 1, first_login_at: ago(0) }), 'added 2 d ago, first signed in just now');
-  assert.equal(memberSince({ joined_at: ago(2), has_logged_in: 1, first_login_at: ago(30) }), 'joined 2 d ago', 'an account older than the membership');
-  assert.equal(memberSince({ joined_at: ago(2), has_logged_in: 1, first_login_at: null }), 'added 2 d ago', 'signed in before the first sign-in was recorded: no date is invented');
+  assert.equal(memberSince({ joined_at: ago(2), has_logged_in: 1, first_login_at: ago(0) }), 'added 2 d ago', 'no first sign-in is claimed: it was not recorded before 26 November');
+  assert.equal(memberSince({ joined_at: ago(3), has_logged_in: 1, created_project: 1 }), 'created the project 3 d ago');
   assert.equal(activityVerb('joined'), 'added', '"Ann added Bob": an owner adds members, and members add AI agents');
 });

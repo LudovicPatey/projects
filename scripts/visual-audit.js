@@ -61,6 +61,26 @@
     const r = m.getBoundingClientRect();
     if (r.right > vw + 1 || r.left < -1) problems.push(`menu outside the window: ${name(m)}`);
   }
+  // Cards side by side in a grid: the controls of each card's footer on one line, and the footers of one row at one height. A longer
+  // text in one card must not push its button onto a line of its own, nor move its footer away from its neighbours'.
+  for (const grid of document.querySelectorAll('*')) {
+    if (!visible(grid) || getComputedStyle(grid).display !== 'grid') continue;
+    const rows = new Map();
+    for (const card of grid.children) {
+      const foot = card.querySelector(':scope > footer');
+      if (!foot || !visible(card)) continue;
+      const controls = [...foot.querySelectorAll('button, select, a.btn, .pill')].filter(visible);
+      const tops = controls.map((c) => c.getBoundingClientRect().top);
+      if (controls.length > 1 && Math.max(...tops) - Math.min(...tops) > 8) problems.push(`card footer on two lines: ${name(card)}`);
+      const row = Math.round(card.getBoundingClientRect().top);
+      if (!rows.has(row)) rows.set(row, []);
+      rows.get(row).push([card, foot.getBoundingClientRect().top]);
+    }
+    for (const list of rows.values()) {
+      const tops = list.map(([, t]) => t);
+      if (list.length > 1 && Math.max(...tops) - Math.min(...tops) > 2) problems.push(`card footers of one row at different heights: ${list.map(([c]) => name(c)).join(', ')}`);
+    }
+  }
   // Mathematics: what KaTeX could not read, a dollar left in the text, and words set as one formula in italics.
   const source = (k) => (k.querySelector('annotation')?.textContent || k.getAttribute('title') || k.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 60);
   for (const k of document.querySelectorAll('.katex-error')) if (visible(k)) problems.push(`formula KaTeX cannot read: "${source(k)}"`);

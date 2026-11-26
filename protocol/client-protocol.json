@@ -1,7 +1,7 @@
 {
  "min_version": "1.0.0",
  "client_version": "1.20.0",
- "fingerprint": "4d2f794949323a88d8a715dbd5b83b464eae3d253f208d4be136302a6044a284",
+ "fingerprint": "eff3cf114fc849f495a392c716732de47e8c3a6cbda64b378a324b76b5084e46",
  "routes": [
   "GET /api/ai/procedures AiTaskController::procedures",
   "GET /api/bib/{id}/pdf BibController::pdf",
@@ -414,7 +414,7 @@
   "Procedures::version": "eb27a90773d55526e2d4aa6eb29d06d927ab1bdfb5954c3ef1a40b9a5f626583",
   "ProjectController::canCreate": "99b77ff6a28721afaf239e3383695c8357e9a929c17d2bb66d57386e200d0055",
   "ProjectController::list": "39d5f05d12079b783fe44daa964873315f7ada8bd6aaa76dadd3401aa5dec3e8",
-  "ProjectController::members": "4ea940f516680546c7b4ad96931a960a8952e62b00b3585596bb00184113aa98",
+  "ProjectController::members": "27c640e6421f19212b994739f5aff1e8d833e05ac0e07557b30b4aa7c044846b",
   "Provenance::agentModel": "5db96fa4e573802a8531b0af6017329eefac8f26271e65547a087b78eb6c306f",
   "Provenance::milliseconds": "6ef2dd7baa41d9f361dc1ddb47b518073600b710292370662877e8f925ca1ea1",
   "Provenance::model": "c51e018c2458c7d85047a57210e76db3d0a8fe53f8c653c89406013f77afa929",
@@ -1467,6 +1467,16 @@
     "+NotationController::linkClass",
     "+Sweeps::REVIEW_READERS",
     "+Sweeps::reviewReaders"
+   ]
+  },
+  {
+   "date": "2026-11-26",
+   "decision": "compatible",
+   "client_version": "1.20.0",
+   "min_version": "1.0.0",
+   "note": "Members gain created_project and lose first_login_at in the list; clients never read members.",
+   "changed": [
+    "ProjectController::members"
    ]
   }
  ]

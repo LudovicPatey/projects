@@ -1340,7 +1340,10 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: non
 .contrib > div { flex: 1; min-width: 0; text-align: center; }
 .contrib dd { margin: 0; font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .contrib dt { overflow: hidden; color: var(--muted); font-size: 10.5px; text-overflow: ellipsis; }
+/* The date on its own line, then one row of controls at the bottom of every card: cards of one row line up whatever the text. */
+.person-since { margin: auto 0 -4px; }
 .person > footer { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin-top: auto; }
+.person-since + footer { margin-top: 0; }
 .person > footer .grow { flex: 1; }
 .new-agent { border-style: dashed; background: var(--panel-2); box-shadow: none; }
 .new-agent h3 { color: var(--accent); }
