@@ -367,8 +367,13 @@ TXT,
                 if (trim((string)$answer['reply']) === '') throw new HttpError(422, 'The answer has no reply.');
                 return ['summary' => $said, 'reply_text' => (string)$answer['reply']];
             case 'notation_rephrase':
+                // Written for the revision and the notation of when it was taken: a fact edited since is not given an old rewrite.
+                $snap = json_decode((string)($t['snapshot_json'] ?? ''), true) ?: [];
+                if (isset($snap['facts']) && !AiTaskController::batchFacts($t)) {
+                    return ['summary' => trim("The fact was edited or removed since: this rewrite of its earlier text is not kept. $said"), 'fact_ids' => []];
+                }
                 $fid = NotationController::rephraseFact(Request::internal(['ai_model' => $model, 'generation_seconds' => $seconds, 'unchanged' => (bool)$answer['unchanged'],
-                    'local_notation' => $answer['local_notation'], 'statement_text' => $answer['statement'], 'proof_text' => (string)($answer['proof'] ?? ''), 'uses' => $answer['uses']], ['id' => (int)$t['source_id']]));
+                    'local_notation' => $answer['local_notation'], 'statement_text' => $answer['statement'], 'proof_text' => (string)($answer['proof'] ?? ''), 'uses' => $answer['uses']], ['id' => (int)$t['source_id']]), $snap['hash'] ?? null);
                 $done = $answer['unchanged'] ? "Already in the project's notation." : "Written again in the project's notation.";
                 return ['summary' => trim("$done $said"), 'fact_ids' => [$fid]];
             case 'notation_propose':
@@ -396,12 +401,13 @@ TXT,
                 return self::recordSourceCheck($t, $answer, $model, $seconds);
             case 'notation_rephrase_batch':
                 $mine = array_flip(AiTaskController::batchFacts($t)); $ids = []; $same = 0; $refused = 0;
+                $hash = json_decode((string)$t['snapshot_json'], true)['hash'] ?? null; // the notation the batch was written in
                 foreach ($answer['facts'] as $x) {
                     $fid = (int)$x['fact_id'];
                     if (!isset($mine[$fid]) || in_array($fid, $ids, true)) continue; // only the facts of this batch, once each
                     try {
                         NotationController::rephraseFact(Request::internal(['ai_model' => $model, 'generation_seconds' => is_numeric($seconds) ? $seconds / max(1, count($answer['facts'])) : null, 'unchanged' => (bool)$x['unchanged'], 'local_notation' => $x['local_notation'],
-                            'statement_text' => $x['statement'], 'proof_text' => (string)($x['proof'] ?? ''), 'uses' => $x['uses']], ['id' => $fid]));
+                            'statement_text' => $x['statement'], 'proof_text' => (string)($x['proof'] ?? ''), 'uses' => $x['uses']], ['id' => $fid]), $hash);
                         $ids[] = $fid; if ($x['unchanged']) $same++;
                     } catch (HttpError) { $refused++; }
                 }

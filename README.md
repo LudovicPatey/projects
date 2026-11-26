@@ -295,7 +295,7 @@ mkdir -p cache
 cp deploy/config.prod.example.php cache/config.prod.php
 ```
 
-**7. Preview, then deploy.** ssh asks for your **FTP password**:
+**7. Preview, then deploy.** ssh asks for your **FTP password**, unless `~/.netrc` has it (`machine HOST login LOGIN password PASSWORD`, `chmod 600`; see [docs/DEPLOY.md](docs/DEPLOY.md)):
 
 ```bash
 npm test

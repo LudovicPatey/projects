@@ -122,8 +122,11 @@ final class NotationController
         Response::json(FactController::present(Access::fact($fid)), 201);
     }
 
-    /** Records the rewrite of a fact. Returns the fact's id. */
-    public static function rephraseFact(Request $r): int
+    /**
+     * Records the rewrite of a fact. Returns the fact's id. $hash: the notation the rewrite followed, when the task recorded it; a
+     * rewrite in a notation changed since then counts as stale, and is written again.
+     */
+    public static function rephraseFact(Request $r, ?string $hash = null): int
     {
         if (!Auth::isAi()) throw new HttpError(403, 'This is for AI clients.');
         $f = Access::fact($r->int('id'));
@@ -139,7 +142,7 @@ final class NotationController
         $local = self::localNotation($r->input('local_notation', []));
         $model = Provenance::agentModel($r);
         $id = Db::insert('fact_rephrasings', Provenance::stamp($model, $r->input('generation_seconds')) + [
-            'fact_id' => $f['id'], 'revision_no' => $f['current_revision'], 'notation_hash' => self::hash($pid), 'unchanged' => $unchanged ? 1 : 0,
+            'fact_id' => $f['id'], 'revision_no' => $f['current_revision'], 'notation_hash' => $hash ?: self::hash($pid), 'unchanged' => $unchanged ? 1 : 0,
             'statement_html' => $statement['html'], 'proof_html' => $proof, 'uses_json' => $uses ? json_encode($uses, JSON_UNESCAPED_UNICODE) : null, 'local_json' => $local ? json_encode($local, JSON_UNESCAPED_UNICODE) : null,
             'author_id' => Auth::id(), 'ai_model' => $model, 'created_at' => Db::now(),
         ]);

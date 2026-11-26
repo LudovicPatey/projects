@@ -13,15 +13,17 @@
 //
 // Settings are read from cache/deploy.json (git-ignored), e.g.
 //   { "protocol": "sftp", "host": "ftp.clusterXXX.hosting.ovh.net", "user": "LOGIN", "dir": "projects" }
-// sftp: OpenSSH sftp (OVH web hosting accepts it with the FTP password, which ssh
-//       asks in the terminal; an SSH key works too). The default.
-// ftp:  FTP with TLS through curl, for hosts that support it (OVH does not); the
-//       password is asked (or PROJECTS_FTP_PASSWORD), never stored.
+// sftp: OpenSSH sftp (OVH web hosting accepts it with the FTP password; an SSH key works too). The default.
+// ftp:  FTP with TLS through curl, for hosts that support it (OVH does not).
+// The password comes from ~/.netrc (mode 600) when it has an entry for the host, or for the same login, read by
+// scripts/netrc-askpass.mjs for sftp; else from PROJECTS_FTP_PASSWORD (ftp), else it is asked in the terminal.
+// It is never written to a file, a command line or a log.
 import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { changedFiles, curlConfig, deployFiles, fetchInstallers, installerFiles, sftpBatch, updatedManifest } from './lib/deploy.mjs';
 import { compareProtocol, currentProtocol, readRecord, serverMinimum, unreviewedMessage } from './lib/protocol.mjs';
+import { netrcEntry, readNetrc, sshPassword } from './lib/netrc.mjs';
 
 const SITE = 'https://projects.ludovicpatey.com';
 process.chdir(path.resolve(import.meta.dirname, '..'));
@@ -107,18 +109,24 @@ if (dry || todo.length === 0) {
 }
 
 // ---- upload --------------------------------------------------------------------
+// The password of ~/.netrc, when it has one for this host or this login: nothing to type.
+let netrc = null; let ssh = null;
+try { const text = readNetrc(); netrc = text && netrcEntry(text, opt.host, opt.user); ssh = sshPassword(opt.host, opt.user); } catch (e) { fail(`${e.message}. Nothing uploaded.`); }
+if (netrc) console.log(`Password from ~/.netrc (machine ${netrc.machine ?? 'default'}).`);
 if (opt.protocol === 'ftp') {
-  const password = process.env.PROJECTS_FTP_PASSWORD || (await askHidden(`FTP password for ${opt.user}@${opt.host}: `));
+  const password = netrc?.password || process.env.PROJECTS_FTP_PASSWORD || (await askHidden(`FTP password for ${opt.user}@${opt.host}: `));
   const r = spawnSync('curl', ['-K', '-'], { input: curlConfig(todo, { ...opt, password }) + 'fail-early\n', stdio: ['pipe', 'inherit', 'inherit'] });
   if (r.status !== 0) fail(`curl failed (exit ${r.status}).${opt.tls ? ' If the server does not support TLS (OVH does not), use --protocol sftp rather than --no-tls, which sends the password in clear.' : ''}`);
 } else {
   // batch commands on stdin (`-b -`): sftp stops at the first failed upload, so that the
-  // manifest only records what is online; BatchMode=no lets ssh ask the password
-  const r = spawnSync('sftp', ['-o', 'BatchMode=no', '-o', 'ConnectTimeout=20', '-b', '-', `${opt.user}@${opt.host}`], {
+  // manifest only records what is online; BatchMode=no lets ssh ask the password, from ~/.netrc through
+  // netrc-askpass.mjs when it has one (a single try: a wrong password is not sent three times)
+  const r = spawnSync('sftp', ['-o', 'BatchMode=no', '-o', 'ConnectTimeout=20', ...ssh.args, '-b', '-', `${opt.user}@${opt.host}`], {
     input: sftpBatch(todo, opt),
     stdio: ['pipe', 'inherit', 'inherit'],
+    env: ssh.env,
   });
-  if (r.status !== 0) fail(`sftp failed (exit ${r.status}); the manifest is unchanged, so the next deployment uploads these files again.`);
+  if (r.status !== 0) fail(`sftp failed (exit ${r.status}); the manifest is unchanged, so the next deployment uploads these files again.${netrc ? ' Check the password of ~/.netrc.' : ''}`);
 }
 manifests[target] = updatedManifest(manifest, todo);
 fs.mkdirSync('cache', { recursive: true });

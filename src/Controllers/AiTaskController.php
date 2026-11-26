@@ -93,6 +93,19 @@ final class AiTaskController
         return array_map('intval', json_decode((string)($t['snapshot_json'] ?? ''), true)['items'] ?? []);
     }
 
+    /**
+     * The rewrite of one fact, when a client takes it: the revision and the notation it is written for, as a sweep records them. An
+     * answer to a fact edited since is refused, and a rewrite is labelled with the notation it followed, so that it is redone when
+     * the notation changed meanwhile.
+     */
+    private static function pinRewrite(array $t): array
+    {
+        $fid = (int)$t['source_id'];
+        $snap = ['facts' => [[$fid, (int)Db::value('SELECT current_revision FROM facts WHERE id = ?', [$fid])]], 'hash' => NotationController::hash((int)$t['project_id'])];
+        Db::update('ai_tasks', ['snapshot_json' => json_encode($snap)], 'id = :id', ['id' => $t['id']]);
+        return ['snapshot_json' => json_encode($snap)] + $t;
+    }
+
     /** The cited results a batch of source checks covers, still in the project, at the revision it was queued for. @return list<int> */
     public static function batchFacts(array $t): array
     {
@@ -679,6 +692,7 @@ final class AiTaskController
                     if ($c['kind'] === 'extract') Db::update('ai_tasks', ['comments_hash' => $c['source_type'] === 'conversation' ? self::snapshotHash($c) : ($reads ? self::commentsHash(self::extractComments($c)) : null)], 'id = :id', ['id' => $c['id']]);
                     $t = self::row((int)$c['id']);
                     if ($t['source_type'] === 'sweep' && !($t = \App\Sweeps::take($t))) continue; // nothing left: it finished
+                    if ($t['kind'] === 'notation' && $t['source_type'] === 'fact') $t = self::pinRewrite($t);
                     $ctx = self::context($t);
                     $recipe = $generic && Procedures::has((string)$t['kind']) ? ['recipe' => Procedures::recipe($t, $ctx)] : [];
                     Response::json(['task' => self::present($t) + ['lease' => $lease, 'lease_seconds' => self::LEASE_SECONDS, 'publish_private' => (bool)self::snapshot($t)['shared'], 'context' => $ctx] + $recipe]);

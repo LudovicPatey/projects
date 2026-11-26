@@ -27,6 +27,9 @@ final class ConsolidationController
     private const MAX_TOPIC_LENGTH = 40;
     private const MAX_PER_POST = 200;
 
+    /** The project's graph while proposals are stored: read once, and again after each change applied. */
+    private static ?array $graph = null;
+
     // ----- for people -----
 
     public static function list(Request $r): never
@@ -168,23 +171,43 @@ final class ConsolidationController
     {
         $created = []; $skipped = []; $applied = [];
         $auto = (bool)Db::value('SELECT consolidation_auto FROM projects WHERE id = ?', [$pid]);
-        foreach ($items as $i => $x) {
-            try {
-                $s = self::cleanSuggestion($pid, $x);
-            } catch (HttpError $e) {
-                $skipped[] = ['index' => $i, 'reason' => $e->getMessage()];
-                continue;
-            }
-            if ($why = self::known($pid, $s)) { $skipped[] = ['index' => $i, 'reason' => $why]; continue; }
-            $created[] = $sid = Db::insert('fact_suggestions', $s + $stamp + ['project_id' => $pid, 'task_id' => $taskId, 'status' => 'proposed', 'ai_model' => $model, 'created_at' => Db::now()]);
-            if ($auto && self::autoApplies($s)) {
+        self::$graph = null;
+        try {
+            foreach ($items as $i => $x) {
                 try {
-                    Db::tx(fn() => self::apply(Db::one('SELECT * FROM fact_suggestions WHERE id = ?', [$sid]), Auth::id(), true));
-                    $applied[] = $sid;
-                } catch (HttpError) { /* a cycle, a ratified answer...: people decide */ }
+                    $s = self::cleanSuggestion($pid, $x);
+                } catch (HttpError $e) {
+                    $skipped[] = ['index' => $i, 'reason' => $e->getMessage()];
+                    continue;
+                }
+                if ($why = self::known($pid, $s)) { $skipped[] = ['index' => $i, 'reason' => $why]; continue; }
+                $created[] = $sid = Db::insert('fact_suggestions', $s + $stamp + ['project_id' => $pid, 'task_id' => $taskId, 'status' => 'proposed', 'ai_model' => $model, 'created_at' => Db::now()]);
+                if ($auto && self::autoApplies($s)) {
+                    if (self::applySafely($sid)) $applied[] = $sid;
+                    self::$graph = null; // the change may settle a reference another proposal names
+                }
             }
+        } finally {
+            self::$graph = null;
         }
         return ['created' => $created, 'skipped' => $skipped, 'applied' => $applied];
+    }
+
+    /**
+     * Applies a proposal as the AI's own change. One that cannot be applied, a cycle or a ratified answer, waits for people; so does
+     * one that fails for any other reason, logged, so that one proposal never loses the others of the same answer.
+     */
+    private static function applySafely(int $sid): bool
+    {
+        try {
+            Db::tx(fn() => self::apply(Db::one('SELECT * FROM fact_suggestions WHERE id = ?', [$sid]), Auth::id(), true));
+            return true;
+        } catch (HttpError) {
+            return false;
+        } catch (\Throwable $e) {
+            error_log("Consolidation proposal $sid could not be applied: " . $e->getMessage());
+            return false;
+        }
     }
 
     /** What the AI reads: every fact in short, with its source, its dependencies and its tags, and what was already proposed. */
@@ -256,12 +279,7 @@ final class ConsolidationController
             Db::update('fact_suggestions', ['status' => 'rejected', 'decided_by' => null, 'decided_at' => $now], 'id = :id', ['id' => $sid]);
             return 'dropped';
         }
-        try {
-            Db::tx(fn() => self::apply(Db::one('SELECT * FROM fact_suggestions WHERE id = ?', [$sid]), Auth::id(), true));
-            return 'applied';
-        } catch (HttpError) {
-            return 'failed'; // a cycle, a decision of a person since...: it waits for people
-        }
+        return self::applySafely($sid) ? 'applied' : 'failed'; // a cycle, a decision of a person since...: it waits for people
     }
 
     /** A member brings back a proposal the second reading dropped: it waits for people again, and no AI reads it again. */
@@ -681,7 +699,8 @@ final class ConsolidationController
         }
         if ($kind === 'cite') {
             $ref = is_string($x['ref'] ?? null) ? $x['ref'] : '';
-            $f = FactController::graphFact($pid, $fid);
+            self::$graph ??= array_column(FactController::graph($pid)['facts'], null, 'id'); // once per answer, not once per proposal
+            $f = self::$graph[$fid] ?? null;
             $match = array_values(array_filter($f['outside_refs'] ?? [], fn($r) => $r['key'] === $ref))[0] ?? null;
             if (!$match) throw new HttpError(422, 'Name in "ref" an outside reference that this proof uses, from "outside_refs".');
             if ($match['resolved']) throw new HttpError(422, 'This reference is already settled.');

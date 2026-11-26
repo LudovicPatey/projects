@@ -5,7 +5,8 @@
 //
 // Actions: cancel_waiting, retry_failed, requeue_extraction, reset_extraction, clear_notation, reset_facts.
 // Options: --requeue, --notation, --all (see bin/admin.php). Destructive actions make a verified backup first.
-// The host, login and folder come from cache/deploy.json. ssh asks for the password itself, once.
+// The host, login and folder come from cache/deploy.json. The password comes from ~/.netrc when it has one, else ssh asks once.
+import { sshPassword } from './lib/netrc.mjs';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -32,12 +33,14 @@ if (!host || !user) fail('No host or login: fill in cache/deploy.json (see docs/
 if (!/^[\w.-]+$/.test(host) || !/^[\w.-]+$/.test(user)) fail('Invalid host or login in cache/deploy.json.');
 
 const sockets = fs.mkdtempSync(path.join(os.tmpdir(), 'oqa-'));
-const shared = ['-o', 'ControlMaster=auto', '-o', `ControlPath=${path.join(sockets, 's')}`, '-o', 'ControlPersist=120', '-o', 'ConnectTimeout=20'];
-const close = () => { spawnSync('ssh', [...shared, '-O', 'exit', `${user}@${host}`], { stdio: 'ignore' }); fs.rmSync(sockets, { recursive: true, force: true }); };
+const ssh = (() => { try { return sshPassword(host, user); } catch (e) { fail(e.message); } })();
+if (ssh.machine) console.log(`Password from ~/.netrc (machine ${ssh.machine}).`);
+const shared = [...ssh.args, '-o', 'ControlMaster=auto', '-o', `ControlPath=${path.join(sockets, 's')}`, '-o', 'ControlPersist=120', '-o', 'ConnectTimeout=20'];
+const close = () => { spawnSync('ssh', [...shared, '-O', 'exit', `${user}@${host}`], { stdio: 'ignore', env: ssh.env }); fs.rmSync(sockets, { recursive: true, force: true }); };
 const run = (extra) => {
   let command;
   try { command = adminCommand(dir, project, action, [...flags, ...extra]); } catch (e) { fail(e.message); }
-  const r = spawnSync('ssh', ['-n', ...shared, `${user}@${host}`, command], { stdio: ['ignore', 'pipe', 'inherit'], encoding: 'utf8' });
+  const r = spawnSync('ssh', ['-n', ...shared, `${user}@${host}`, command], { env: ssh.env, stdio: ['ignore', 'pipe', 'inherit'], encoding: 'utf8' });
   if (r.stdout) process.stdout.write(r.stdout);
   return { code: r.status ?? 1, out: r.stdout || '' };
 };

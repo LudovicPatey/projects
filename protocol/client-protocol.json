@@ -1,7 +1,7 @@
 {
  "min_version": "1.0.0",
  "client_version": "1.20.0",
- "fingerprint": "e3f8a522adedfc98b49d7e0afab234340cd71ec84d7905374da0ee9f89335d42",
+ "fingerprint": "6a18f37341223164e5b304f495775b9b269d5953d506112892cfa6a9eff76a77",
  "routes": [
   "GET /api/ai/procedures AiTaskController::procedures",
   "GET /api/bib/{id}/pdf BibController::pdf",
@@ -99,7 +99,7 @@
   "AiTaskController::assistantId": "d847bffbc533c8686b8272875f44981da3c892f2a1daa7e5b71c87207276ea13",
   "AiTaskController::batchFacts": "1763b7a0f9eb5fd3897fd06cec31a903fe786041275d9b1cd2f2c01d70fe070a",
   "AiTaskController::batchItems": "52288dfe12f91fe98fd27fc12e1bc1e006fb6da460efd0e1d052b07283544464",
-  "AiTaskController::claim": "568bdcbcedc242671e4d1a64fcfe29dfae7e65c0852dc990b3fbe1561fddfceb",
+  "AiTaskController::claim": "50d25689786ba6ad7d71d341c5d690e1d5d8f23bd47a86c9500001b1c2fc9335",
   "AiTaskController::cleanSuggestion": "a5976b1eb2199a33b66bc77edf7a3bf524a27d64ccdb5a8c7ad54e0e68fea0d5",
   "AiTaskController::clientInfo": "8dba0821109af7cec04c60bb01cc7872c4dc119ab13342ce7841108c92849b14",
   "AiTaskController::commentRows": "453253e5ff23a1d1adf2cea129bd37fe1f64202bc8d301a4c426e11ef03e6ec3",
@@ -136,6 +136,7 @@
   "AiTaskController::outsideMembers": "e210c2ce2c375984e61843a7db22dbb363ebae29afd855099760e485bcceeabd",
   "AiTaskController::overview": "3bdd2b78c16a21dc0e2d5d05112e527d96a5c329d48d61e9b7044c270336e721",
   "AiTaskController::owned": "eaeaafdd80af0b378ab3fc612d2d975429ff06c90c16db12adaa4fa2f9790d56",
+  "AiTaskController::pinRewrite": "76245a9f64b6c7b12ae7df774e042d335218bf19830562340933825f5bd008bf",
   "AiTaskController::postReply": "90df8bebf96f2ed48b781a12cb379950e32c7d5a99b271f76aee378355d1c47d",
   "AiTaskController::present": "cfbb0b007606c46f3b06b8b2a20f7663252c0d38905d04f00601765a6526f8c2",
   "AiTaskController::presentSuggestion": "8354a522973c884b3d02329a1ce885b91f15c5840e461bd1ad60fdb70d1b1c29",
@@ -203,11 +204,12 @@
   "ConsolidationController::NOTATION_ACTIONS": "42bf7bf7701406b89eeb0b5aafb4befd99f9e8d9ab6c0c242a16faf4a876f33a",
   "ConsolidationController::addDependency": "e080a17894b0f2979ed0b48b0f59f6c0649714d6de62debc2fcedb7eafbbe6de",
   "ConsolidationController::apply": "abf1d20db88bcc1af0cdd78fc98419ba70e156de428cb69265c0484289bfdb59",
+  "ConsolidationController::applySafely": "09ae3ae71b23d73316b7e0309317164cda9e8aba50f3ab96d3aa40bfb44119b8",
   "ConsolidationController::assertAcyclic": "0be1c55823a55f7bfecb1ed8d6d5d7cdf955b21b7a0801f9db03037975298efa",
   "ConsolidationController::autoApplies": "2eebae82513fc1a97ea4a882e14a507f6c2022d13011189e6bcc4c3db797b161",
   "ConsolidationController::clean": "3818a8c03b6cb7b2f96706630f94d6c3106a80a879ef4aeac01e7cb0e2f171f9",
   "ConsolidationController::cleanNotation": "e70cf61cc0534f2311689614beac9562f2b5c83892e94e407116b1f7e4146c02",
-  "ConsolidationController::cleanSuggestion": "2999349c832a4ab757a3e22235b8b72dd9b45f598fb1c682feea3a30ea680004",
+  "ConsolidationController::cleanSuggestion": "b6f7afa243fcdd543058c48af2b0fb1b4ad64cbe88fbdcc528cdf7a98e43ef63",
   "ConsolidationController::context": "b46d113052e17eba519b8058588cd55b374023714df413aea1197882c0060a6e",
   "ConsolidationController::decode": "2d50f1a3ab202f1f609cb42c485557c7ad9f24ad71ef6df3b75286e79b9697d1",
   "ConsolidationController::factId": "7ba853665a37e13ced89dd9a3422ca7f777ea04edbb797bf11fed831b749e06b",
@@ -219,9 +221,9 @@
   "ConsolidationController::obsolete": "755516d8c41502a54bc937441e83c58e7dfcbc81a21b8326de48c533b4d96ed8",
   "ConsolidationController::personDecided": "b783ecbe98bae829b6ecf932fe6b39798a5eeb4a25408a561d9f476ac4da8631",
   "ConsolidationController::present": "1a87ef4d2ddd26041af80366bd5a0cdcf1bbefa4484f7973bd14a4226456a52e",
-  "ConsolidationController::second": "08baeb9ba025988cd052a0218c9f329f9a39130c7b655b4981d506635d09610c",
+  "ConsolidationController::second": "e80c1decf85c72092af455f19bb867b2b910acad95b64e70062ab2a71e452bc4",
   "ConsolidationController::secondContext": "8fc253cf516d053fe53f9385b6c3a75d4ca7f934932e6e9dd40b092be092892b",
-  "ConsolidationController::store": "af4451d63a32957aa252d60b41dfeeb1f5cc67cb8238c49d230819b55519e303",
+  "ConsolidationController::store": "4aaf8d3f980d2334b98e6cf70b3f2cc93aac0e67c943838f5551c79442fd650a",
   "ConsolidationController::suggest": "27602b0ff8edf504c5a744ab0de0223ef58ac6c1ee878e456380cf80cfac26ec",
   "ConsolidationController::toQuestion": "78fcbb968862d34d5330bc23ca6dea8ca9a7c77717839d7ee69c24d0cedc86f2",
   "ConsolidationController::topics": "78fa2bed5a80d92e9b494facdebd86e5f5947d5f897e9dada0b79f84aafd5b0c",
@@ -382,7 +384,7 @@
   "NotationController::propose": "60380f3a722c8d5ca16d1dca6273aa8b99d5fc7d37877dff49274e9b4014a079",
   "NotationController::recordClasses": "a7fa208388144a9b3d877ef17f134b58dd4ddfb9c40da2e3e152f016e87c9d17",
   "NotationController::rephrase": "cac5dc5b0f6c5450ef736063bc530092cbd84e0518d7578409834a7b988b8d16",
-  "NotationController::rephraseFact": "f9bf5a2b42b9f235da52d6258480f915f0f4369e872868f8f259e8d3edcf666d",
+  "NotationController::rephraseFact": "0e2386c80da0d4ed93ddbc4f72c7c5951b27dd3f5f2295910ff23e64b8647e1d",
   "NotationController::sameText": "026ac8a0ef9a81d2632205062e60bdbe1add138f997862c11506d6673484822a",
   "NotationController::shared": "7f093cf543266da0863354a92b239db90fa394b0ade4d5ebd5eea20fddbfd9c4",
   "NotationController::splitDefinitions": "175903950b11c7b1cbc85f6482ce2951c2166f5508ec8e4a567811924bc635a1",
@@ -395,10 +397,10 @@
   "Notify::mentions": "87e12b1918ae6b9f84992280147d662e5dc4a5fff01d5418c4f370b99106da23",
   "Notify::send": "49a37c414cc94840696f77cfb49f21cc9ee4bfed2c9785504b4ab0825b71d7fe",
   "Procedures::CAPABILITIES": "4dce42bbadf21b695afcf974783a43c20da9c3e58306e6347d7f13d1e61f5e30",
-  "Procedures::INSTRUCTIONS": "225f5738cf781a65aa0ff90cbf570c0cef02fcdd5ebe680997e0f1416f5136c5",
+  "Procedures::INSTRUCTIONS": "00a4641784b57628e2dc49c42acb942e37f111280850c36e1c4e05d27d5958ba",
   "Procedures::REQUEST_NOTE": "24b0a276d5999286c5ee3500049fb549cab02c47210fcc847ff3fd0c652e1b6a",
   "Procedures::SCHEMAS": "b3c57915d7210b5c4cd4266f7922fac59019e5ca1b8c5ef279e27fc11729629a",
-  "Procedures::apply": "bd7e70fee803fb2fb21e44ca55eb57f57e5591f8f33ba51bc51f95acb19ec8a3",
+  "Procedures::apply": "fcf61f99c818aeb37459f02882116fd86fd2d8450b195b7a12ca2cd595ad9be5",
   "Procedures::capabilities": "0cd0fd2bbacd82074d877b676192b2e11c0b127be10e089ebd2c1de62a47729e",
   "Procedures::defs": "c0089c4f2d7fa926a1e8e6e5b3591add612d802cf891aaf4d3df1184a9936c9b",
   "Procedures::has": "203dad6c3384cffbdd266434aa8286ddabbcbbed33b7a514a2bd53f87a93ef5d",
@@ -1424,6 +1426,24 @@
    "note": "Members gain first_login_at; the client never reads members.",
    "changed": [
     "ProjectController::members"
+   ]
+  },
+  {
+   "date": "2026-11-26",
+   "decision": "compatible",
+   "client_version": "1.20.0",
+   "min_version": "1.0.0",
+   "note": "A single-fact rewrite task gains a snapshot when claimed; rewrites are labelled with the notation of the claim. Clients only pass answers through.",
+   "changed": [
+    "AiTaskController::claim",
+    "ConsolidationController::cleanSuggestion",
+    "ConsolidationController::second",
+    "ConsolidationController::store",
+    "NotationController::rephraseFact",
+    "Procedures::INSTRUCTIONS",
+    "Procedures::apply",
+    "+AiTaskController::pinRewrite",
+    "+ConsolidationController::applySafely"
    ]
   }
  ]

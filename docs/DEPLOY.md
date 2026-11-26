@@ -18,7 +18,7 @@ npm run deploy -- --installers  # also uploads the desktop installers
 ```
 
 There is no build step. `npm run deploy` checks the PHP syntax, then uploads over SFTP the files whose content changed since
-the last deployment to the same target. ssh asks for the **FTP password** in the terminal (an SSH key works too).
+the last deployment to the same target. The **FTP password** comes from `~/.netrc` when it has one (see below); otherwise ssh asks for it in the terminal (an SSH key works too).
 The hashes of uploaded files are kept in `cache/deploy-manifest.json`, and `--all` uploads everything again.
 
 `--installers` takes the installers built in `client/desktop/dist` (`npm run dist` in `client/desktop`, `npm run dist:linux` for the Linux AppImage, which needs Docker running; and by default it first downloads, from the GitHub release `vX.Y.Z` of the current client, the installers that the **Client installers** workflow built for every system and that are missing or out of date there. A published release needs nothing; a draft needs a token with read access in `GITHUB_TOKEN`. `--local-installers` uploads only what is in `client/desktop/dist`), and uploads each one to `client/releases` with its checksum and version files. It refuses a build older than `client/oq.py`, or client versions that differ. A download started during the upload can be incomplete.
@@ -52,7 +52,7 @@ npm run deploy
 npm run migrate:facts
 ```
 
-It uses the host and login of `cache/deploy.json`, and ssh asks for the FTP password once. It updates the database schema if needed, shows the preview, and applies only after you type `APPLY`. A verified backup is made first, and nothing changes if it fails.
+It uses the host and login of `cache/deploy.json`, and the FTP password comes from `~/.netrc`, or ssh asks for it once. It updates the database schema if needed, shows the preview, and applies only after you type `APPLY`. A verified backup is made first, and nothing changes if it fails.
 
 ```bash
 npm run migrate:facts -- --details   # also show each change
@@ -76,8 +76,16 @@ Settings are read from `cache/deploy.json` (git-ignored):
 { "protocol": "sftp", "host": "ftp.clusterXXX.hosting.ovh.net", "user": "LOGIN", "dir": "projects" }
 ```
 
-`--protocol ftp` uses FTP with TLS through curl, for hosts that support it (OVH does not). The password is then asked, or read from
-`PROJECTS_FTP_PASSWORD`, and is never stored. `--host`, `--user` and `--dir` override the settings.
+`--protocol ftp` uses FTP with TLS through curl, for hosts that support it (OVH does not). The password is then read from `~/.netrc`, or
+`PROJECTS_FTP_PASSWORD`, or asked.
+
+**No password to type:** put the FTP login in `~/.netrc`, readable by you only (`chmod 600 ~/.netrc`; a file others can read is refused):
+
+```
+machine ftp.clusterXXX.hosting.ovh.net login LOGIN password PASSWORD
+```
+
+`npm run deploy`, `npm run admin` and `npm run migrate:facts` then take the password from it: for SFTP, ssh asks `scripts/netrc-askpass.mjs`, which reads the file and answers only a password prompt, never a question about an unknown host key; the password is never on a command line, in the environment or in a log. The entry of the host in `cache/deploy.json` is used, or else the entry with the same login, since OVH serves one server under two names (`ftp.cluster015.ovh.net` and `ftp.cluster015.hosting.ovh.net`); one try only, so that a wrong password is not sent three times. `--host`, `--user` and `--dir` override the settings.
 
 **What is uploaded, and only that:** the root `.htaccess` (`deploy/htaccess.txt`), `.ovhconfig`, `public/`, `src/`, `sql/`, the three
 server tools of `bin/`, and `config/config.example.php`. Never `config/config.php`, `storage/`, `cache/`, tests, documentation or the

@@ -6,6 +6,7 @@
 //   npm run migrate:facts -- --undo      undo the latest migration after you type UNDO
 //
 // The host, login and folder come from cache/deploy.json. ssh asks for the password itself, once.
+import { sshPassword } from './lib/netrc.mjs';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -30,13 +31,15 @@ if (!/^[\w.-]+$/.test(host) || !/^[\w.-]+$/.test(user)) fail('Invalid host or lo
 
 // One connection for the whole procedure, so that the password is asked once.
 const sockets = fs.mkdtempSync(path.join(os.tmpdir(), 'oqm-'));
-const shared = ['-o', 'ControlMaster=auto', '-o', `ControlPath=${path.join(sockets, 's')}`, '-o', 'ControlPersist=120', '-o', 'ConnectTimeout=20'];
+const ssh = (() => { try { return sshPassword(host, user); } catch (e) { fail(e.message); } })();
+if (ssh.machine) console.log(`Password from ~/.netrc (machine ${ssh.machine}).`);
+const shared = [...ssh.args, '-o', 'ControlMaster=auto', '-o', `ControlPath=${path.join(sockets, 's')}`, '-o', 'ControlPersist=120', '-o', 'ConnectTimeout=20'];
 const close = () => {
-  spawnSync('ssh', [...shared, '-O', 'exit', `${user}@${host}`], { stdio: 'ignore' });
+  spawnSync('ssh', [...shared, '-O', 'exit', `${user}@${host}`], { stdio: 'ignore', env: ssh.env });
   fs.rmSync(sockets, { recursive: true, force: true });
 };
 const run = (action) => {
-  const r = spawnSync('ssh', ['-n', ...shared, `${user}@${host}`, remoteCommand(dir, action)], { stdio: ['ignore', 'pipe', 'inherit'], encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  const r = spawnSync('ssh', ['-n', ...shared, `${user}@${host}`, remoteCommand(dir, action)], { env: ssh.env, stdio: ['ignore', 'pipe', 'inherit'], encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
   if (r.stdout) process.stdout.write(r.stdout);
   return { code: r.status ?? 1, out: r.stdout || '' };
 };
