@@ -28,7 +28,7 @@ after(() => { app?.stop(); if (tmp) { try { fs.rmSync(tmp, { recursive: true, fo
 test('the platform lists its procedures, for clients to offer them', async () => {
   const r = await app.call(key, 'GET', '/api/ai/procedures');
   assert.equal(r.status, 200);
-  assert.deepEqual(r.data.procedures.map((p) => p.id), ['ask', 'notation', 'consolidate', 'source_check']);
+  assert.deepEqual(r.data.procedures.map((p) => p.id), ['ask', 'notation', 'consolidate', 'rewrite_check', 'second_reading', 'source_check']);
   for (const p of r.data.procedures) { assert.ok(p.label && p.description && ['strong', 'fast'].includes(p.tier)); assert.match(p.version, /^[0-9a-f]{12}$/); }
   assert.deepEqual(r.data.capabilities, ['web_search', 'document']);
   assert.equal((await app.call({ token: 'nope' }, 'GET', '/api/ai/procedures')).status, 401);
@@ -167,12 +167,14 @@ oq.process_review(Api(), task, argparse.Namespace(timeout=60), pathlib.Path("/tm
 print(json.dumps(calls))
 print("Do not search the web" in oq.INSTRUCTIONS["review"], "cited" in oq.INSTRUCTIONS["review"], "as a fact of its own" in oq.INSTRUCTIONS["extract"])
 print(oq.procedure_on(oq.clean_limits({}), "source_check"), oq.procedure_on(oq.clean_limits({"procedures": {"source_check": False}}), "source_check"))
+print(oq.procedure_on(oq.clean_limits({}), "rewrite_check"), oq.procedure_on(oq.clean_limits({}), "second_reading"), oq.procedure_on(oq.clean_limits({"procedures": {"second_reading": False}}), "second_reading"))
 `);
   assert.equal(r.status, 0, r.stderr);
   const out = r.stdout.trim().split('\n');
   assert.deepEqual(JSON.parse(out[0]), [false], 'no web search for a review');
   assert.equal(out[1], 'True True True');
   assert.equal(out[2], 'True False', 'this release knows the source check: on until its user turns it off');
+  assert.equal(out[3], 'True True False', 'and the checks of rewrites and the second reading');
 });
 
 test('oq.py procedures lists the platform\'s work and turns it on or off', async () => {

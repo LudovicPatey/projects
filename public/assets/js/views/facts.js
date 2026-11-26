@@ -4,7 +4,7 @@ import { timeAgo, fullDate } from '../util.js';
 import { FactGraph, STATUS, PROOF_LABEL } from '../factgraph.js';
 import { factTitle, formatFactHtml, kindCounts, kindLabel, kindOf, parseExternalRefs, texLine } from '../fact-format.js';
 import { PROOF_STATE, proofTally, resultOnlyBody, stance } from '../fact-proofs.js';
-import { asMath, rephrasingState, shownRephrasing } from '../notation-model.js';
+import { asMath, checkedByAi, rephrasingState, shownRephrasing } from '../notation-model.js';
 import { factNotation } from '../notation-marks.js';
 import { NotationPanel } from './notation.js';
 import { ConsolidationPanel } from './consolidation.js';
@@ -392,8 +392,8 @@ export const FactsView = {
         <nav v-if="readable && outline.length > 1" class="fact-outline" aria-label="In this fact"><button v-for="(x, i) in outline" :key="i" :class="'k-' + x.type" @click="jump(x)">{{ x.title }}</button></nav>
         <div class="fact-view-switch"><div class="seg small" role="group" aria-label="How the text is shown"><button :class="{on: readable}" :aria-pressed="readable" title="Same content, with headings, lists and formulas typeset in LaTeX" @click="setReadable(true)">Readable</button><button :class="{on: !readable}" :aria-pressed="!readable" title="The text exactly as stored" @click="setReadable(false)">Original</button></div>
           <div v-if="currentRephrasing && !shownRevision" class="seg small" role="group" aria-label="Notation"><button :class="{on: projectNotation}" :aria-pressed="projectNotation" title="Written again in the notation agreed by the project" @click="setNotation(true)">Project notation</button><button :class="{on: !projectNotation}" :aria-pressed="!projectNotation" title="The notation of its source, as it was reviewed" @click="setNotation(false)">As written</button></div></div>
-        <div v-if="notationState && !shownRevision" class="notation-banner" :class="'t-' + notationState.tone"><icon name="book" :size="14"/><span>{{ notationState.text }}<template v-if="currentRephrasing?.check_verdict"> {{ currentRephrasing.check_verdict === 'faithful' ? 'Confirmed' : 'Reported' }} by {{ currentRephrasing.checked_by_name }}.</template></span>
-          <template v-if="currentRephrasing && !currentRephrasing.check_verdict"><button class="btn xs endorse" @click="checkRephrasing('faithful')"><icon name="check" :size="12"/> Same meaning</button><button class="btn xs deny" @click="unfaithful = {note: ''}">Not the same</button></template>
+        <div v-if="notationState && !shownRevision" class="notation-banner" :class="'t-' + notationState.tone"><icon name="book" :size="14"/><span><math-text :text="notationState.text"/><template v-if="currentRephrasing?.check_verdict && !checkedByAi(currentRephrasing)"> {{ currentRephrasing.check_verdict === 'faithful' ? 'Confirmed' : 'Reported' }} by {{ currentRephrasing.checked_by_name }}.</template><ai-meta v-else-if="currentRephrasing?.check_verdict" compact :model="currentRephrasing.check_ai_model" :user="currentRephrasing.check_ai_user_name" :ms="currentRephrasing.check_ai_generation_ms"/></span>
+          <template v-if="currentRephrasing && (!currentRephrasing.check_verdict || checkedByAi(currentRephrasing))"><button class="btn xs endorse" @click="checkRephrasing('faithful')"><icon name="check" :size="12"/> Same meaning</button><button class="btn xs deny" @click="unfaithful = {note: ''}">Not the same</button></template>
           <button v-else-if="currentRephrasing" class="btn xs" @click="checkRephrasing('')">Undo</button>
           <ai-action v-if="notationState.tone === 'warn' || notationState.tone === 'bad'" kind="notation" source-type="fact" :source-id="fact.id" label="Rewrite again"/></div>
         <div v-if="rephrasing?.uses?.length" class="notation-uses"><span class="muted small">In its source:</span><span v-for="(u, i) in rephrasing.uses" :key="i" class="notation-use"><math-text :text="asMath(u.symbol)"/> <small><math-text :text="u.meaning_here"/></small><template v-if="u.project_symbol && u.project_symbol !== u.symbol"> → <math-text :text="asMath(u.project_symbol)"/></template></span></div>
@@ -627,7 +627,7 @@ export const FactsView = {
 </div>`,
   created() { this.graphViews = GRAPH_VIEWS; this.proofStates = PROOF_STATE; this.basis = BASIS; this.covers = COVERS; this.statuses = STATUS; this.verdicts = VERDICTS; this.leanLabels = LEAN; this.chainLabels = CHAIN; this.sourceChecks = SOURCE_CHECK; this.confidenceLabels = CONFIDENCE; this.citedVerdicts = { correct: 'Source states it', gap: 'Not as written', incorrect: 'Result is false' }; },
   methods: {
-    factTitle, texLine, kindOf, kindLabel, stance, asMath,
+    factTitle, texLine, kindOf, kindLabel, stance, asMath, checkedByAi,
     setNotation(on) { this.projectNotation = on; this.refreshOutline(); try { localStorage.setItem('oq-fact-notation', on ? 'project' : 'source'); } catch { /* the choice lasts for this page only */ } },
     async checkRephrasing(verdict, note = '') {
       const f = await attempt(() => api.post(`api/fact-rephrasings/${this.currentRephrasing.id}/check`, { verdict, note }), verdict ? 'Thank you' : 'Undone');

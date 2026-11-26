@@ -145,9 +145,29 @@ final class NotationController
         if (!in_array($verdict, ['faithful', 'unfaithful', ''], true)) throw new HttpError(422, 'The verdict must be faithful or unfaithful.');
         $note = mb_substr(trim($r->str('note')), 0, 2000);
         if ($verdict === 'unfaithful' && $note === '') throw new HttpError(422, 'Say what changed in the meaning.');
-        Db::update('fact_rephrasings', ['check_verdict' => $verdict ?: null, 'check_note' => $note ?: null, 'checked_by' => $verdict ? Auth::id() : null, 'checked_at' => $verdict ? Db::now() : null], 'id = :id', ['id' => $x['id']]);
+        // A person's verdict replaces an AI's.
+        Db::update('fact_rephrasings', ['check_verdict' => $verdict ?: null, 'check_note' => $note ?: null, 'checked_by' => $verdict ? Auth::id() : null, 'checked_at' => $verdict ? Db::now() : null,
+            'check_ai_model' => null, 'check_ai_user_id' => null, 'check_ai_generation_ms' => null], 'id = :id', ['id' => $x['id']]);
         Activity::touch((int)$f['project_id'], 'fact', (int)$f['id'], 'rephrasing_check', (int)$x['id']);
         Response::json(FactController::present($f));
+    }
+
+    /**
+     * An AI's verdict on a rewrite, from the rewrite_check sweep. Only on a rewrite nobody checked yet: it never replaces a person's.
+     * An unfaithful rewrite is no longer shown, and the next rewrite sweep may write the fact again. @return bool recorded
+     */
+    public static function aiCheck(int $rid, string $verdict, string $note, ?string $model, mixed $seconds): bool
+    {
+        if (!in_array($verdict, ['faithful', 'unfaithful'], true)) return false;
+        $note = mb_substr(trim($note), 0, 2000);
+        if ($verdict === 'unfaithful' && $note === '') $note = 'The rewrite does not state exactly what the original states.';
+        $stamp = Provenance::stamp($model, $seconds);
+        $n = Db::run('UPDATE fact_rephrasings SET check_verdict = ?, check_note = ?, checked_by = NULL, checked_at = ?, check_ai_model = ?, check_ai_user_id = ?, check_ai_generation_ms = ?
+                      WHERE id = ? AND check_verdict IS NULL', [$verdict, $note ?: null, Db::now(), $model, $stamp['ai_user_id'], $stamp['ai_generation_ms'], $rid])->rowCount();
+        if (!$n) return false;
+        $x = Db::one('SELECT x.id, x.fact_id, f.project_id FROM fact_rephrasings x JOIN facts f ON f.id = x.fact_id WHERE x.id = ?', [$rid]);
+        Activity::touch((int)$x['project_id'], 'fact', (int)$x['fact_id'], 'rephrasing_check', $rid);
+        return true;
     }
 
     /** Queues a rephrasing for every fact not yet written in the current agreed notation. */
@@ -235,14 +255,14 @@ final class NotationController
     {
         $hash = self::hash($pid);
         return array_map(function ($x) use ($hash, $revision) {
-            foreach (['id', 'fact_id', 'revision_no', 'author_id', 'checked_by', 'ai_generation_ms'] as $k) $x[$k] = $x[$k] === null ? null : (int)$x[$k];
+            foreach (['id', 'fact_id', 'revision_no', 'author_id', 'checked_by', 'ai_generation_ms', 'check_ai_user_id', 'check_ai_generation_ms'] as $k) $x[$k] = $x[$k] === null ? null : (int)$x[$k];
             $x['unchanged'] = (bool)$x['unchanged'];
             $x['uses'] = json_decode((string)$x['uses_json'], true) ?: [];
             $x['local'] = json_decode((string)$x['local_json'], true) ?: (object)[];
             unset($x['uses_json'], $x['local_json']);
             $x['current'] = $x['revision_no'] === $revision && $x['notation_hash'] === $hash;
             return $x;
-        }, Db::all('SELECT x.*, u.name AS checked_by_name, au.name AS ai_user_name FROM fact_rephrasings x LEFT JOIN users u ON u.id = x.checked_by LEFT JOIN users au ON au.id = x.ai_user_id
+        }, Db::all('SELECT x.*, u.name AS checked_by_name, au.name AS ai_user_name, cu.name AS check_ai_user_name FROM fact_rephrasings x LEFT JOIN users u ON u.id = x.checked_by LEFT JOIN users au ON au.id = x.ai_user_id LEFT JOIN users cu ON cu.id = x.check_ai_user_id
                     WHERE x.fact_id = ? ORDER BY x.id DESC LIMIT 20', [$factId]));
     }
 
@@ -307,7 +327,11 @@ final class NotationController
             if (isset($local[(int)$x['fact_id']])) $local[(int)$x['fact_id']] = self::localNotation(json_decode((string)$x['local_json'], true) ?: []);
         }
         $entries = [];
-        foreach (Db::all("SELECT id, symbol, status FROM notations WHERE project_id = ? AND status <> 'rejected'", [$pid]) as $n) $entries[self::notionKey($n['symbol'])] ??= ['id' => (int)$n['id'], 'status' => $n['status']];
+        // An entry says, once an AI or a person judged them, how many meanings found in sources really differ ("clash").
+        foreach (Db::all("SELECT id, symbol, status, variants_json FROM notations WHERE project_id = ? AND status <> 'rejected'", [$pid]) as $n) {
+            $entries[self::notionKey($n['symbol'])] ??= ['id' => (int)$n['id'], 'status' => $n['status'],
+                'clashes' => count(array_filter(json_decode((string)$n['variants_json'], true) ?: [], fn($v) => ($v['relation'] ?? '') === 'clash'))];
+        }
         $by = [];
         foreach ($local as $fid => $defs) {
             foreach ($defs as $symbol => $meaning) {

@@ -3,7 +3,7 @@
 export const AI_KINDS = {
   extract: { label: 'Extract facts', short: 'Extraction', icon: 'files', hint: 'Read a file, the PDF of a reference or a conversation, and add the results it states, with exact quotations.', needs: 'document' },
   ask: { label: 'Ask a question', short: 'Question', icon: 'comment', hint: 'Get the opinion of the AI. You can also write @AI in any message or comment.', needs: 'prompt' },
-  bib: { label: 'Find references', short: 'References', icon: 'book', hint: 'Search the literature. A person validates each suggestion.', needs: null },
+  bib: { label: 'Find references', short: 'References', icon: 'book', hint: 'Search the literature. A reference whose DOI or arXiv record confirms it is added at once; a person validates the others.', needs: null },
   derive: { label: 'Prove new facts', short: 'Proof search', icon: 'graph', hint: 'Waits until a member starts a proof search from their AI client, with their own time and usage limits. Results arrive unchecked.', needs: null },
   review: { label: 'Independent review', short: 'Review', icon: 'check-circle', hint: 'A model independent of the author checks the proof and records a verdict.', needs: 'fact' },
   notation: { label: 'Review the notation', short: 'Notation', icon: 'book', hint: 'Looks at the notation every fact defines for itself, and proposes making shared symbols global, with one meaning per symbol. The consolidation settles them, and people can confirm or undo its choices.', needs: null },
@@ -11,6 +11,15 @@ export const AI_KINDS = {
   source_check: { label: 'Check the source', short: 'Source check', icon: 'book', hint: 'Reads the source of a result cited without proof, and says whether it states the result as written. Evidence only: a person still accepts the citation.', needs: 'fact' },
   lean: { label: 'Lean proof', short: 'Lean', icon: 'code', hint: 'Writes a Lean proof, kept only if it compiles. A person must still compare the Lean statement with the fact.', needs: 'fact' },
 };
+
+/** Upkeep only the platform queues, as sweeps: shown in the queue, never offered in the request form. */
+export const SWEEP_KINDS = {
+  rewrite_check: { label: 'Check rewrites in the project notation', short: 'Rewrite check', icon: 'eye', hint: 'A second AI compares each rewrite with its original. One that changes the meaning is not shown. People can overrule it.' },
+  second_reading: { label: 'Second reading of proposals', short: 'Second reading', icon: 'eye', hint: 'Another AI reads again the consolidation proposals it was not sure of, applies those it agrees with and drops the others.' },
+};
+
+/** What the interface says about a kind of task, requestable or not. */
+export const kindInfo = (kind) => AI_KINDS[kind] || SWEEP_KINDS[kind] || null;
 
 export const TASK_STATUS = {
   pending: { label: 'Waiting for an AI client', short: 'Waiting', tone: 'neutral' },
@@ -57,7 +66,7 @@ export function filterTasks(tasks, filter) {
 export function groupLabel(group) {
   if (group === 'notation_rephrase') return 'Rewrite facts in the project notation';
   if (group === 'source_check') return 'Check the sources of cited results';
-  return AI_KINDS[group]?.label || 'AI tasks';
+  return kindInfo(group)?.label || 'AI tasks';
 }
 
 /** "3 of 12 done · 1 running · 8 waiting · 1 failed", and why nothing starts when every waiting task waits for others. */
@@ -84,7 +93,7 @@ export function queueGroups(groups, tasks, filter = 'all') {
 }
 
 export function taskTitle(t) {
-  const k = t.kind === 'notation' && ['fact', 'sweep'].includes(t.source_type) ? 'Rewrite in the project notation' : (AI_KINDS[t.kind]?.label || 'AI task');
+  const k = t.kind === 'notation' && ['fact', 'sweep'].includes(t.source_type) ? 'Rewrite in the project notation' : (kindInfo(t.kind)?.label || 'AI task');
   if (t.subject) return `${k}: ${t.subject}`;
   if (t.source_type === 'message') return 'Question in a conversation';
   if (t.source_type === 'comment') return 'Question in a comment';
@@ -106,7 +115,7 @@ export function resultLinks(t) {
     if (view) out.push({ label: 'Open the answer', view, id: r.reply.target_id, query: { comment: r.reply.root } });
     if (r.reply.target_type === 'notation') out.push({ label: 'Open the answer', view: 'facts', id: null, query: { mode: 'notation', notation: r.reply.target_id, comment: r.reply.root } });
   }
-  if (t.kind === 'consolidate' && t.status === 'done') out.push({ label: 'Review the proposals', view: 'facts', id: null, query: { mode: 'consolidate' } });
+  if (['consolidate', 'second_reading'].includes(t.kind) && t.status === 'done') out.push({ label: 'Review the proposals', view: 'facts', id: null, query: { mode: 'consolidate' } });
   return out;
 }
 
@@ -150,7 +159,7 @@ export function aiTimeSummary(t) {
 export function clientStatus(c, now = Date.now()) {
   if (c.working) {
     const start = c.working.started_at ? Date.parse(c.working.started_at.replace(' ', 'T') + 'Z') : NaN;
-    const what = c.working.private ? 'a task in a private conversation' : `${AI_KINDS[c.working.kind]?.short || 'a task'}${c.working.subject ? ': ' + c.working.subject : ''}`;
+    const what = c.working.private ? 'a task in a private conversation' : `${kindInfo(c.working.kind)?.short || 'a task'}${c.working.subject ? ': ' + c.working.subject : ''}`;
     return { tone: 'info', label: 'Working', text: `Working on ${what}`, since: Number.isFinite(start) ? computeTime(Math.max(0, now - start)) : null };
   }
   if (c.online) return { tone: 'good', label: 'Online', text: 'Online, waiting for work' };
@@ -159,7 +168,7 @@ export function clientStatus(c, now = Date.now()) {
 
 /** Computing time per kind of work, largest first, with its share of the period. */
 export function timeByKind(byKind) {
-  const rows = Object.entries(byKind || {}).map(([kind, v]) => ({ kind, label: AI_KINDS[kind]?.short || kind, n: v.n, ms: v.ms }));
+  const rows = Object.entries(byKind || {}).map(([kind, v]) => ({ kind, label: kindInfo(kind)?.short || kind, n: v.n, ms: v.ms }));
   const total = rows.reduce((s, r) => s + r.ms, 0);
   return rows.sort((a, b) => b.ms - a.ms).map((r) => ({ ...r, share: total ? Math.round((r.ms / total) * 100) : 0 }));
 }

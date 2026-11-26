@@ -14,7 +14,8 @@ before(async () => {
   await app.call(key, 'POST', `/api/projects/${pid}/facts/batch`, { format: 'native', ai_model: 'claude-opus-5-5', facts: [
     F('a', { '$FS(H)$': 'the finite sums of H', '$x_n$': 'the n-th term' }), F('b', { '$\\mathrm{FS}(X)$': 'the finite sums of X', '$x_n$': 'a term' }), F('c', { 'FS(S)': 'the finite sums of S' }),
   ] });
-  await app.call(ann, 'POST', `/api/projects/${pid}/notation`, { symbol: 'FS(X)', meaning_text: 'The non-empty finite sums of $X$.' });
+  await app.call(ann, 'POST', `/api/projects/${pid}/notation`, { symbol: 'FS(X)', meaning_text: 'The non-empty finite sums of $X$.',
+    variants: [{ symbol: 'FS(X)', meaning: 'with 0', where: 'b', relation: 'clash' }, { symbol: 'FS(S)', meaning: 'in a semigroup', where: 'c', relation: 'instance' }] });
 });
 after(() => app?.stop());
 
@@ -24,4 +25,6 @@ test('a symbol written with dollars in a fact is the project entry of the same s
   assert.equal(shared[0].facts, 3); assert.ok(shared[0].entry, 'it has its project entry');
   assert.ok(shared[0].spellings.every((s) => !s.includes('$')), 'spellings without dollars');
   assert.ok(!shared.some((s) => s.symbol === 'x_n'), 'a proof variable is not notation');
+  assert.equal(shared[0].meanings.length, 3, 'three wordings, compared as text');
+  assert.equal(shared[0].entry.clashes, 1, 'only a judged clash counts as another meaning');
 });

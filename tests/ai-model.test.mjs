@@ -129,6 +129,9 @@ test('the queue shows one group per kind, in the server\'s order, with its tasks
   assert.equal(groupSummary(groups[1]), '0 of 2 done · 2 waiting · after other work');
   assert.equal(groupSummary(groups[2]), '1 of 2 done · 1 failed · finished');
   assert.equal(groupLabel('source_check'), 'Check the sources of cited results');
+  assert.equal(groupLabel('rewrite_check'), 'Check rewrites in the project notation'); assert.equal(groupLabel('second_reading'), 'Second reading of proposals');
+  const { AI_KINDS } = await import('../public/assets/js/ai-model.js');
+  assert.ok(!AI_KINDS.rewrite_check && !AI_KINDS.second_reading, 'upkeep the platform queues is not offered in the request form');
 });
 
 test('a rewrite of one fact is not called a review of the notation', () => {

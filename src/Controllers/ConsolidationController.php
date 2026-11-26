@@ -214,6 +214,65 @@ final class ConsolidationController
             'omitted_facts' => max(0, (int)Db::value('SELECT COUNT(*) FROM facts WHERE project_id = ? AND deleted_at IS NULL AND retracted_at IS NULL', [$pid]) - count($facts))];
     }
 
+    // ----- the second reading -----
+
+    /** What the second reader reads: each proposal waiting for people, with the full text of its facts. */
+    public static function secondContext(int $pid, array $ids): array
+    {
+        $fact = function (?int $id) use ($pid) {
+            if (!$id) return null;
+            $f = Db::one('SELECT f.id, f.label, f.kind, f.title, f.topics_json, r.statement_html, r.proof_html FROM facts f JOIN fact_revisions r ON r.fact_id = f.id AND r.revision_no = f.current_revision
+                          WHERE f.id = ? AND f.project_id = ? AND f.deleted_at IS NULL', [$id, $pid]);
+            return $f ? ['id' => (int)$f['id'], 'label' => $f['label'], 'kind' => $f['kind'], 'title' => $f['title'], 'topics' => self::decode($f['topics_json']),
+                'statement' => Sanitizer::toText((string)$f['statement_html']), 'proof' => $f['proof_html'] ? mb_substr(Sanitizer::toText((string)$f['proof_html']), 0, 8000) : null] : null;
+        };
+        $out = []; $notation = false;
+        foreach ($ids as $sid) {
+            $s = Db::one("SELECT * FROM fact_suggestions WHERE id = ? AND project_id = ? AND status = 'proposed'", [$sid, $pid]);
+            if (!$s) continue;
+            $notation = $notation || $s['kind'] === 'notation';
+            $out[] = ['suggestion_id' => (int)$s['id'], 'kind' => $s['kind'], 'fact' => $fact((int)$s['fact_id']), 'other_fact' => $fact($s['other_fact_id'] ? (int)$s['other_fact_id'] : null),
+                'data' => json_decode((string)$s['data_json'], true), 'reason' => $s['reason_text'], 'confidence' => $s['confidence']];
+        }
+        return ['proposals' => $out, 'topics' => self::topics($pid)] + ($notation ? ['notation' => NotationController::forTask($pid, false)] : []);
+    }
+
+    /**
+     * A second AI reading of a proposal waiting for people: "apply" applies it as the AI's own change, which any member undoes;
+     * "drop" sets it aside, and any member brings it back; "unsure" leaves it to people, with the reason.
+     * @return ?string applied, dropped, unsure or failed; null when the proposal is no longer waiting
+     */
+    public static function second(int $sid, string $verdict, string $reason, ?string $model): ?string
+    {
+        $s = Db::one("SELECT * FROM fact_suggestions WHERE id = ? AND status = 'proposed'", [$sid]);
+        if (!$s || !in_array($verdict, ['apply', 'drop', 'unsure'], true)) return null;
+        $now = Db::now();
+        Db::update('fact_suggestions', ['second_verdict' => $verdict, 'second_reason' => mb_substr(trim($reason), 0, 2000) ?: null, 'second_ai_model' => $model, 'second_at' => $now], 'id = :id', ['id' => $sid]);
+        if ($verdict === 'unsure') return 'unsure';
+        if ($verdict === 'drop') {
+            Db::update('fact_suggestions', ['status' => 'rejected', 'decided_by' => null, 'decided_at' => $now], 'id = :id', ['id' => $sid]);
+            return 'dropped';
+        }
+        try {
+            Db::tx(fn() => self::apply(Db::one('SELECT * FROM fact_suggestions WHERE id = ?', [$sid]), Auth::id(), true));
+            return 'applied';
+        } catch (HttpError) {
+            return 'failed'; // a cycle, a decision of a person since...: it waits for people
+        }
+    }
+
+    /** A member brings back a proposal the second reading dropped: it waits for people again, and no AI reads it again. */
+    public static function restore(Request $r): never
+    {
+        self::humanOnly();
+        $s = Db::one('SELECT * FROM fact_suggestions WHERE id = ?', [$r->int('sid')]);
+        if (!$s || !Access::role((int)$s['project_id'])) throw new HttpError(404, 'Suggestion not found.');
+        Access::member((int)$s['project_id']);
+        if ($s['status'] !== 'rejected' || $s['second_verdict'] !== 'drop') throw new HttpError(409, 'Only a proposal the second reading dropped can be brought back.');
+        Db::update('fact_suggestions', ['status' => 'proposed', 'second_verdict' => 'kept', 'decided_by' => null, 'decided_at' => null], 'id = :id', ['id' => $s['id']]);
+        Response::json(['ok' => true]);
+    }
+
     // ----- applying a suggestion -----
 
     /**

@@ -324,6 +324,10 @@ CREATE TABLE IF NOT EXISTS fact_suggestions (
   decided_at DATETIME NULL,
   undone_by INT UNSIGNED NULL,
   undone_at DATETIME NULL,
+  second_verdict VARCHAR(8) NULL,         -- a second AI reading of a proposal left to people: apply, drop, unsure, or kept (a person restored it)
+  second_reason TEXT NULL,
+  second_ai_model VARCHAR(120) NULL,
+  second_at DATETIME NULL,
   created_at DATETIME NOT NULL,
   KEY idx_fact_suggestion (project_id, status),
   FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
@@ -402,8 +406,11 @@ CREATE TABLE IF NOT EXISTS fact_rephrasings (
   ai_generation_ms INT UNSIGNED NULL,
   check_verdict VARCHAR(12) NULL,         -- faithful, unfaithful
   check_note TEXT NULL,
-  checked_by INT UNSIGNED NULL,
+  checked_by INT UNSIGNED NULL,            -- the person who checked it; NULL with check_ai_model: an AI checked it
   checked_at DATETIME NULL,
+  check_ai_model VARCHAR(120) NULL,
+  check_ai_user_id INT UNSIGNED NULL,
+  check_ai_generation_ms INT UNSIGNED NULL,
   created_at DATETIME NOT NULL,
   KEY idx_fact_rephrasing (fact_id, revision_no),
   FOREIGN KEY (fact_id) REFERENCES facts(id) ON DELETE CASCADE,
@@ -761,6 +768,8 @@ CREATE TABLE IF NOT EXISTS bib_suggestions (
   decided_by INT UNSIGNED NULL,
   decided_at DATETIME NULL,
   decision_note VARCHAR(500) NULL,
+  auto_added TINYINT(1) NOT NULL DEFAULT 0, -- added without a person: its DOI or arXiv record has this title and author
+  verified_by VARCHAR(20) NULL,           -- crossref, arxiv: where the record was checked
   created_at DATETIME NOT NULL,
   KEY idx_bib_suggestion (project_id, status),
   FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,

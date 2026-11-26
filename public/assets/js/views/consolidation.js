@@ -33,6 +33,13 @@ export const ConsolidationPanel = {
         onKeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.currentTarget.click(); } } };
     },
     confidence(s) { return CONFIDENCE[s.confidence] || null; },
+    async restore(s) {
+      this.busy = true;
+      const r = await attempt(() => api.post(`api/fact-suggestions/${s.id}/restore`, {}), 'Back in the proposals');
+      this.busy = false;
+      if (r) await this.load();
+    },
+    dropped(s) { return s.status === 'rejected' && s.second_verdict === 'drop'; },
     async undo(s) {
       if (s.kind === 'same' && !confirm(`Unmerge ${this.fact(s.other_fact_id)?.label} from ${this.fact(s.fact_id)?.label}? It comes back with its sources, dependencies, proof and stars.`)) return;
       this.busy = true;
@@ -69,7 +76,7 @@ export const ConsolidationPanel = {
     },
   },
   template: `<div class="page wide consolidation-page">
-    <header class="page-title"><span class="sh-icon"><icon name="layers" :size="22"/></span><div><h1>Consolidate the facts</h1><p>Extraction reads one source at a time. An AI then reads the whole database and proposes what only the whole shows. It applies what it is sure of, and people decide the rest.</p></div>
+    <header class="page-title"><span class="sh-icon"><icon name="layers" :size="22"/></span><div><h1>Consolidate the facts</h1><p>Extraction reads one source at a time. An AI then reads the whole database and proposes what only the whole shows. It applies what it is sure of, a second AI reading settles most of the rest, and people decide what needs them.</p></div>
       <div class="seg small mode-seg"><button @click="$emit('mode', 'list')"><icon name="list" :size="13"/> List</button><button @click="$emit('mode', 'graph')"><icon name="graph" :size="13"/> Graph</button><button @click="$emit('mode', 'notation')"><icon name="book" :size="13"/> Notation</button><button class="on" aria-pressed="true"><icon name="layers" :size="13"/> Consolidate</button></div></header>
     <div v-if="!d" class="d-empty">Loading…</div>
     <template v-else>
@@ -95,6 +102,8 @@ export const ConsolidationPanel = {
                 </div>
                 <blockquote v-if="s.kind === 'cite' && s.data?.statement" class="cons-new small"><span class="muted">New cited result, for {{ s.data.ref_label }}:</span> <math-text :text="s.data.statement"/></blockquote>
                 <p class="cons-reason small"><icon name="sparkles" :size="12"/> <math-text :text="s.reason_text"/> <ai-meta compact :model="s.ai_model" :user="s.ai_user_name" :ms="s.ai_generation_ms"/></p>
+                <p v-if="s.second_verdict === 'unsure' || s.second_verdict === 'apply'" class="cons-reason cons-second small"><icon name="eye" :size="12"/> <b>Second reading{{ s.second_verdict === 'apply' ? ', agreed but could not apply it' : ', left to you' }}:</b> <math-text :text="s.second_reason || ''"/> <ai-meta compact :model="s.second_ai_model"/></p>
+                <p v-else-if="s.second_verdict === 'kept'" class="muted small">Brought back by a member after the second reading dropped it.</p>
               </div>
               <div class="notation-actions">
                 <button class="btn sm endorse" :disabled="busy || ownerOnly(s)" :title="ownerOnly(s) ? 'Only an owner applies this' : ''" @click="decide(s, true)"><icon name="check" :size="13"/> Accept</button>
@@ -108,14 +117,17 @@ export const ConsolidationPanel = {
             <p class="muted small">Changes the AI applied without waiting: those it was confident about, and the notation and tags it found probable. Look them over: each one is in the history of its facts, and can be undone.</p>
             <article v-for="s in applied.slice(0, open.applied ? 1000 : 30)" :key="s.id" class="cons-item">
               <div class="cons-main"><b class="cons-what"><math-text :text="suggestionText(s, d.facts)"/></b>
-                <p class="cons-reason small"><icon name="sparkles" :size="12"/> <math-text :text="s.reason_text"/> <ai-meta compact :model="s.ai_model" :user="s.ai_user_name" :ms="s.ai_generation_ms"/> <span class="muted">{{ timeAgo(s.decided_at) }}</span></p></div>
+                <p class="cons-reason small"><icon name="sparkles" :size="12"/> <math-text :text="s.reason_text"/> <ai-meta compact :model="s.ai_model" :user="s.ai_user_name" :ms="s.ai_generation_ms"/> <span class="muted">{{ timeAgo(s.decided_at) }}</span></p>
+                <p v-if="s.second_verdict === 'apply'" class="cons-reason cons-second small"><icon name="eye" :size="12"/> <b>Applied after a second reading:</b> <math-text :text="s.second_reason || ''"/> <ai-meta compact :model="s.second_ai_model"/></p></div>
               <div class="notation-actions"><button class="btn sm" :disabled="busy" @click="undo(s)"><icon name="restore" :size="13"/> {{ undoLabel(s) }}</button></div>
             </article>
             <button v-if="applied.length > 30 && !open.applied" class="link-btn small" @click="open.applied = true">Show the {{ applied.length - 30 }} others</button>
           </section>
           <details v-if="decided.length" class="panel ai-decided"><summary>Decided ({{ decided.length }})</summary>
-            <div v-for="s in decided" :key="s.id" class="d-row"><span class="pill" :class="s.status === 'accepted' ? 't-good' : 't-off'">{{ s.status }}</span><span class="d-title"><math-text :text="suggestionText(s, d.facts)"/></span><small class="muted">{{ s.status === 'undone' ? 'undone by ' + (s.undone_by_name || '') + ' ' + timeAgo(s.undone_at) : (s.decided_by_name || '') + ' ' + (s.decided_at ? timeAgo(s.decided_at) : '') }}</small>
-              <button v-if="s.can_undo && !ownerOnly(s)" class="btn xs" :disabled="busy" @click="undo(s)">{{ undoLabel(s) }}</button></div>
+            <div v-for="s in decided" :key="s.id" class="d-row"><span class="pill" :class="s.status === 'accepted' ? 't-good' : 't-off'">{{ dropped(s) ? 'dropped' : s.status }}</span><span class="d-title"><math-text :text="suggestionText(s, d.facts)"/></span><small class="muted">{{ s.status === 'undone' ? 'undone by ' + (s.undone_by_name || '') + ' ' + timeAgo(s.undone_at) : dropped(s) ? 'by the second reading ' + timeAgo(s.second_at) : (s.decided_by_name || '') + ' ' + (s.decided_at ? timeAgo(s.decided_at) : '') }}</small>
+              <button v-if="s.can_undo && !ownerOnly(s)" class="btn xs" :disabled="busy" @click="undo(s)">{{ undoLabel(s) }}</button>
+              <button v-if="dropped(s)" class="btn xs" :disabled="busy" @click="restore(s)" title="Put it back with the proposals waiting for people">Bring back</button>
+              <small v-if="dropped(s)" class="d-why"><icon name="eye" :size="11"/> Second reading: <math-text :text="s.second_reason || ''"/></small></div>
           </details>
         </div>
         <aside class="notation-side">
@@ -125,7 +137,7 @@ export const ConsolidationPanel = {
             <p v-if="d.waiting" class="muted small"><icon name="clock" :size="12"/> A consolidation is {{ d.waiting.status === 'running' ? 'running' : 'waiting for an AI client' }}.</p>
             <ai-action v-else kind="consolidate" label="Ask AI to consolidate"/>
             <label class="check cons-auto"><input type="checkbox" :checked="d.auto" :disabled="!owner" @change="setAuto($event.target.checked)"> Apply the changes the AI is confident about, without waiting</label>
-            <p class="muted small">{{ d.auto ? 'Merges, dependencies, kinds and cited results it is sure of are applied at once. Notation and tags change no result: they are applied when it finds them probable too, and the facts are rewritten in the new notation. Everything can be undone. Open questions and the rest wait for people.' : 'Every change waits for people.' }}<template v-if="!owner"> An owner chooses.</template></p>
+            <p class="muted small">{{ d.auto ? 'Merges, dependencies, kinds and cited results it is sure of are applied at once. Notation and tags change no result: they are applied when it finds them probable too, and the facts are rewritten in the new notation. A second AI then reads the other proposals again: it applies those it agrees with and drops the others, and leaves to people only what needs their judgment. References whose DOI or arXiv record confirms them are added to the bibliography. Everything can be undone.' : 'Every change waits for people.' }}<template v-if="!owner"> An owner chooses.</template></p>
           </section>
           <section class="panel">
             <header class="ai-head"><h2><icon name="tag" :size="15"/> Subject tags</h2><small>{{ d.topics.length }}</small></header>

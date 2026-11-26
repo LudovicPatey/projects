@@ -60,6 +60,7 @@ $routes = [
     ['POST',   '/api/ai/tasks/{id}/retry',                [AiTaskController::class, 'retry']],
     ['POST',   '/api/bib-suggestions/{id}/accept',        [AiTaskController::class, 'acceptSuggestion']],
     ['POST',   '/api/bib-suggestions/{id}/reject',        [AiTaskController::class, 'rejectSuggestion']],
+    ['POST',   '/api/bib-suggestions/{id}/undo',          [AiTaskController::class, 'undoSuggestion']],
     // bibliography
     ['GET',    '/api/projects/{pid}/bib',                 [BibController::class, 'list']],
     ['POST',   '/api/projects/{pid}/bib',                 [BibController::class, 'create']],
@@ -147,6 +148,7 @@ $routes = [
     ['POST',   '/api/fact-suggestions/{sid}/accept',      [ConsolidationController::class, 'accept']],
     ['POST',   '/api/fact-suggestions/{sid}/reject',      [ConsolidationController::class, 'reject']],
     ['POST',   '/api/fact-suggestions/{sid}/undo',        [ConsolidationController::class, 'undo']],
+    ['POST',   '/api/fact-suggestions/{sid}/restore',     [ConsolidationController::class, 'restore']],
     ['POST',   '/api/projects/{id}/consolidation/settings', [ConsolidationController::class, 'settings']],
     ['GET',    '/api/projects/{id}/admin',                [AdminController::class, 'show']],
     ['GET',    '/api/projects/{id}/audit-keys',           [AuditController::class, 'keys']],

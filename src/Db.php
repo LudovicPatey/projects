@@ -206,6 +206,10 @@ final class Db
             $migrations[] = "UPDATE ai_tasks SET priority = $v WHERE kind = '$k' AND priority = 50 AND status IN ('pending', 'running')";
         }
         $migrations[] = "UPDATE ai_tasks SET priority = CASE WHEN source_type = 'fact' THEN 60 ELSE 40 END WHERE kind = 'notation' AND priority = 50 AND status IN ('pending', 'running')";
+        // Decisions an AI takes for people: checking rewrites, a second reading of proposals, references checked against their record.
+        foreach (['check_ai_model VARCHAR(120) NULL', 'check_ai_user_id INT UNSIGNED NULL', 'check_ai_generation_ms INT UNSIGNED NULL'] as $c) $migrations[] = "ALTER TABLE fact_rephrasings ADD COLUMN $c";
+        foreach (['second_verdict VARCHAR(8) NULL', 'second_reason TEXT NULL', 'second_ai_model VARCHAR(120) NULL', 'second_at DATETIME NULL'] as $c) $migrations[] = "ALTER TABLE fact_suggestions ADD COLUMN $c";
+        foreach (['auto_added TINYINT(1) NOT NULL DEFAULT 0', 'verified_by VARCHAR(20) NULL'] as $c) $migrations[] = "ALTER TABLE bib_suggestions ADD COLUMN $c";
         $migrations[] = "ALTER TABLE prover_campaigns ADD COLUMN lead_mode VARCHAR(12) NOT NULL DEFAULT 'periodic'";
         // MySQL cut kinds longer than 10 characters, such as "consolidate": room for procedure names, and the cut rows repaired.
         if (!self::isSqlite()) $migrations[] = 'ALTER TABLE ai_tasks MODIFY kind VARCHAR(40) NOT NULL';

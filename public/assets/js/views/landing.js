@@ -8,7 +8,7 @@ const FEATURES = [
   {
     kicker: 'Fact database', title: 'See what is known, and what it rests on',
     text: 'Results become facts with a statement, a proof and an intuition, linked by their dependencies. Browse them as a list or as an interactive graph.',
-    points: ['Star the facts that matter, and see how they rely on each other, even in a huge database', 'Labels such as conclusion, counterexample, dead end or plan', 'Accept a result while disputing its proof, and propose another proof', 'One agreed notation, with each paper\'s facts rewritten in it', 'After extraction, an AI reads the whole database, merges duplicates, links results across papers, tags subjects and settles the notation when it is confident, each change undoable, and proposes the rest', 'Retracting a fact flags everything built on it', 'Import fact graphs from the Danus prover'],
+    points: ['Star the facts that matter, and see how they rely on each other, even in a huge database', 'Labels such as conclusion, counterexample, dead end or plan', 'Accept a result while disputing its proof, and propose another proof', 'One agreed notation, with each paper\'s facts rewritten in it and every rewrite checked against the original', 'After extraction, an AI reads the whole database, merges duplicates, links results across papers, tags subjects and settles the notation when it is confident, and a second AI reading settles most of the rest, each change undoable', 'Retracting a fact flags everything built on it', 'Import fact graphs from the Danus prover'],
     img: 'facts-graph.webp', w: 1600, h: 978, alt: 'Dependency graph of facts next to a selected theorem with its statement, proof and intuition',
   },
   {
@@ -103,7 +103,7 @@ export const LandingPage = {
       <div class="lp-arch-points">
         <div><b>No shared AI bill</b><span>Each member uses their own Claude or ChatGPT account, or none at all.</span></div>
         <div><b>Your models, your limits</b><span>Choose the model for each kind of work. The client pauses at the caps you set.</span></div>
-        <div><b>People have the last word</b><span>AI proposes facts, answers and references. Researchers validate them.</span></div>
+        <div><b>People have the last word</b><span>AI proposes facts, answers and references, and takes the routine decisions itself. Researchers endorse results and can overrule any decision.</span></div>
       </div>
     </section>
 

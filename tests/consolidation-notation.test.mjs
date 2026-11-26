@@ -32,6 +32,7 @@ test('the consolidation reads the notation and the symbols facts define, and may
   assert.equal(t.context.notation.find((n) => n.symbol === '\\mathbb{N}').decided_by, null, 'proposed: nobody decided it');
   assert.equal(t.context.local_notation[0].meanings.length, 2, 'FS defined two ways');
   assert.match(t.recipe.instructions, /normalize the project's notation yourself/);
+  assert.match(t.recipe.instructions, /Equivalent formulations[\s\S]*never for another wording/, 'wordings are not meanings');
   const item = t.recipe.schema.properties.suggestions.items;
   assert.ok(item.properties.kind.enum.includes('notation')); assert.ok(item.required.includes('notation'));
   await app.call(key, 'POST', `/api/ai/tasks/${t.id}/release`, { lease: t.lease }); await app.call(ann, 'POST', `/api/ai/tasks/${asked.id}/cancel`, {});

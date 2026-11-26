@@ -68,6 +68,12 @@ final class AiTaskController
         return self::insertTask($pid, \App\Sweeps::KINDS[$sweep], 'sweep', null, null, null, null, null, null, null, $asked);
     }
 
+    /** The rewrites or proposals a sweep of items covers (rewrite_check, second_reading), as it took them. @return list<int> */
+    public static function batchItems(array $t): array
+    {
+        return array_map('intval', json_decode((string)($t['snapshot_json'] ?? ''), true)['items'] ?? []);
+    }
+
     /** The cited results a batch of source checks covers, still in the project, at the revision it was queued for. @return list<int> */
     public static function batchFacts(array $t): array
     {
@@ -145,6 +151,7 @@ final class AiTaskController
         // A person's own client may record the Danus run they just launched, and nothing else.
         if (Auth::isAi() && !(Auth::isClient() && $kind === 'derive')) throw new HttpError(403, 'Only a person can do this.');
         if (!in_array($kind, self::kinds(), true)) throw new HttpError(422, 'Choose what the AI should do.');
+        if (in_array($kind, ['rewrite_check', 'second_reading'], true)) throw new HttpError(422, 'The platform queues this on its own, whenever there is work for it.');
         $since = gmdate('Y-m-d H:i:s', time() - 86400);
         if ((int)Db::value('SELECT COUNT(*) FROM ai_tasks WHERE requested_by = ? AND created_at > ? AND dedupe_key IS NULL', [Auth::id(), $since]) >= self::MAX_REQUESTS_PER_DAY) {
             throw new HttpError(429, 'You have reached the limit of AI requests for today.');
@@ -522,26 +529,55 @@ final class AiTaskController
     {
         self::humanOnly();
         $s = self::suggestion($r->int('id'));
-        $me = Auth::id();
-        $bid = Db::tx(function () use ($s, $me) {
-            $pid = (int)$s['project_id'];
-            $existing = $s['doi'] ? Db::value('SELECT id FROM bib_entries WHERE project_id = ? AND LOWER(doi) = LOWER(?)', [$pid, $s['doi']]) : null;
-            if ($existing) $bid = (int)$existing;
-            else {
-                $fields = array_filter(['title' => $s['title'], 'author' => BibTex::authorList($s['authors']), 'year' => $s['year'], 'journal' => $s['venue'],
-                    'doi' => $s['doi'], 'url' => $s['url'], 'eprint' => $s['arxiv'], 'archiveprefix' => $s['arxiv'] ? 'arXiv' : null], fn($v) => $v !== null && $v !== '');
-                $now = Db::now();
-                $bid = Db::insert('bib_entries', BibTex::columns($fields) + [
-                    'project_id' => $pid, 'cite_key' => BibController::uniqueKey($pid, BibController::makeKey($fields)), 'entry_type' => $s['venue'] ? 'article' : 'misc',
-                    'fields_json' => json_encode($fields, JSON_UNESCAPED_UNICODE), 'ai_model' => $s['ai_model'], 'ai_user_id' => $s['ai_user_id'], 'ai_generation_ms' => $s['ai_generation_ms'],
-                    'created_by' => $me, 'created_at' => $now, 'updated_at' => $now,
-                ]);
-                Activity::touch($pid, 'bib', $bid, 'created');
-            }
-            Db::update('bib_suggestions', ['status' => 'accepted', 'bib_id' => $bid, 'decided_by' => $me, 'decided_at' => Db::now()], 'id = :id', ['id' => $s['id']]);
-            return $bid;
-        });
+        $bid = Db::tx(fn() => self::addSuggested($s, Auth::id(), null));
         Response::json(['ok' => true, 'bib_id' => $bid]);
+    }
+
+    /**
+     * Adds a suggested reference to the bibliography, or finds it there. $check: the record that confirmed it, when no person
+     * decided. @return int the bibliography entry
+     */
+    private static function addSuggested(array $s, int $me, ?array $check): int
+    {
+        $pid = (int)$s['project_id'];
+        $existing = $s['doi'] ? Db::value('SELECT id FROM bib_entries WHERE project_id = ? AND LOWER(doi) = LOWER(?)', [$pid, $s['doi']]) : null;
+        if ($existing) $bid = (int)$existing;
+        else {
+            $fields = array_filter(['title' => $s['title'], 'author' => BibTex::authorList($s['authors']), 'year' => $s['year'], 'journal' => $s['venue'],
+                'doi' => $s['doi'], 'url' => $s['url'], 'eprint' => $s['arxiv'], 'archiveprefix' => $s['arxiv'] ? 'arXiv' : null], fn($v) => $v !== null && $v !== '');
+            $now = Db::now();
+            $bid = Db::insert('bib_entries', BibTex::columns($fields) + [
+                'project_id' => $pid, 'cite_key' => BibController::uniqueKey($pid, BibController::makeKey($fields)), 'entry_type' => $s['venue'] ? 'article' : 'misc',
+                'fields_json' => json_encode($fields, JSON_UNESCAPED_UNICODE), 'ai_model' => $s['ai_model'], 'ai_user_id' => $s['ai_user_id'], 'ai_generation_ms' => $s['ai_generation_ms'],
+                'created_by' => $me, 'created_at' => $now, 'updated_at' => $now,
+            ]);
+            Activity::touch($pid, 'bib', $bid, 'created');
+        }
+        Db::update('bib_suggestions', ['status' => 'accepted', 'bib_id' => $bid, 'decided_by' => $check ? null : $me, 'decided_at' => Db::now(),
+            'auto_added' => $check ? 1 : 0, 'verified_by' => $check['by'] ?? null], 'id = :id', ['id' => $s['id']]);
+        return $bid;
+    }
+
+    /**
+     * A member takes back a reference added without a person: the entry leaves the bibliography, unless people used it since
+     * (a PDF, a discussion, facts found in it). The suggestion is then rejected.
+     */
+    public static function undoSuggestion(Request $r): never
+    {
+        self::humanOnly();
+        $s = self::suggestion($r->int('id'), false);
+        Access::member((int)$s['project_id']);
+        if ($s['status'] !== 'accepted' || !$s['auto_added']) throw new HttpError(409, 'Only a reference added automatically can be taken back here.');
+        $bid = (int)$s['bib_id'];
+        $used = $bid && (Db::value('SELECT 1 FROM bib_entries WHERE id = ? AND pdf_blob_id IS NOT NULL', [$bid])
+            || Db::value("SELECT 1 FROM comments WHERE target_type = 'bib' AND target_id = ?", [$bid])
+            || Db::value("SELECT 1 FROM fact_sources WHERE source_type = 'bib' AND source_id = ?", [$bid]));
+        if ($used) throw new HttpError(409, 'People used this reference since (a PDF, a discussion or facts): remove it from the bibliography instead.');
+        Db::tx(function () use ($s, $bid) {
+            if ($bid) Db::run('DELETE FROM bib_entries WHERE id = ?', [$bid]);
+            Db::update('bib_suggestions', ['status' => 'rejected', 'bib_id' => null, 'decided_by' => Auth::id(), 'decided_at' => Db::now(), 'decision_note' => 'Taken back after it was added automatically.'], 'id = :id', ['id' => $s['id']]);
+        });
+        Response::json(['ok' => true]);
     }
 
     public static function rejectSuggestion(Request $r): never
@@ -735,12 +771,21 @@ final class AiTaskController
         $taskId = (int)$r->input('task_id') ?: null;
         if ($taskId && (int)Db::value('SELECT project_id FROM ai_tasks WHERE id = ?', [$taskId]) !== $pid) $taskId = null;
         $clean = array_map([self::class, 'cleanSuggestion'], $items);
-        $created = []; $skipped = [];
+        $created = []; $skipped = []; $added = [];
+        // A reference whose DOI or arXiv record has its title and first author is added at once, when the project lets the AI decide.
+        $auto = (bool)Db::value('SELECT consolidation_auto FROM projects WHERE id = ?', [$pid]);
+        $deadline = microtime(true) + (float)\App\Config::get('bib_check.seconds', 20);
         foreach ($clean as $s) {
             if (self::isKnown($pid, $s)) { $skipped[] = $s['title']; continue; }
-            $created[] = Db::insert('bib_suggestions', $s + $stamp + ['project_id' => $pid, 'task_id' => $taskId, 'status' => 'proposed', 'ai_model' => $model, 'created_at' => Db::now()]);
+            $created[] = $sid = Db::insert('bib_suggestions', $s + $stamp + ['project_id' => $pid, 'task_id' => $taskId, 'status' => 'proposed', 'ai_model' => $model, 'created_at' => Db::now()]);
+            if ($auto && ($s['doi'] || $s['arxiv']) && ($check = \App\BibCheck::verify($s, $deadline))) {
+                $row = Db::one('SELECT * FROM bib_suggestions WHERE id = ?', [$sid]);
+                foreach (['year', 'venue'] as $k) if (!$row[$k] && $check[$k]) $row[$k] = $check[$k];
+                Db::tx(fn() => self::addSuggested($row, Auth::id(), $check));
+                $added[] = $sid;
+            }
         }
-        Response::json(['created' => $created, 'skipped' => $skipped], 201);
+        Response::json(['created' => $created, 'skipped' => $skipped, 'added' => $added], 201);
     }
 
     /** The client itself, a single file with no dependency. */
@@ -824,11 +869,11 @@ final class AiTaskController
             || (bool)Db::value('SELECT 1 FROM bib_entries WHERE project_id = ? AND LOWER(title) = LOWER(?)', [$pid, $s['title']]);
     }
 
-    private static function suggestion(int $id): array
+    private static function suggestion(int $id, bool $waiting = true): array
     {
         $s = Db::one('SELECT * FROM bib_suggestions WHERE id = ?', [$id]);
         if (!$s || !Access::role((int)$s['project_id'])) throw new HttpError(404, 'Suggestion not found.');
-        if ($s['status'] !== 'proposed') throw new HttpError(409, 'This suggestion was already handled.');
+        if ($waiting && $s['status'] !== 'proposed') throw new HttpError(409, 'This suggestion was already handled.');
         return $s;
     }
 
@@ -914,6 +959,8 @@ final class AiTaskController
                 $ctx['facts_to_rewrite'][] = ['fact_id' => $fid, 'label' => $f['label'], 'title' => $f['title'], 'kind' => $f['kind'],
                     'statement' => Sanitizer::toText((string)$f['statement_html']), 'proof' => $f['proof_html'] ? Sanitizer::toText((string)$f['proof_html']) : null,
                     'glossary' => json_decode((string)$f['glossary_json'], true) ?: null,
+                    // A rewrite of this notation found unfaithful: what changed in the meaning, not to do again.
+                    'earlier_rewrite_problem' => Db::value("SELECT check_note FROM fact_rephrasings WHERE fact_id = ? AND revision_no = ? AND notation_hash = ? AND check_verdict = 'unfaithful' ORDER BY id DESC LIMIT 1", [$fid, $f['current_revision'], NotationController::hash($pid)]) ?: null,
                     'sources' => array_values(array_map(fn($s) => ['label' => $s['label'] ?? $s['type'], 'quote' => $s['quote']], array_filter(FactController::presentSources($fid, (int)$f['current_revision']), fn($s) => !$s['hidden'] && $s['covers'] !== 'context')))];
             }
         }
@@ -930,6 +977,21 @@ final class AiTaskController
             }
             if (count($docs) === 1) $ctx['document'] = self::documentContext((int)array_key_first($docs), null);
         }
+        if ($t['kind'] === 'rewrite_check') {
+            // Each rewrite beside the original it must say exactly, with the notation it follows.
+            $ctx['notation'] = NotationController::forTask($pid, true, true);
+            $ctx['rewrites'] = [];
+            foreach (self::batchItems($t) as $xid) {
+                $x = Db::one('SELECT x.*, f.label, f.title, r.statement_html AS o_statement, r.proof_html AS o_proof, r.glossary_json FROM fact_rephrasings x JOIN facts f ON f.id = x.fact_id
+                              JOIN fact_revisions r ON r.fact_id = x.fact_id AND r.revision_no = x.revision_no WHERE x.id = ? AND f.project_id = ?', [$xid, $pid]);
+                if (!$x) continue;
+                $ctx['rewrites'][] = ['rewrite_id' => $xid, 'fact_id' => (int)$x['fact_id'], 'label' => $x['label'], 'title' => $x['title'],
+                    'original' => ['statement' => Sanitizer::toText((string)$x['o_statement']), 'proof' => $x['o_proof'] ? Sanitizer::toText((string)$x['o_proof']) : null, 'glossary' => json_decode((string)$x['glossary_json'], true) ?: null],
+                    'rewrite' => ['statement' => Sanitizer::toText((string)$x['statement_html']), 'proof' => $x['proof_html'] ? Sanitizer::toText((string)$x['proof_html']) : null,
+                        'uses' => json_decode((string)$x['uses_json'], true) ?: [], 'local_notation' => json_decode((string)$x['local_json'], true) ?: (object)[]]];
+            }
+        }
+        if ($t['kind'] === 'second_reading') $ctx += ConsolidationController::secondContext($pid, self::batchItems($t));
         if ($t['kind'] === 'extract') {
             $ctx['comments'] = array_slice(array_map(function ($c) {
                 $a = json_decode((string)$c['anchor_json'], true);
@@ -1120,9 +1182,14 @@ final class AiTaskController
     {
         $result = json_decode((string)($t['result_json'] ?? ''), true) ?: ['fact_ids' => [], 'suggestion_ids' => [], 'reply' => null];
         $subject = $t['document_title'] ?? $t['bib_title'] ?? $t['conversation_title'] ?? $t['question_title'] ?? $t['strategy_title'] ?? $t['fact_title'] ?? null;
-        if ($t['source_type'] === 'sweep' && !(json_decode((string)$t['snapshot_json'], true)['facts'] ?? [])) {
+        $snap = json_decode((string)$t['snapshot_json'], true) ?: [];
+        if ($t['source_type'] === 'sweep' && !($snap['facts'] ?? $snap['items'] ?? [])) {
             // A sweep takes its batch when a client takes it.
-            $subject = $t['kind'] === 'notation' ? 'facts not yet in the project notation' : 'cited results not yet checked';
+            $subject = ['notation' => 'facts not yet in the project notation', 'source_check' => 'cited results not yet checked',
+                'rewrite_check' => 'rewrites not yet compared with their original', 'second_reading' => 'proposals waiting for people'][$t['kind']] ?? null;
+        } elseif ($t['source_type'] === 'sweep' && isset($snap['items'])) {
+            $n = count($snap['items']);
+            $subject = $t['kind'] === 'rewrite_check' ? "$n rewrite" . ($n === 1 ? '' : 's') : "$n proposal" . ($n === 1 ? '' : 's');
         } elseif ($t['kind'] === 'notation' && $t['source_type'] === 'sweep') {
             $n = count(json_decode((string)$t['snapshot_json'], true)['facts']);
             $subject = "$n fact" . ($n === 1 ? '' : 's');
@@ -1144,6 +1211,7 @@ final class AiTaskController
     private static function presentSuggestion(array $s): array
     {
         foreach (['id', 'project_id', 'task_id', 'bib_id', 'decided_by', 'ai_user_id', 'ai_generation_ms'] as $k) $s[$k] = $s[$k] === null ? null : (int)$s[$k];
+        $s['auto_added'] = (bool)($s['auto_added'] ?? false);
         return $s;
     }
 
@@ -1153,7 +1221,7 @@ final class AiTaskController
 
     /** Lower runs sooner. */
     private const PRIORITY = ['ask' => 10, 'review' => 20, 'source_check' => 30, 'bib' => 30, 'consolidate' => 40, 'notation' => 40, 'lean' => 40,
-        'derive' => 50, 'source_sweep' => 55, 'notation_rephrase' => 60, 'extract' => 70];
+        'second_reading' => 45, 'derive' => 50, 'source_sweep' => 55, 'notation_rephrase' => 60, 'rewrite_check' => 65, 'extract' => 70];
     /** A member's own request goes before the same work queued by the platform. */
     private const ASKED_BOOST = 10;
 
@@ -1173,6 +1241,9 @@ final class AiTaskController
         $on = match (true) {
             $kind === 'consolidate' => ['extract'],
             $kind === 'notation' && in_array($sourceType, ['fact', 'sweep'], true) => ['consolidate', 'notation'],
+            // A second reading after the consolidation that proposes; rewrites checked once the rewriting of that round is done.
+            $kind === 'second_reading' => ['consolidate'],
+            $kind === 'rewrite_check' => ['notation_rephrase'],
             default => [],
         };
         if (!$on) return [];

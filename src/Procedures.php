@@ -25,6 +25,8 @@ final class Procedures
             'ask' => ['label' => 'Answer @AI', 'description' => 'Answer a question asked to the AI in a conversation or a comment.', 'tier' => 'fast', 'capabilities' => ['document']],
             'notation' => ['label' => 'Project notation', 'description' => 'Propose a common notation for the project, and write facts again in it, when a member asks.', 'tier' => 'strong', 'capabilities' => []],
             'consolidate' => ['label' => 'Consolidate the facts', 'description' => 'After extractions, read the whole facts database and propose merges of duplicates, links across sources, open questions, subject tags, the cited results behind the outside references of proofs, and the project\'s notation.', 'tier' => 'strong', 'capabilities' => []],
+            'rewrite_check' => ['label' => 'Check rewrites', 'description' => 'Compare each fact an AI rewrote in the project notation with its original, and say whether it states exactly the same. A rewrite found unfaithful is not shown. People can overrule the verdict.', 'tier' => 'strong', 'capabilities' => []],
+            'second_reading' => ['label' => 'Second reading', 'description' => 'Read again the consolidation\'s proposals it was not sure enough to apply, and apply or drop each one, so that people decide only what needs them. Everything can be undone.', 'tier' => 'strong', 'capabilities' => []],
             'source_check' => ['label' => 'Check a cited result', 'description' => 'Read the source of a result cited without proof, and say whether it states the result as written. People still accept it.', 'tier' => 'fast', 'capabilities' => ['document', 'web_search']],
         ];
     }
@@ -41,7 +43,8 @@ TXT,
 TASK: review the notation of the whole project, and help the team agree on it. Each fact defines its own symbols:
 "local_notation" in task.json lists every symbol that facts define for themselves, with the facts that give it each meaning.
 Suggest making a symbol global when several facts define it with the same meaning, or when it is a standard notion of the field,
-and list the ids of the facts that define it in "facts". When facts give one symbol different meanings, propose one global meaning and say
+and list the ids of the facts that define it in "facts". Different wordings of one notion, such as the infinite pigeonhole principle stated for all numbers of colors or for every finite
+coloring, are one meaning, not a clash. When facts give one symbol mathematically different meanings, propose one global meaning and say
 in "note" which facts must use another symbol. "fact_texts" in task.json lists the facts, with their statement,
 the meaning their "glossary" gives to symbols, and their "source". Papers often use the same symbol for different things, for example FS(X)
 for the finite sums of X with or without 0, or different symbols for the same notion. Find the symbols whose meaning differs between sources,
@@ -82,7 +85,8 @@ of the rewritten fact that is not a project symbol, including the local entries 
 TXT,
         'notation_rephrase_batch' => <<<'TXT'
 TASK: "facts_to_rewrite" in task.json lists several facts to write again in the project's agreed notation, listed in "notation".
-Treat each one on its own, as the fact described below, with its own "glossary" and "sources". Answer in "facts", one entry per fact,
+Treat each one on its own, as the fact described below, with its own "glossary" and "sources". When a fact has an
+"earlier_rewrite_problem", an earlier rewrite changed its meaning in that way: avoid it this time. Answer in "facts", one entry per fact,
 with its "fact_id", in the same order. A fact you cannot rewrite faithfully: leave it out, rather than guess.
 The rules for each fact follow.
 
@@ -106,6 +110,37 @@ equivalent form; "differs" if it states something different, for example with ot
 "not_found" if you could not find the result in it, or could not read the work. In "where", give the theorem number and page when you
 found it, or an empty string. In "explanation", say what the work states, quoting it briefly, and how it differs when it does. You do not
 judge whether a result is true, only what the work says.
+TXT,
+        'rewrite_check' => <<<'TXT'
+TASK: "rewrites" in task.json lists facts that an AI wrote again in the project's notation, listed in "notation". For each one, compare
+its "rewrite" with its "original" and say whether the rewrite states exactly the same mathematics: the same objects, hypotheses,
+quantifiers and ranges, the same conclusion, and a proof that makes the same argument. Symbols replaced by the project's are expected:
+read each with its meaning in "notation", with what the original meant by it ("rewrite.uses" and "original.glossary"), and with the
+symbols the rewrite defines for itself ("rewrite.local_notation").
+Answer "faithful" when a careful mathematician reading both finds the same result and the same proof. Changes of wording, order or
+layout are faithful. Answer "unfaithful" when anything mathematical changed: a convention (finite sums with or without 0, a set of
+numbers starting at 0 or 1), a hypothesis lost or added, a weaker or stronger conclusion, a project symbol whose meaning differs from what
+the original meant, a step of the proof dropped or changed. In "note", for an unfaithful rewrite, say precisely what changed, quoting
+both; for a faithful one, an empty string or a short remark. Answer in "checks", one entry per rewrite with its "rewrite_id". Leave out
+a rewrite you cannot judge, rather than guess. An unfaithful rewrite is not shown, and the original stays as it is.
+TXT,
+        'second_reading' => <<<'TXT'
+TASK: "proposals" in task.json lists changes that an AI proposed after reading the whole facts database of the project, but was not
+sure enough to apply on its own. You are a second, independent reader: decide each one, so that people only decide what really needs
+them. Each proposal gives its "kind", the facts it concerns with their full statements and proofs, its "data", and the first reader's
+"reason" and "confidence". Check the reason against the facts: do not take it on trust.
+The kinds: "same" merges "other_fact" into "fact", as two statements of the same result; "depends" records that the proof of "fact"
+uses "other_fact"; "kind" gives "fact" the kind in "data"; "question" turns the remark "fact" into an open question of the project;
+"topics" adds subject tags; "cite" links an outside reference of a proof to the fact stating the result it takes from it, or writes that
+result as a new cited result ("data.statement"); "progress" marks "fact" as real progress worth a member's reading; "notation" adopts,
+keeps local or rejects an entry of the project's notation ("notation" in task.json lists the entries).
+Answer "apply" when, having read the facts yourself, you find the change right: a careful mathematician would make it. For "same", only
+when the statements are equivalent as written, with the same hypotheses and conclusion; for "depends", when the proof plainly uses the
+other fact; for "question", when the remark asks a question that is still open and states no result. Answer "drop" when the change is
+wrong, useless, or not supported by the facts. Answer "unsure" only when it needs a person's judgment: the direction of the project, or
+mathematics you cannot settle from the text. Every applied change can be undone, so do not hold back for that alone; but a wrong merge
+or dependency misleads the provers, so check those carefully. In "reason", say why in one or two sentences, for the members.
+Answer in "decisions", one entry per proposal with its "suggestion_id".
 TXT,
         'consolidate' => <<<'TXT'
 TASK: consolidate the facts database of this project. Facts were extracted one source at a time, so no extraction
@@ -144,7 +179,11 @@ the ids it "depends_on", its "topics", its "status" and whether it is already "w
   When sources disagree, choose: the most common convention of the literature, and another symbol for a meaning that also matters,
   for example FS(X) including 0 and NS(X) without it. Do not leave notation to people: a wrong choice is cheap, it can be undone, and
   the facts are rewritten in it automatically while their reviewed text stays as it is. Adopt only notions that several facts or sources
-  share or that readers could confuse, not the standard notation every reader knows, nor variables of one proof.
+  share or that readers could confuse, and a notion several facts define even when it is standard, since the facts then stop repeating
+  its definition; not variables of one proof. The meanings that "local_notation" lists for a symbol are the facts' own wordings, compared
+  as text: decide whether they state the same notion. Equivalent formulations, such as the infinite pigeonhole principle stated for all
+  numbers of colors or for every finite coloring, are one meaning: adopt it once, with one precise definition. Give a variant "relation":
+  "clash" only for a meaning that is mathematically different, such as finite sums with or without 0, never for another wording.
 Name facts by their id or label. In "reason", say in one or two sentences why, quoting the statements when it helps.
 "earlier_suggestions" lists proposals already waiting, or that people rejected or undid: never propose them again.
 Give each change a "confidence". "high" means you checked it and are sure: for "same", the two statements are equivalent as written,
@@ -164,6 +203,8 @@ TXT,
         'consolidate' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'suggestions'], "properties" => ["summary" => ["type" => 'string'], "suggestions" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['kind', 'fact', 'other_fact', 'new_kind', 'title', 'topics', 'ref', 'statement', 'notation', 'reason', 'confidence'], "properties" => ["kind" => ["type" => 'string', "enum" => ['same', 'depends', 'kind', 'question', 'topics', 'cite', 'progress', 'notation']], "notation" => ["type" => ['object', 'null'], "additionalProperties" => false, "required" => ['action', 'entry', 'symbol', 'meaning', 'note', 'variants'], "properties" => ["action" => ["type" => 'string', "enum" => ['adopt', 'local', 'reject']], "entry" => ["type" => ['integer', 'null']], "symbol" => ["type" => ['string', 'null']], "meaning" => ["type" => ['string', 'null']], "note" => ["type" => ['string', 'null']], "variants" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'meaning', 'where', 'relation'], "properties" => ["symbol" => ["type" => 'string'], "meaning" => ["type" => 'string'], "where" => ["type" => 'string'], "relation" => ["type" => 'string', "enum" => ['instance', 'clash']]]]]]], "ref" => ["type" => ['string', 'null']], "statement" => ["type" => ['string', 'null']], "confidence" => ["type" => 'string', "enum" => ['high', 'medium', 'low']], "fact" => ["type" => 'string'], "other_fact" => ["type" => ['string', 'null']], "new_kind" => ["type" => ['string', 'null'], "enum" => ['definition', 'lemma', 'proposition', 'theorem', 'corollary', 'conjecture', 'remark', null]], "title" => ["type" => ['string', 'null']], "topics" => ["type" => 'array', "items" => ["type" => 'string']], "reason" => ["type" => 'string']]]]]],
         'notation_rephrase_batch' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'facts'], "properties" => ["summary" => ["type" => 'string'], "facts" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['fact_id', 'unchanged', 'statement', 'proof', 'local_notation', 'uses'], "properties" => ["fact_id" => ["type" => 'integer'], "unchanged" => ["type" => 'boolean'], "statement" => ["type" => 'string'], "proof" => ["type" => ['string', 'null']], "local_notation" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'meaning'], "properties" => ["symbol" => ["type" => 'string'], "meaning" => ["type" => 'string']]]], "uses" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'meaning_here', 'project_symbol'], "properties" => ["symbol" => ["type" => 'string'], "meaning_here" => ["type" => 'string'], "project_symbol" => ["type" => 'string']]]]]]]]],
         'source_check_batch' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'checks'], "properties" => ["summary" => ["type" => 'string'], "checks" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['fact_id', 'verdict', 'where', 'explanation'], "properties" => ["fact_id" => ["type" => 'integer'], "verdict" => ["type" => 'string', "enum" => ['confirmed', 'differs', 'not_found']], "where" => ["type" => 'string'], "explanation" => ["type" => 'string']]]]]],
+        'rewrite_check' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'checks'], "properties" => ["summary" => ["type" => 'string'], "checks" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['rewrite_id', 'verdict', 'note'], "properties" => ["rewrite_id" => ["type" => 'integer'], "verdict" => ["type" => 'string', "enum" => ['faithful', 'unfaithful']], "note" => ["type" => 'string']]]]]],
+        'second_reading' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'decisions'], "properties" => ["summary" => ["type" => 'string'], "decisions" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['suggestion_id', 'verdict', 'reason'], "properties" => ["suggestion_id" => ["type" => 'integer'], "verdict" => ["type" => 'string', "enum" => ['apply', 'drop', 'unsure']], "reason" => ["type" => 'string']]]]]],
         'source_check' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'verdict', 'where', 'explanation'], "properties" => ["summary" => ["type" => 'string'], "verdict" => ["type" => 'string', "enum" => ['confirmed', 'differs', 'not_found']], "where" => ["type" => 'string'], "explanation" => ["type" => 'string']]],
     ];
 
@@ -281,6 +322,31 @@ TXT,
                 }
                 $n = count($ids);
                 return ['summary' => trim("$n fact" . ($n === 1 ? '' : 's') . ' written in the project notation' . ($same ? " ($same already were)" : '') . ($refused ? ", $refused refused" : '') . ". $said"), 'fact_ids' => $ids];
+            case 'rewrite_check':
+                $mine = array_flip(AiTaskController::batchItems($t)); $ids = []; $bad = 0;
+                $each = is_numeric($seconds) ? $seconds / max(1, count($answer['checks'])) : null;
+                foreach ($answer['checks'] as $c) {
+                    $xid = (int)$c['rewrite_id'];
+                    if (!isset($mine[$xid]) || in_array($xid, $ids, true)) continue; // only the rewrites of this batch, once each
+                    if (!NotationController::aiCheck($xid, $c['verdict'], (string)$c['note'], $model, $each)) continue;
+                    $ids[] = $xid; if ($c['verdict'] === 'unfaithful') $bad++;
+                }
+                $n = count($ids);
+                $facts = $ids ? array_map('intval', array_column(Db::all('SELECT DISTINCT fact_id FROM fact_rephrasings WHERE id IN ' . Db::in($ids)[0], Db::in($ids)[1]), 'fact_id')) : [];
+                return ['summary' => trim("$n rewrite" . ($n === 1 ? '' : 's') . ' checked' . ($bad ? ", $bad found unfaithful" : ($n ? ', all faithful' : '')) . ". $said"), 'fact_ids' => $facts];
+            case 'second_reading':
+                $mine = array_flip(AiTaskController::batchItems($t)); $ids = []; $by = ['applied' => 0, 'dropped' => 0, 'unsure' => 0, 'failed' => 0];
+                foreach ($answer['decisions'] as $d) {
+                    $sid = (int)$d['suggestion_id'];
+                    if (!isset($mine[$sid]) || in_array($sid, $ids, true)) continue;
+                    $out = ConsolidationController::second($sid, $d['verdict'], (string)$d['reason'], $model);
+                    if ($out === null) continue;
+                    $ids[] = $sid; $by[$out]++;
+                }
+                $what = implode(', ', array_filter([$by['applied'] ? "{$by['applied']} applied" : '', $by['dropped'] ? "{$by['dropped']} dropped" : '',
+                    $by['unsure'] ? "{$by['unsure']} left to people" : '', $by['failed'] ? "{$by['failed']} could not be applied" : '']));
+                $n = count($ids);
+                return ['summary' => trim("$n proposal" . ($n === 1 ? '' : 's') . ' read again' . ($what ? " ($what)" : '') . ". $said"), 'suggestion_ids' => $ids];
             case 'source_check_batch':
                 $ids = []; $by = ['confirmed' => 0, 'differs' => 0, 'not_found' => 0];
                 $mine = array_flip(AiTaskController::batchFacts($t));

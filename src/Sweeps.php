@@ -13,17 +13,27 @@ use App\Controllers\NotationController;
  * has been quiet for a while, at most so often, and picks what is stale when a client takes it, a batch at a time. What a sweep
  * leaves is taken by the next. The server decides this when a client asks for work: no cron.
  *
+ * Two sweeps take decisions that would otherwise wait for people: "check" has a second AI compare each rewrite in the project
+ * notation with the original, and "second" has another AI reading the proposals of the consolidation it was not sure enough to
+ * apply, applying those it agrees with and dropping the others. People can overrule both.
+ *
  * Settings, in minutes or hours, in config.php under "sweeps": quiet_minutes (30), check_minutes (5), rewrite_hours (1),
- * source_hours (1), consolidate_hours (24; 0 consolidates only after extractions).
+ * source_hours (1), check_hours (1), second_hours (1), consolidate_hours (24; 0 consolidates only after extractions).
  */
 final class Sweeps
 {
     /** A sweep's kind of task. */
-    public const KINDS = ['rewrite' => 'notation', 'source' => 'source_check'];
+    public const KINDS = ['rewrite' => 'notation', 'source' => 'source_check', 'check' => 'rewrite_check', 'second' => 'second_reading'];
     /** At most this many facts in one session, and this much text to rewrite. */
     public const REWRITE_BATCH = 12;
     public const REWRITE_CHARS = 40000;
     public const SOURCE_BATCH = 10;
+    /** Rewrites compared in one session, and the text they may hold, the original and the rewrite together. */
+    public const CHECK_BATCH = 12;
+    public const CHECK_CHARS = 60000;
+    /** Proposals read again in one session. */
+    public const SECOND_BATCH = 25;
+    private const BATCH = ['rewrite' => self::REWRITE_BATCH, 'source' => self::SOURCE_BATCH, 'check' => self::CHECK_BATCH, 'second' => self::SECOND_BATCH];
 
     private static function setting(string $key, float $default): float
     {
@@ -45,7 +55,7 @@ final class Sweeps
         if ($last && strtotime((string)$last . ' UTC') > $now - 60 * self::setting('quiet_minutes', 30)) return [];
         if (Db::value("SELECT 1 FROM ai_tasks WHERE project_id = ? AND kind = 'extract' AND status IN ('pending', 'running')", [$pid])) return [];
         $out = [];
-        foreach (['rewrite', 'source'] as $s) {
+        foreach (array_keys(self::KINDS) as $s) {
             if (self::open($pid, $s) || !self::rested($pid, $s) || !self::stale($pid, $s)) continue;
             AiTaskController::queueSweep($pid, $s);
             $out[] = $s;
@@ -71,19 +81,49 @@ final class Sweeps
     {
         $last = Db::one("SELECT finished_at, result_json FROM ai_tasks WHERE project_id = ? AND kind = ? AND source_type = 'sweep' AND status IN ('done', 'failed') ORDER BY id DESC LIMIT 1", [$pid, self::KINDS[$sweep]]);
         if (!$last) return true;
-        $did = count(json_decode((string)$last['result_json'], true)['fact_ids'] ?? []);
-        if ($did >= ($sweep === 'rewrite' ? self::REWRITE_BATCH : self::SOURCE_BATCH)) return true;
+        $result = json_decode((string)$last['result_json'], true) ?: [];
+        $did = max(count($result['fact_ids'] ?? []), count($result['suggestion_ids'] ?? []));
+        if ($did >= self::BATCH[$sweep]) return true;
         return strtotime((string)$last['finished_at'] . ' UTC') <= time() - 3600 * self::setting($sweep . '_hours', 1);
     }
 
     private static function stale(int $pid, string $sweep): bool
     {
-        return (bool)($sweep === 'rewrite' ? self::rewriteCandidates($pid) : self::sourceCandidates($pid));
+        return (bool)match ($sweep) {
+            'rewrite' => self::rewriteCandidates($pid), 'source' => self::sourceCandidates($pid),
+            'check' => self::checkCandidates($pid), 'second' => self::secondCandidates($pid),
+        };
+    }
+
+    /**
+     * Rewrites in the current notation, of the current revision of their fact, that nobody checked and that no check tried yet.
+     * A person's verdict is never asked of an AI. @return list<int> rephrasing ids
+     */
+    public static function checkCandidates(int $pid): array
+    {
+        $tried = self::tried($pid, 'rewrite_check', null);
+        $ids = array_map('intval', array_column(Db::all("SELECT x.id FROM fact_rephrasings x JOIN facts f ON f.id = x.fact_id AND x.revision_no = f.current_revision
+            WHERE f.project_id = ? AND f.deleted_at IS NULL AND f.retracted_at IS NULL AND x.notation_hash = ? AND x.unchanged = 0 AND x.check_verdict IS NULL ORDER BY x.id",
+            [$pid, NotationController::hash($pid)]), 'id'));
+        return array_values(array_filter($ids, fn($id) => !isset($tried[$id])));
+    }
+
+    /**
+     * Proposals of the consolidation waiting for people, that no second reading has seen, when the project lets the AI apply
+     * changes on its own. @return list<int> suggestion ids
+     */
+    public static function secondCandidates(int $pid): array
+    {
+        if (!Db::value('SELECT consolidation_auto FROM projects WHERE id = ?', [$pid])) return [];
+        $tried = self::tried($pid, 'second_reading', null);
+        $ids = array_map('intval', array_column(Db::all("SELECT id FROM fact_suggestions WHERE project_id = ? AND status = 'proposed' AND second_verdict IS NULL ORDER BY id", [$pid]), 'id'));
+        return array_values(array_filter($ids, fn($id) => !isset($tried[$id])));
     }
 
     /**
      * Facts not written in the current notation, or whose rewrite was found unfaithful, and that no sweep of this notation tried
-     * yet: a fact a model left out is not taken again and again. @return list<array{0: int, 1: int}> [fact, revision]
+     * yet: a fact a model left out is not taken again and again. A rewrite found unfaithful is tried once more, with what was wrong.
+     * @return list<array{0: int, 1: int}> [fact, revision]
      */
     public static function rewriteCandidates(int $pid): array
     {
@@ -92,7 +132,8 @@ final class Sweeps
         $tried = self::tried($pid, 'notation', $hash);
         $out = [];
         foreach (NotationController::states($pid) as $fid => $s) {
-            if (in_array($s['state'], ['none', 'stale', 'unfaithful'], true) && !isset($tried["$fid:{$s['revision']}"])) $out[] = [(int)$fid, (int)$s['revision']];
+            $times = $tried["$fid:{$s['revision']}"] ?? 0;
+            if (in_array($s['state'], ['none', 'stale'], true) && !$times || $s['state'] === 'unfaithful' && $times < 2) $out[] = [(int)$fid, (int)$s['revision']];
         }
         return $out;
     }
@@ -122,10 +163,11 @@ final class Sweeps
             $snap = json_decode((string)$t['snapshot_json'], true) ?: [];
             if ($kind === 'notation') {
                 // A rewrite tried in this notation, by a sweep that finished: failed sweeps are tried again.
-                if ($t['source_type'] === 'sweep' && $t['status'] === 'done' && ($snap['hash'] ?? null) === $hash) foreach ($snap['facts'] ?? [] as [$f, $rev]) $done["$f:$rev"] = true;
+                if ($t['source_type'] === 'sweep' && $t['status'] === 'done' && ($snap['hash'] ?? null) === $hash) foreach ($snap['facts'] ?? [] as [$f, $rev]) $done["$f:$rev"] = ($done["$f:$rev"] ?? 0) + 1;
                 continue;
             }
             if ($t['status'] !== 'done') continue;
+            if (in_array($kind, ['rewrite_check', 'second_reading'], true)) { foreach ($snap['items'] ?? [] as $id) $done[(int)$id] = true; continue; }
             if ($t['source_type'] !== 'fact') foreach ($snap['facts'] ?? [] as [$f, $rev]) $done["$f:$rev"] = true;
             elseif (preg_match('/^srcchk:(\d+):(\d+)$/', (string)$t['dedupe_key'], $m)) $done["$m[1]:$m[2]"] = true;
         }
@@ -147,6 +189,18 @@ final class Sweeps
                 $batch[] = [$f, $rev]; $chars += $size;
             }
             $snap = ['facts' => $batch, 'hash' => NotationController::hash($pid)];
+        } elseif ($t['kind'] === 'rewrite_check') {
+            $batch = []; $chars = 0;
+            foreach (self::checkCandidates($pid) as $id) {
+                $size = (int)Db::value('SELECT LENGTH(x.statement_html) + LENGTH(COALESCE(x.proof_html, \'\')) + LENGTH(r.statement_html) + LENGTH(COALESCE(r.proof_html, \'\'))
+                    FROM fact_rephrasings x JOIN fact_revisions r ON r.fact_id = x.fact_id AND r.revision_no = x.revision_no WHERE x.id = ?', [$id]);
+                if ($batch && ($chars + $size > self::CHECK_CHARS || count($batch) >= self::CHECK_BATCH)) break;
+                $batch[] = $id; $chars += $size;
+            }
+            $snap = ['items' => $batch];
+        } elseif ($t['kind'] === 'second_reading') {
+            $batch = array_slice(self::secondCandidates($pid), 0, self::SECOND_BATCH);
+            $snap = ['items' => $batch];
         } else {
             $groups = self::sourceCandidates($pid);
             $batch = array_slice((array)(reset($groups) ?: []), 0, self::SOURCE_BATCH);

@@ -46,16 +46,21 @@ export function shownRephrasing(fact, wantProject) {
   return x;
 }
 
+/** A verdict on a rewrite that an AI gave, not a person: people can still overrule it. */
+export const checkedByAi = (x) => Boolean(x?.check_verdict && !x.checked_by && x.check_ai_model);
+
 /** One line on how a fact stands against the agreed notation, for its page. */
 export function rephrasingState(fact) {
   const all = fact?.rephrasings || [];
   const cur = all.find((r) => r.current);
-  if (cur?.check_verdict === 'unfaithful') return { tone: 'bad', text: 'A person found that the version in project notation changes the meaning. The original is shown.' };
+  const ai = checkedByAi(cur);
+  if (cur?.check_verdict === 'unfaithful') {
+    return { tone: 'bad', text: ai ? `A second AI found that the version in project notation changes the meaning: ${cur.check_note || ''} The original is shown.` : 'A person found that the version in project notation changes the meaning. The original is shown.' };
+  }
   if (cur?.unchanged) return { tone: 'good', text: 'Already written in the project\'s notation.' };
   if (cur) {
-    return cur.check_verdict === 'faithful'
-      ? { tone: 'good', text: 'Shown in the project\'s notation, checked by a person.' }
-      : { tone: 'info', text: 'Shown in the project\'s notation by an AI. Check that it says the same as the original.' };
+    if (cur.check_verdict === 'faithful') return { tone: 'good', text: ai ? 'Shown in the project\'s notation. A second AI compared it with the original and found the same meaning.' : 'Shown in the project\'s notation, checked by a person.' };
+    return { tone: 'info', text: 'Shown in the project\'s notation by an AI. A second AI will compare it with the original; you can check it now.' };
   }
   if (all.some((r) => r.revision_no === fact.current_revision)) return { tone: 'warn', text: 'The agreed notation changed since this fact was rewritten.' };
   return null;

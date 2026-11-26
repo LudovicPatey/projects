@@ -59,6 +59,11 @@ test('the interface helpers', () => {
   assert.ok(shownRephrasing(fact, true)); assert.equal(shownRephrasing(fact, false), null);
   assert.equal(shownRephrasing({ rephrasings: [{ current: true, check_verdict: 'unfaithful' }] }, true), null);
   assert.equal(rephrasingState({ current_revision: 1, rephrasings: [{ current: false, revision_no: 1 }] }).tone, 'warn');
+  // A second AI's verdict says so, and gives what changed; a person's says who.
+  const ai = (v, note) => rephrasingState({ current_revision: 1, rephrasings: [{ current: true, unchanged: false, revision_no: 1, check_verdict: v, check_note: note, checked_by: null, check_ai_model: 'm' }] });
+  assert.match(ai('faithful').text, /second AI compared it/); assert.equal(ai('faithful').tone, 'good');
+  assert.match(ai('unfaithful', 'Counts 0.').text, /second AI found[\s\S]*Counts 0\./); assert.equal(ai('unfaithful').tone, 'bad');
+  assert.match(rephrasingState({ current_revision: 1, rephrasings: [{ current: true, unchanged: false, revision_no: 1, check_verdict: 'faithful', checked_by: 3 }] }).text, /checked by a person/);
   assert.deepEqual(requestBody({ kind: 'notation', prompt: '' }), { kind: 'notation' }); assert.equal(AI_KINDS.notation.needs, null);
 });
 

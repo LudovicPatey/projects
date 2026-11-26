@@ -2,7 +2,7 @@ import { api, expandFacts } from '../api.js';
 import { store, link, attempt, refreshCounters, toast } from '../store.js';
 import { timeAgo, fullDate } from '../util.js';
 import { Pill, Kpi, StackBar } from '../dashboard.js';
-import { bibProgress, privateExtractionNotice, clientStatus, computeTime, timeByKind, CLIENT_PERIODS, AI_KINDS, TASK_SEGMENTS, TASK_STATUS, filterTasks, requestBody, requestError, resultLinks, suggestionLink, taskActions, taskTitle, queueGroups, groupSummary } from '../ai-model.js';
+import { bibProgress, privateExtractionNotice, clientStatus, computeTime, timeByKind, CLIENT_PERIODS, AI_KINDS, TASK_SEGMENTS, TASK_STATUS, filterTasks, requestBody, requestError, resultLinks, suggestionLink, taskActions, taskTitle, queueGroups, groupSummary, kindInfo } from '../ai-model.js';
 
 export const AiView = {
   components: { Pill, Kpi, StackBar },
@@ -15,7 +15,8 @@ export const AiView = {
     queue() { return queueGroups(this.d?.groups, this.d?.tasks, this.filter); },
     task() { return (this.d?.tasks || []).find((t) => t.id === this.id) || null; },
     proposed() { return (this.d?.suggestions || []).filter((s) => s.status === 'proposed'); },
-    decided() { return (this.d?.suggestions || []).filter((s) => s.status !== 'proposed').slice(0, 5); },
+    decided() { return (this.d?.suggestions || []).filter((s) => s.status !== 'proposed' && !(s.auto_added && s.status === 'accepted')).slice(0, 5); },
+    autoAdded() { return (this.d?.suggestions || []).filter((s) => s.auto_added && s.status === 'accepted').slice(0, 10); },
     error() { return requestError(this.draft); },
     online() { return this.d?.clients || []; },
     actions() { return this.task ? taskActions(this.task, { me: store.user.id, owner: store.project?.my_role === 'owner' }) : {}; },
@@ -43,7 +44,7 @@ export const AiView = {
     'query.suggestion': { handler() { this.reveal(); } },
   },
   methods: {
-    link, timeAgo, fullDate, taskTitle, groupSummary, resultLinks, suggestionLink, clientStatus, computeTime,
+    link, timeAgo, fullDate, taskTitle, groupSummary, kindInfo, resultLinks, suggestionLink, clientStatus, computeTime,
     async load() {
       const r = await attempt(() => api.get(`api/projects/${this.pid}/ai`));
       if (r) { this.d = r; this.$nextTick(() => this.reveal()); }
@@ -73,7 +74,8 @@ export const AiView = {
       if (await attempt(() => api.post(`api/ai/tasks/${this.task.id}/${verb}`, {}))) await this.load();
     },
     async decide(s, verb) {
-      const r = await attempt(() => api.post(`api/bib-suggestions/${s.id}/${verb}`, {}), verb === 'accept' ? 'Added to the bibliography' : 'Suggestion rejected');
+      if (verb === 'undo' && !confirm(`Take “${s.title}” out of the bibliography?`)) return;
+      const r = await attempt(() => api.post(`api/bib-suggestions/${s.id}/${verb}`, {}), { accept: 'Added to the bibliography', reject: 'Suggestion rejected', undo: 'Taken out of the bibliography' }[verb]);
       if (r) { await this.load(); refreshCounters(); }
     },
   },
@@ -121,8 +123,9 @@ export const AiView = {
             </div>
             <p class="ai-note">Proving new facts means proof searches. Standard tasks are extraction, questions, references, reviews and Lean. Time is measured by each client on the tasks it finished or that failed for good, in this project.</p>
           </section>
-          <section v-if="proposed.length || decided.length" class="panel" id="ai-suggestions">
+          <section v-if="proposed.length || decided.length || autoAdded.length" class="panel" id="ai-suggestions">
             <header class="ai-head"><h2><icon name="lightbulb" :size="15"/> Suggested references</h2><small>Check the source before accepting</small></header>
+            <p class="muted small">A reference whose DOI or arXiv record has the same title and first author is added to the bibliography at once, when the project lets the AI apply what it is sure of. The others wait here.</p>
             <article v-for="s in proposed" :key="s.id" class="ai-sugg" :data-suggestion="s.id" :class="{active: +query?.suggestion === s.id}">
               <div class="ai-sugg-main"><b><math-text :text="s.title"/></b>
                 <small>{{ [s.authors, s.year, s.venue].filter(Boolean).join(' · ') }}</small>
@@ -132,6 +135,10 @@ export const AiView = {
               <div class="ai-sugg-actions"><button class="btn sm primary" @click="decide(s, 'accept')"><icon name="check" :size="13"/> Accept</button><button class="btn sm" @click="decide(s, 'reject')">Reject</button></div>
             </article>
             <div v-if="!proposed.length" class="d-empty">Nothing to validate.</div>
+            <details v-if="autoAdded.length" class="ai-decided" open><summary>Added automatically ({{ autoAdded.length }})</summary>
+              <div v-for="s in autoAdded" :key="s.id" class="d-row"><span class="pill t-good">{{ s.verified_by === 'arxiv' ? 'arXiv' : 'Crossref' }}</span><a class="d-title" :href="s.bib_id ? link('bib', s.bib_id) : undefined"><math-text :text="s.title"/></a><small class="muted">{{ timeAgo(s.decided_at) }}</small>
+                <button class="btn xs" @click="decide(s, 'undo')" title="Take it out of the bibliography">Take back</button></div>
+            </details>
             <details v-if="decided.length" class="ai-decided"><summary>Recently handled ({{ decided.length }})</summary>
               <a v-for="s in decided" :key="s.id" class="d-row" :href="s.bib_id ? link('bib', s.bib_id) : undefined"><pill :status="s.status"/><span class="d-title"><math-text :text="s.title"/></span><small>{{ s.decided_by_name }}</small></a>
             </details>
@@ -143,7 +150,7 @@ export const AiView = {
             <div class="ai-list">
               <div v-for="g in queue" :key="g.group" class="ai-qgroup" :class="{open: openGroups[g.group]}">
                 <button type="button" class="ai-row ai-group" :aria-expanded="!!openGroups[g.group]" @click="openGroups[g.group] = !openGroups[g.group]">
-                  <span class="action-icon t-info"><icon :name="kinds[g.group === 'notation_rephrase' ? 'notation' : g.group]?.icon || 'sparkles'" :size="14"/></span>
+                  <span class="action-icon t-info"><icon :name="kindInfo(g.group === 'notation_rephrase' ? 'notation' : g.group)?.icon || 'sparkles'" :size="14"/></span>
                   <span class="ai-row-main"><b>{{ g.label }}</b>
                     <span class="ai-progress" role="img" :aria-label="groupSummary(g)"><i v-for="s in segments" v-show="g.counts[s[0]]" :key="s[0]" :style="{flexGrow: g.counts[s[0]], background: s[2]}"></i><i v-if="g.counts.cancelled" :style="{flexGrow: g.counts.cancelled}" class="off"></i></span>
                     <small>{{ groupSummary(g) }}</small></span>
