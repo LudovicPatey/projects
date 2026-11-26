@@ -27,6 +27,8 @@ npm test
 
 **Visual check.** After any change to the interface, open each affected view in a browser at widths 1440, 1024, 800 and 375, including the dialogs it opens, and run `scripts/visual-audit.js` in the page (paste it in the console, or evaluate it from a test browser). It must return an empty list. It reports a page wider than the window, text squeezed letter by letter, controls off screen or spilling out of their column, dropdowns without the custom arrow or cutting their text, rows whose dropdown and buttons differ in height, and menus opening outside the window. Then look at a screenshot: the audit does not judge taste. Use `select.sm` beside `btn sm`, and never set `background:` or a small right padding on a `select`.
 
+**Audits.** When asked to audit a project, follow `docs/AUDIT.md`: besides the validity of the data, check its semantics (read the mathematics), the split of decisions between people and AI, the interface, missing features and obsolete ones.
+
 ## Conventions
 
 - Database changes go in `sql/schema.mysql.sql` for new installations, and in the idempotent migrations of `Db::install()` for existing ones.
