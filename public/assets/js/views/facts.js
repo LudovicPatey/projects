@@ -129,6 +129,7 @@ export const FactsView = {
     center() { return this.id && this.filtered.some((f) => f.id === this.id) ? this.id : bestCenter(this.filtered); },
     graphData() {
       if (this.graphView === 'key') return keyGraph(this.filtered, this.filteredEdges, (n) => (this.gScope === 'mine' ? n.starred : n.stars > 0));
+      if (this.graphView === 'reading') return keyGraph(this.filtered, this.filteredEdges, (n) => n.worth_reading);
       if (this.graphView === 'around') return this.center ? neighborhood(this.filtered, this.filteredEdges, this.center, this.gDepth) : { nodes: [], edges: [] };
       return { nodes: this.filtered, edges: this.filteredEdges };
     },
@@ -245,12 +246,13 @@ export const FactsView = {
     </div>
     <div v-if="loaded && !facts.length" class="placeholder"><icon name="graph" :size="40"/><p>No facts yet. Your AI client adds them with a personal API key.</p><a class="btn primary" href="#/profile"><icon name="key" :size="14"/> Get an API key</a></div>
     <div v-if="facts.length" class="fg-views">
-      <div class="seg small" role="group" aria-label="What the graph shows"><button v-for="(v, k) in graphViews" :key="k" :class="{on: graphView === k}" :aria-pressed="graphView === k" :title="v.hint" @click="gView = k">{{ k === 'key' ? '★ ' : '' }}{{ v.label }}</button></div>
+      <div class="seg small" role="group" aria-label="What the graph shows"><button v-for="(v, k) in graphViews" :key="k" :class="{on: graphView === k}" :aria-pressed="graphView === k" :title="v.hint" @click="gView = k">{{ k === 'key' ? '★ ' : '' }}<icon v-if="k === 'reading'" name="sparkles" :size="12"/> {{ v.label }}</button></div>
       <select v-if="graphView === 'key'" v-model="gScope" class="sm" aria-label="Whose stars"><option value="all">Starred by anyone</option><option value="mine">Starred by me</option></select>
       <select v-if="graphView === 'around'" v-model.number="gDepth" class="sm" aria-label="Depth"><option :value="1">1 step</option><option :value="2">2 steps</option><option :value="3">3 steps</option><option :value="5">5 steps</option><option :value="0">All the lineage</option></select>
       <span class="muted small">{{ graphData.nodes.length }} of {{ results.length }} facts shown<template v-if="graphView === 'around' && center && center !== id"> · around the most starred or used fact</template></span>
     </div>
     <div v-if="facts.length && graphView === 'key' && !graphData.nodes.length" class="placeholder"><span class="kpi-icon"><icon name="star" :size="22"/></span><p>No starred fact {{ gScope === 'mine' ? 'of yours ' : '' }}yet. Star the facts that matter, on their page or in the list. Key facts then show how they rely on each other, however large the database is.</p><button class="btn" @click="gView = 'all'">Show everything</button></div>
+    <div v-else-if="facts.length && graphView === 'reading' && !graphData.nodes.length" class="placeholder"><span class="kpi-icon"><icon name="sparkles" :size="22"/></span><p>No fact is marked worth reading yet. The consolidation marks real progress, such as a new result on a question or a key step of a proof, and it then appears in every member's reading suggestions.</p><button class="btn" @click="gView = 'all'">Show everything</button></div>
     <fact-graph v-else-if="facts.length" :nodes="graphData.nodes" :edges="graphData.edges" :selected="id" :unread="unreadFacts" @select="selectNode"/>
     <div class="fg-legend">
       <span v-for="(s, k) in statuses" :key="k"><i :style="{background: s.bg, borderColor: s.color}"></i>{{ s.label }}</span>

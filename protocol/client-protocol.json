@@ -1,7 +1,7 @@
 {
  "min_version": "1.0.0",
  "client_version": "1.20.0",
- "fingerprint": "5a3fafa312290a5ebc42dfc0b2279b784ef0b5ab0a5961560a77eab3427e3606",
+ "fingerprint": "11aea6ed82e56e3bd12600850cd9b59f67d9b35eee140c4fd629669cb189dac1",
  "routes": [
   "GET /api/ai/procedures AiTaskController::procedures",
   "GET /api/bib/{id}/pdf BibController::pdf",
@@ -260,7 +260,7 @@
   "FactBasis::resolve": "c033777467e97896ca0d74211027e6179316e152e1e1cce26d4d311e75cf6b07",
   "FactBasis::sourceVerdict": "a0b9871825b3fa960bbedaae13f8c383e9d9e116199029a3139d1e1a0bd538db",
   "FactController::COMMENT_ROLES": "c626a168b7cdbeb59259fd7889b12a5f12cb48e38ad838c7725616f6f9860e39",
-  "FactController::COMPACT": "4058ec82fb1802febc48c8b70a6389278fada4f61fa5869270b032ba6db64d21",
+  "FactController::COMPACT": "0646299fa6dc60081d707ddb0ef42d0bf2b70cf9d90c58601df19a7dbf3e85ea",
   "FactController::COVERS": "2ad77b5412ab8dc32ed9ddca3ce0976736c57a14c9b76c7d94de7007716ec660",
   "FactController::ESTABLISHED": "0698b2c4e4d033d9be4103e1798d558ce85b1d7345586b6c70c0d720dabf3ee4",
   "FactController::EXCERPT": "0ed9abffc630a0abb283f23efdd12c7c6f746f83aefc29301f4c7cc304b327a4",
@@ -289,7 +289,7 @@
   "FactController::deps": "97e51f43dde1619bc50a0b989a4f285a973b4a4762c6653675f40e9ead74cf68",
   "FactController::doubtsStatement": "8905f899253ae7fc0fba941e9c66749cd7cb699edb5d13437a38df2f123e6f84",
   "FactController::fromDanus": "db2168a954fe33348139699071eff83059e44ad510715b6555be38262039e9b4",
-  "FactController::graph": "8b4256481742d2401d5b83cbd19df8731e1b867c887832a0c665d75de7d3251f",
+  "FactController::graph": "33bd1f10d8a9dff6308cc0a3d7d9d5a5b835cb7b4d43d2ddda036ffa41fbdb63",
   "FactController::graphFact": "901ba9d2fca8dddd22883cec08918fefa5abc57f926d1c4a932d2770ce813027",
   "FactController::ingest": "268a96c4f79d7663ec862e57fc97f3050dfad203c876dc3e64989e81658495da",
   "FactController::insertRevision": "5a17583632810f08f01acc16fcedb0e07ff6ac22be57ce35af3c2fd5fbafcf16",
@@ -1193,6 +1193,17 @@
     "+NotationController::splitDefinitions",
     "+Sweeps::SYMBOLS_BATCH",
     "+Sweeps::symbolCandidates"
+   ]
+  },
+  {
+   "date": "2026-11-26",
+   "decision": "compatible",
+   "client_version": "1.20.0",
+   "min_version": "1.0.0",
+   "note": "The fact list gains worth_reading, an extra field.",
+   "changed": [
+    "FactController::COMPACT",
+    "FactController::graph"
    ]
   }
  ]

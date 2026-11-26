@@ -6,6 +6,7 @@ export const LARGE_GRAPH = 300;
 
 export const GRAPH_VIEWS = {
   key: { label: 'Key facts', hint: 'Starred facts only. Two are linked when one relies on the other, directly or through other facts.' },
+  reading: { label: 'Worth reading', hint: 'The facts marked worth reading: real progress, a key step, a surprising example. Two are linked when one relies on the other, directly or through other facts.' },
   around: { label: 'Around a fact', hint: 'The selected fact, what it relies on and what relies on it, up to a depth.' },
   all: { label: 'Everything', hint: 'Every fact. Zoom in to read them.' },
 };
