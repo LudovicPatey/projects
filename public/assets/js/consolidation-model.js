@@ -1,4 +1,5 @@
 // Consolidation proposals, without the interface: grouping, wording and topic filters, so that they can be tested.
+import { asMath } from './notation-model.js';
 
 export const SUGGESTION_KINDS = [
   { kind: 'same', title: 'Same result', help: 'Two facts state the same result. Merging keeps the first, with the sources, links, stars and proof of the other.' },
@@ -38,7 +39,7 @@ const NOTATION_VERBS = { adopt: 'Adopt', local: 'Keep local', reject: 'Set aside
 
 /** A notation decision in words: the symbol as mathematics, and its meaning when it is adopted. */
 export function notationText(d) {
-  const sym = '$' + (d?.symbol ?? '?') + '$';
+  const sym = d?.symbol ? asMath(d.symbol) : '?'; // words as text, formulas as math, as everywhere a symbol is shown
   const verb = NOTATION_VERBS[d?.action] ?? 'Change';
   return d?.action === 'adopt' && d?.meaning ? `${verb} ${sym}: ${d.meaning}` : `${verb} ${sym}`;
 }

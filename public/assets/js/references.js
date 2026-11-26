@@ -69,7 +69,7 @@ const VERBS = {
   created: 'added', updated: 'updated', status: 'changed the status of', comment: 'commented on', comment_edit: 'edited a comment on', revision: 'revised',
   review: 'reviewed', retracted: 'retracted', reinstated: 'reinstated', message: 'wrote in', answer: 'proposed an answer to', ratified: 'ratified an answer to',
   rejected: 'rejected an answer to', revoked: 'revoked an answer to', withdrawn: 'withdrew an answer to', answer_fact: 'changed the fact behind', link: 'linked an item to',
-  joined: 'joined', version: 'uploaded a new version of', restored: 'restored', lean: 'added a Lean proof to', proof: 'proposed a proof of', lean_check: 'checked the Lean proof of', new: 'started',
+  joined: 'added', version: 'uploaded a new version of', restored: 'restored', lean: 'added a Lean proof to', proof: 'proposed a proof of', lean_check: 'checked the Lean proof of', new: 'started',
 };
 
 export const activityVerb = (kind) => VERBS[kind] || 'updated';

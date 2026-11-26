@@ -991,7 +991,8 @@ final class AiTaskController
                 if (!isset($want[$k])) continue;
                 unset($want[$k]);
                 $ctx['symbols'][] = ['symbol' => $x['symbol'], 'spellings' => $x['spellings'], 'facts' => $x['facts'],
-                    'meanings' => array_map(fn($m) => ['meaning' => $m['meaning'], 'facts' => array_map($fact, array_slice($m['facts'], 0, 8))], $x['meanings']),
+                    // Numbered as the groups of equivalent wordings name them.
+                    'meanings' => array_map(fn($m, $i) => ['no' => $i + 1, 'meaning' => $m['meaning'], 'facts' => array_map($fact, array_slice($m['facts'], 0, 8))], $x['meanings'], array_keys($x['meanings'])),
                     'entry' => isset($proposed[$k]) ? $entryOf($proposed[$k]) : null];
             }
             foreach (array_keys($want) as $k) {

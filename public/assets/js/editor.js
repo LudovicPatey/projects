@@ -8,6 +8,7 @@ import { mentionMatches, mentionQuery } from './questions-model.js';
 import { askAiPrefix, offersAskAi } from './ai-model.js';
 import { notationMarker, trustMarks } from './notation-marks.js';
 import { paramGroups } from './notation-params.js';
+import { asMath } from './notation-model.js';
 import { linkFactRefs } from './fact-refs.js';
 
 const Embed = Quill.import('blots/embed');
@@ -234,7 +235,7 @@ function showNotation(target, entry) {
   const p = notationPop();
   p.innerHTML = '';
   const head = document.createElement('div'); head.className = 'nt-pop-head';
-  const sym = document.createElement('span'); sym.className = 'nt-pop-sym'; sym.textContent = `$${String(entry.symbol).replace(/^\$+|\$+$/g, '')}$`;
+  const sym = document.createElement('span'); sym.className = 'nt-pop-sym'; sym.textContent = asMath(entry.symbol); // words as text, formulas as math
   const from = document.createElement('span'); from.className = 'nt-pop-from'; from.textContent = { project: 'Project notation', paper: 'Notation of its paper' }[entry.source] || 'Defined in this fact';
   head.append(sym, from);
   const body = document.createElement('div'); body.className = 'nt-pop-body';

@@ -7,7 +7,14 @@ import { after, before, test } from 'node:test';
 import { startApp } from './harness.mjs';
 import { colorParams, inferParams, isFixed, paramsOf, relationPattern, trustParams } from '../public/assets/js/notation-params.js';
 import { notationMarker } from '../public/assets/js/notation-marks.js';
-import { actionEffects, entryBody, entryScope, parseParams, paramsText, sharedState } from '../public/assets/js/notation-model.js';
+import { actionEffects, asMath, colorMath, entryBody, entryScope, parseParams, paramsText, sharedState } from '../public/assets/js/notation-model.js';
+
+test('a symbol in words keeps its words as text, and only its parameters are colored math', () => {
+  const X = [{ name: 'X', type: 'sets' }];
+  assert.equal(colorMath(asMath('effectively immune relative to X'), X), 'effectively immune relative to ${\\htmlClass{oq-pm oq-pm-0}{X}}$');
+  assert.equal(colorMath(asMath('Y \\leq X'), BLOCKS), '$' + colorParams('Y \\leq X', BLOCKS) + '$', 'a formula is colored as before');
+  assert.equal(colorMath(asMath('\\mathrm{FIN}'), []), '$\\mathrm{FIN}$');
+});
 
 const ANN = '0000-0002-1825-0097';
 const BLOCKS = [{ name: 'Y', type: 'infinite block sequences' }, { name: 'X', type: 'infinite block sequences' }];

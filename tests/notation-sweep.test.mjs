@@ -154,8 +154,11 @@ test('the sweep groups the wordings of a symbol into equivalent ones, each point
   const claimP = () => app.call(key, 'POST', '/api/ai/tasks/claim', { client_name: 'c', ai_model: 'claude-opus-5-5', project_id: p, kinds: ['consolidate'], features: ['procedures', 'consolidate'], capabilities: [] });
   const t = (await claimP()).data.task;
   assert.match(t.recipe.instructions, /"classes" of mathematically equivalent wordings/);
-  const listed = t.context.symbols.find((x) => x.symbol === 'semigroup').meanings.map((m) => m.meaning);
-  const no = (re) => listed.findIndex((m) => re.test(m)) + 1;
+  const shown = t.context.symbols.find((x) => x.symbol === 'semigroup').meanings;
+  assert.deepEqual(shown.map((m) => m.no), [1, 2, 3], 'each wording comes with its number');
+  const no = (re) => shown.find((m) => re.test(m.meaning)).no;
+  // Two facts added before the answer, with one new wording: it now comes first in the list, and must not shift the numbers.
+  await app.call(key, 'POST', `/api/projects/${p}/facts/batch`, { format: 'native', ai_model: 'm', facts: [F('d', { semigroup: 'a monoid without unit' }), F('e', { semigroup: 'a monoid without unit' })] });
   const r = await app.call(key, 'POST', `/api/ai/tasks/${t.id}/answer`, { lease: t.lease, ai_model: 'claude-opus-5-5', answer: { summary: '', types: [], decisions: [
     { symbol: 'semigroup', action: 'same', entry: sg, project_symbol: null, meaning: 'Hirst\'s code', note: null, variants: [], params: [], fact: null, reason: 'The project writes it semigroup (βN).',
       classes: [{ meanings: [no(/U\+U/), no(/X-n/)], label: 'Hirst\'s code for a closed subsemigroup of $\\beta\\mathbb N$', entry: null, decided: true },
@@ -163,7 +166,9 @@ test('the sweep groups the wordings of a symbol into equivalent ones, each point
   ] } });
   assert.equal(r.status, 200, JSON.stringify(r.data));
   const after = await row();
-  assert.equal(after.classes.length, 2); assert.deepEqual(after.unclassified, []);
+  assert.equal(after.classes.length, 2);
+  assert.deepEqual(after.unclassified.map((i) => after.meanings[i].meaning), ['a monoid without unit'], 'the wording added since is not compared yet');
+  assert.deepEqual(after.classes[0].meanings.map((i) => after.meanings[i].meaning).sort(), shown.filter((m) => /U\+U|X-n/.test(m.meaning)).map((m) => m.meaning).sort(), 'the numbers named the wordings the AI saw');
   assert.equal(after.classes[0].entry.id, sg, 'the decided group is the entry the decision named');
   assert.equal(after.classes[0].meanings.length, 2); assert.equal(after.classes[1].entry, null);
   assert.equal(after.entry?.id, sg, 'the facts\' word is linked to the renamed entry, beside its clash');

@@ -87,3 +87,27 @@ test('a rewrite batch cut by its size limit carries on at once; one that took ev
   assert.ok(sizes.length >= 2, `several batches without waiting an hour: ${sizes}`);
   assert.equal(sizes.reduce((a, b) => a + b, 0), (await app.call(ann, 'GET', `/api/projects/${pid}/notation`)).data.progress.facts, 'every fact taken');
 });
+
+test('a proof is never put in the batch of the model that wrote it: it waits for another model', async () => {
+  const p = (await app.call(ann, 'POST', '/api/projects', { title: 'Own proofs', question_html: '<p>Q</p>' })).data.id;
+  const r = await app.call(key, 'POST', `/api/projects/${p}/facts/batch`, { format: 'native', ai_model: 'claude-sonnet-5-5', facts: [
+    { ref: 'own', title: 'own', kind: 'lemma', labels: ['conclusion'], method: 'deduced', statement_text: 'S.', proof_text: 'P.' }] });
+  const fid = r.data.created[0].id;
+  const claimAs = (model) => app.call(key, 'POST', '/api/ai/tasks/claim', { client_name: 'c', ai_model: model, project_id: p, kinds: ['proof_review'], features: ['procedures', 'review'], capabilities: [] });
+  assert.equal((await claimAs('claude-sonnet-5-5')).data.task, null, 'its own proof is not offered to the model that wrote it');
+  const t = (await claimAs('claude-opus-5-5')).data.task;
+  assert.ok(t, 'another model still gets it'); assert.deepEqual(t.context.facts.map((f) => f.fact_id), [fid]);
+});
+
+test('a source check batch keeps its other results when one of them was deleted meanwhile', async () => {
+  const p = (await app.call(ann, 'POST', '/api/projects', { title: 'Deleted', question_html: '<p>Q</p>' })).data.id;
+  const bib = (await app.call(ann, 'POST', `/api/projects/${p}/bib`, { fields: { title: 'A book', author: 'X, Y.', year: '2000' }, cite_key: 'xy00' })).data.created[0];
+  const C = (ref) => ({ ref, title: ref, kind: 'theorem', labels: ['conclusion'], method: 'extracted', statement_text: `S ${ref}.`, proof_text: '', sources: [{ type: 'bib', id: bib, quote: 'Theorem', covers: 'statement' }] });
+  const made = (await app.call(key, 'POST', `/api/projects/${p}/facts/batch`, { format: 'native', ai_model: 'm', facts: [C('one'), C('two')] })).data.created;
+  const t = (await app.call(key, 'POST', '/api/ai/tasks/claim', { client_name: 'c', ai_model: 'claude-opus-5-5', project_id: p, kinds: ['source_check'], features: ['procedures'], capabilities: ['web_search', 'document'] })).data.task;
+  assert.equal(t.context.cited_results.length, 2);
+  assert.equal((await app.call(ann, 'DELETE', `/api/facts/${made[1].id}`)).status, 200);
+  const done = await app.call(key, 'POST', `/api/ai/tasks/${t.id}/answer`, { lease: t.lease, ai_model: 'claude-opus-5-5', answer: { summary: '', checks: made.map((f) => ({ fact_id: f.id, verdict: 'confirmed', where: 'Theorem 1', explanation: 'Stated.' })) } });
+  assert.equal(done.status, 200, JSON.stringify(done.data));
+  assert.match(done.data.summary_text, /^1 cited result checked/);
+});

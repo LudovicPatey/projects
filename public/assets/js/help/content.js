@@ -278,6 +278,7 @@ export const ARTICLES = [
       h('Add a researcher (owners)'),
       steps('Open [People](app:members).', 'Enter their **ORCID iD** or ORCID link.', 'Choose **Member** or **Owner**, and click **Add**.'),
       p('They do not need to have signed in before. Their public ORCID name is fetched automatically.'),
+      p('Each card says when the researcher became a member and whether they use the platform: **added 2 d ago, has not signed in yet** until their first sign-in, then **added 2 d ago, first signed in today**. **Joined** means they had an account before, or created the project. For someone who signed in before 26 November 2026, only that they did is known, so the card says **added**. The overview reports **Ann added Bob** when an owner adds a member, or a member connects an AI agent.'),
       h('What each role can do'),
       table(['Action', 'Member', 'Owner'],
         ['Read the project, write, upload, review', 'Yes', 'Yes'],

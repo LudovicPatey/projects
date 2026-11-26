@@ -61,5 +61,27 @@
     const r = m.getBoundingClientRect();
     if (r.right > vw + 1 || r.left < -1) problems.push(`menu outside the window: ${name(m)}`);
   }
+  // Mathematics: what KaTeX could not read, a dollar left in the text, and words set as one formula in italics.
+  const source = (k) => (k.querySelector('annotation')?.textContent || k.getAttribute('title') || k.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 60);
+  for (const k of document.querySelectorAll('.katex-error')) if (visible(k)) problems.push(`formula KaTeX cannot read: "${source(k)}"`);
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    const el = n.parentElement;
+    if (!el || !/\$[\\A-Za-z{(]|[A-Za-z})]\$/.test(n.textContent)) continue;
+    if (el.closest('code, pre, kbd, textarea, input, script, style, .katex, [contenteditable="true"], .sr-only') || !visible(el)) continue;
+    problems.push(`dollar left in the text: ${name(el)} "${n.textContent.trim().slice(0, 60)}"`);
+  }
+  // KaTeX sets each italic letter in its own span: four or more in a row are a word written as a formula, "effectively" in italics.
+  for (const k of document.querySelectorAll('.katex-html')) {
+    if (!visible(k)) continue;
+    let run = 0; let worst = 0;
+    for (const s of k.querySelectorAll('span')) {
+      const letter = s.classList.contains('mord') && s.classList.contains('mathnormal') && /^[A-Za-z]$/.test(s.textContent);
+      if (!letter) { if (s.children.length === 0 && s.textContent.trim()) run = 0; continue; }
+      run = s.previousElementSibling && s.previousElementSibling.classList.contains('mathnormal') ? run + 1 : 1;
+      worst = Math.max(worst, run);
+    }
+    if (worst >= 4) problems.push(`words set as a formula in italics: "${source(k.closest('.katex') || k)}"`);
+  }
   return [...new Set(problems)];
 })();

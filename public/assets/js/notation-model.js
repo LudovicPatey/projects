@@ -1,5 +1,5 @@
 // The project's notation: labels and rules of the interface, without dependency, so that they can be unit tested.
-import { paramGroups, paramsOf, untyped } from './notation-params.js';
+import { colorParams, paramGroups, paramsOf, untyped } from './notation-params.js';
 
 /** Where the facts stand against the agreed notation. */
 export const NOTATION_SEGMENTS = [['current', 'In project notation', '#0d9488'], ['unchanged', 'Already in it', '#5eead4'], ['stale', 'Notation changed since', '#d97706'], ['unfaithful', 'Meaning changed', '#b42318'], ['none', 'Not yet', '#98a2b3']];
@@ -65,6 +65,14 @@ export function asMath(symbol) {
   const m = s.match(/^(.*\S)\s+\(([^()]*[A-Za-z]{2,}[^()]*)\)$/);
   if (m && !/[\\^_{}]/.test(m[2])) return `${piece(m[1])} (${m[2]})`;
   return piece(s);
+}
+
+/**
+ * The symbol as asMath writes it, words as text and formulas as math, with the parameters colored inside each formula:
+ * "effectively immune relative to X" keeps its words, and only X is colored.
+ */
+export function colorMath(text, params) {
+  return String(text || '').split('$').map((x, i) => (i % 2 && x.trim() ? colorParams(x, params) : x)).join('$');
 }
 
 /** Instances of one general notion, and genuinely different meanings that sources give the symbol. */

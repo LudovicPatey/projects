@@ -147,8 +147,9 @@ final class Sweeps
             $mine = array_map('intval', array_column(Db::all('SELECT id FROM fact_rephrasings WHERE fact_id = ?', [$fid]), 'id'));
             if (array_intersect($mine, self::checkCandidates($pid))) $out[] = 'check';
         }
-        foreach (self::sourceCandidates($pid) as $group) if (in_array($fid, array_column($group, 0), true)) { $out[] = 'source'; break; }
-        if (in_array($fid, self::reviewCandidates($pid), true)) $out[] = 'review';
+        $graph = FactController::graph($pid); // read once: the project's graph is the costly part of this page
+        foreach (self::sourceCandidates($pid, $graph) as $group) if (in_array($fid, array_column($group, 0), true)) { $out[] = 'source'; break; }
+        if (in_array($fid, self::reviewCandidates($pid, $graph), true)) $out[] = 'review';
         return array_map(fn($s) => ['sweep' => $s, 'open' => self::open($pid, $s) !== null], $out);
     }
 
@@ -182,14 +183,14 @@ final class Sweeps
      * Proved facts whose current revision nobody reviewed, person or AI, and that no review sweep read yet: those many facts rely on
      * first, then the facts worth reading, then the others. @return list<int> fact ids
      */
-    public static function reviewCandidates(int $pid): array
+    public static function reviewCandidates(int $pid, ?array $graph = null): array
     {
         if (!Config::get('sweeps.review', true)) return [];
         $tried = self::tried($pid, 'proof_review', null);
         $reviewed = [];
         foreach (Db::all('SELECT DISTINCT v.fact_id FROM fact_reviews v JOIN facts f ON f.id = v.fact_id AND v.revision_no = f.current_revision WHERE f.project_id = ?', [$pid]) as $v) $reviewed[(int)$v['fact_id']] = true;
         $out = [];
-        foreach (FactController::graph($pid)['facts'] as $f) {
+        foreach (($graph ?? FactController::graph($pid))['facts'] as $f) {
             $key = (int)$f['id'] . ':' . (int)$f['current_revision'];
             if ($f['basis'] !== 'proved' || $f['status'] !== 'unchecked' || $f['retracted_at'] !== null || isset($reviewed[(int)$f['id']]) || isset($tried[$key])) continue;
             $out[] = [(int)$f['id'], count($f['dependents']) * 2 + (!empty($f['worth_reading']) ? 5 : 0)];
@@ -261,7 +262,7 @@ final class Sweeps
      * last check had no text of its source and could not find or read it is checked once more, when its source can now be read.
      * @return array<string, list<array{0: int, 1: int}>>
      */
-    public static function sourceCandidates(int $pid): array
+    public static function sourceCandidates(int $pid, ?array $graph = null): array
     {
         $tried = self::tried($pid, 'source_check', null);
         $blind = [];
@@ -275,7 +276,7 @@ final class Sweeps
             if ($n === 1 && AiTaskController::readableSource((int)explode(':', $k)[0])) unset($tried[$k]); // once only
         }
         $groups = [];
-        foreach (FactController::graph($pid)['facts'] as $f) {
+        foreach (($graph ?? FactController::graph($pid))['facts'] as $f) {
             if ($f['basis'] !== 'cited' || $f['status'] !== 'unchecked' || $f['retracted_at'] !== null) continue;
             $rev = (int)$f['current_revision'];
             if (isset($tried[$f['id'] . ':' . $rev])) continue;
@@ -343,26 +344,43 @@ final class Sweeps
             }
             $snap = ['items' => $batch, 'full' => $full];
         } elseif ($t['kind'] === 'consolidate') {
-            $symbols = array_slice(self::symbolCandidates($pid), 0, self::SYMBOLS_BATCH);
-            $types = array_slice(self::typeCandidates($pid), 0, self::TYPES_BATCH);
+            $allSymbols = self::symbolCandidates($pid); $allTypes = self::typeCandidates($pid);
+            $symbols = array_slice($allSymbols, 0, self::SYMBOLS_BATCH);
+            $types = array_slice($allTypes, 0, self::TYPES_BATCH);
             $batch = array_merge($symbols, $types);
-            $snap = ['symbols' => $symbols, 'types' => $types, 'grouping' => true];
+            // The wordings of each symbol as the AI sees them, numbered from 1: its groups name them by number, and a fact added
+            // before the answer must not shift them.
+            $wordings = [];
+            $mine = array_flip($symbols);
+            foreach (NotationController::shared($pid, 2, 1000) as $x) {
+                $k = NotationController::notionKey($x['symbol']);
+                if (isset($mine[$k])) $wordings[$k] = array_column($x['meanings'], 'key');
+            }
+            $full = count($allSymbols) > self::SYMBOLS_BATCH || count($allTypes) > self::TYPES_BATCH;
+            $snap = ['symbols' => $symbols, 'types' => $types, 'grouping' => true, 'wordings' => $wordings, 'full' => $full];
         } elseif ($t['kind'] === 'proof_review') {
             $batch = []; $chars = 0; $full = false;
+            // A model never reviews what it wrote: those proofs wait for a client running another model, instead of being refused
+            // and then counted as read.
+            $model = mb_strtolower(trim((string)($t['ai_model'] ?? '')));
             foreach (self::reviewCandidates($pid) as $fid) {
-                $rev = (int)Db::value('SELECT current_revision FROM facts WHERE id = ?', [$fid]);
+                $f = Db::one('SELECT current_revision, ai_model FROM facts WHERE id = ?', [$fid]);
+                if ($model !== '' && mb_strtolower(trim((string)$f['ai_model'])) === $model) continue;
+                $rev = (int)$f['current_revision'];
                 $size = (int)Db::value('SELECT LENGTH(statement_html) + LENGTH(COALESCE(proof_html, \'\')) FROM fact_revisions WHERE fact_id = ? AND revision_no = ?', [$fid, $rev]);
                 if ($batch && ($chars + $size > self::REVIEW_CHARS || count($batch) >= self::REVIEW_BATCH)) { $full = true; break; }
                 $batch[] = [$fid, $rev]; $chars += $size;
             }
             $snap = ['facts' => $batch, 'full' => $full];
         } elseif ($t['kind'] === 'second_reading') {
-            $batch = array_slice(self::secondCandidates($pid), 0, self::SECOND_BATCH);
-            $snap = ['items' => $batch];
+            $all = self::secondCandidates($pid);
+            $batch = array_slice($all, 0, self::SECOND_BATCH);
+            $snap = ['items' => $batch, 'full' => count($all) > self::SECOND_BATCH];
         } else {
+            // One source at a time, so that the client reads it once. Other sources, or more of this one, carry on at once.
             $groups = self::sourceCandidates($pid);
             $batch = array_slice((array)(reset($groups) ?: []), 0, self::SOURCE_BATCH);
-            $snap = ['facts' => $batch];
+            $snap = ['facts' => $batch, 'full' => array_sum(array_map('count', $groups)) > count($batch)];
         }
         if (!$batch) {
             $now = Db::now();

@@ -43,6 +43,10 @@ Assume a newcomer who must understand each screen from what it says, without the
 ## 4. Mathematics reads as mathematics
 
 - Formulas are rendered with KaTeX, everywhere text can contain them, types and notes included (`math-text`); raw `$` never shows.
+- A symbol is drawn one way everywhere: `asMath` (words as text, formulas as math), and `colorMath(asMath(symbol), params)` where its
+  parameters are colored. Never wrap a symbol in dollars by hand.
+- `scripts/visual-audit.js` reports formulas KaTeX cannot read, dollars left in the text, and words set as a formula in italics. A change
+  to how symbols or formulas are drawn is checked against every symbol of a real project with its types, not against a few examples.
 - Words are text and formulas are math (`asMath`): "C large for \mathcal D" renders "large for" as words.
 - Notation parameters are colored, with their type on hover; a letter that only names a symbol (the c of \le_c) is not a parameter.
 

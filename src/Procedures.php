@@ -192,16 +192,19 @@ yourself, so that people need not:
   whose meaning clashes with an entry of the project (such as Feferman's $(\mu)$ beside the project's $\mu(n)$). Give its "meaning" in
   those facts; the facts of that paper then read it with that meaning.
 - "same": it is another spelling of the entry "entry" (an id of "notation"), with the same meaning. A different meaning is never "same".
-  An entry the project writes otherwise covers it too: Towsner's "semigroup" is "same" as the entry "semigroup (\beta\mathbb N)", even when
-  that entry lists the algebraic "semigroup" as a clash.
+  An entry the project writes with a qualifier covers the plain word too: a source's "semigroup", meaning a code for a closed
+  subsemigroup of $\beta\mathbb N$, is "same" as an entry "semigroup (\beta\mathbb N)", even when that entry lists the algebraic
+  "semigroup" as a clash.
 - "reject" (only for a proposed "entry"): the project's agreed symbols already express it, such as $\mathrm{FIN}\cup\{\emptyset\}$ for all
   finite sets once $\mathrm{FIN}$ is agreed, or it is not notation at all. Facts then write that expression rather than a symbol of its own.
 Group the "meanings" of each symbol into "classes" of mathematically equivalent wordings: one wording that unfolds another, or says
 the same with other words or letters, is in the same class; wordings that define different objects are in different classes. Each class
-gives "meanings", the numbers of its wordings in the list (from 1), every wording in exactly one class; "label", that meaning in a few
+gives "meanings", the "no" of its wordings, every wording in exactly one class; "label", that meaning in a few
 words, such as "Hirst's code for a closed subsemigroup of $\beta\mathbb N$"; "entry", the id in "notation" of the entry this meaning is, or
 null; and "decided", true for the class this decision adopts, keeps local or records as "same". People see the classes, so that
-they know which wordings agree and which differ. A symbol with one wording has one class.
+they know which wordings agree and which differ. A symbol with one wording has one class. When the wordings fall into several classes,
+the decision settles one of them, usually the one most facts use, marked "decided": give each other class the "entry" that already
+has its meaning, if one does, and record a meaning that matters but has no entry as a "clash" variant of the decision.
 A notion the agreed symbols express directly needs no entry: never adopt or keep local a mere combination of them.
 Give "fact": the id of a fact that defines it, from its meanings or its entry. Fields that do not apply are null or empty. In "reason", one sentence for
 the members. Answer in "decisions", one entry per symbol, with its "symbol" as listed. Every choice can be undone.
@@ -427,8 +430,9 @@ TXT,
                     if (!isset($mine[$k]) || isset($seen[$k])) continue;
                     $seen[$k] = true;
                     // Which wordings agree and which differ, over the wordings the sweep was shown, for people to see.
+                    // Numbers name the wordings as the task showed them, recorded when it was taken.
                     if (!empty($d['classes'])) {
-                        $wordings ??= array_column(array_map(fn($x) => [NotationController::notionKey($x['symbol']), $x['meanings']], NotationController::shared($pid, 2, 1000)), 1, 0);
+                        $wordings ??= array_map(fn($keys) => array_map(fn($key) => ['key' => (string)$key], (array)$keys), json_decode((string)$t['snapshot_json'], true)['wordings'] ?? []);
                         if (isset($wordings[$k])) NotationController::recordClasses($pid, $k, $wordings[$k], $d['classes'], $d['entry'] ? (int)$d['entry'] : null, (string)$model, (int)$t['id']);
                     }
                     if ($d['action'] === 'same') { if ($d['entry'] && NotationController::addSpelling($pid, (int)$d['entry'], (string)$d['symbol'], (string)($d['meaning'] ?? ''), (string)$d['reason'])) $same++; continue; }
@@ -492,10 +496,12 @@ TXT,
             case 'source_check_batch':
                 $ids = []; $by = ['confirmed' => 0, 'differs' => 0, 'not_found' => 0, 'unreadable' => 0];
                 $mine = array_flip(AiTaskController::batchFacts($t));
+                $had = AiTaskController::sourceCheckDocument($t) ? 1 : 0; // the batch had the text of its source, or not
                 foreach ($answer['checks'] as $c) {
                     $fid = (int)$c['fact_id'];
                     if (!isset($mine[$fid]) || in_array($fid, $ids, true)) continue; // only the results of this batch, once each
-                    self::recordSourceCheck(['source_id' => $fid] + $t, $c + ['summary' => ''], $model, $seconds);
+                    try { self::recordSourceCheck(['source_id' => $fid, 'had_source' => $had] + $t, $c + ['summary' => ''], $model, $seconds); }
+                    catch (HttpError $e) { if ($e->status !== 409) throw $e; continue; } // deleted meanwhile: the others still count
                     $ids[] = $fid; $by[$c['verdict']]++;
                 }
                 $n = count($ids);
@@ -517,7 +523,7 @@ TXT,
             'body_html' => $text !== '' ? Sanitizer::clean(Sanitizer::textToHtml($text, (int)$f['project_id']))['html'] : null, 'ai_model' => $model,
             'checked_by' => Auth::id(), 'task_id' => (int)$t['id'], 'created_at' => Db::now(),
             // Whether the AI had the text of the source: a check made blind is made again once the source can be read.
-            'had_source' => isset($t['kind']) && AiTaskController::sourceCheckDocument($t) ? 1 : 0]);
+            'had_source' => $t['had_source'] ?? (isset($t['kind']) && AiTaskController::sourceCheckDocument($t) ? 1 : 0)]);
         Activity::touch((int)$f['project_id'], 'fact', $fid, 'updated');
         $said = ['confirmed' => 'The source states it', 'differs' => 'The source states something different', 'not_found' => 'The result was not found in the source', 'unreadable' => 'The source could not be read'][$answer['verdict']];
         return ['summary' => trim("$said. " . trim((string)$answer['summary'])), 'fact_ids' => [$fid]];

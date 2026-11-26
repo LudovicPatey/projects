@@ -87,8 +87,10 @@ final class AuditController
     public static function notation(Request $r): never
     {
         $pid = self::key();
-        $entries = Db::all("SELECT id, symbol, status, meaning_html, note_html, variants_json, definition_fact_id, auto_suggestion_id, decided_at FROM notations WHERE project_id = ? ORDER BY symbol_key", [$pid]);
+        $entries = Db::all("SELECT id, symbol, status, meaning_html, note_html, variants_json, params_json, definition_fact_id, auto_suggestion_id, decided_at FROM notations WHERE project_id = ? ORDER BY symbol_key", [$pid]);
         Response::json(['entries' => array_map(fn($n) => ['id' => (int)$n['id'], 'symbol' => $n['symbol'], 'status' => $n['status'], 'meaning' => \App\Sanitizer::toText((string)$n['meaning_html']),
+            // Its parameters with their types, as the page draws them, and the letters typed "not a parameter".
+            'params' => NotationController::paramsOf($n), 'fixed' => NotationController::fixedOf($n),
             'note' => $n['note_html'] ? \App\Sanitizer::toText((string)$n['note_html']) : null, 'variants' => json_decode((string)$n['variants_json'], true) ?: [],
             'definition_fact_id' => $n['definition_fact_id'] ? (int)$n['definition_fact_id'] : null,
             // Who settled it: nobody yet, the consolidation on its own, or a person.

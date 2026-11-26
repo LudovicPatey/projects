@@ -3,7 +3,7 @@ import { link, attempt, toast } from '../store.js';
 import { timeAgo } from '../util.js';
 import { Kpi, StackBar } from '../dashboard.js';
 import { clipMath } from '../fact-format.js';
-import { NOTATION_SEGMENTS, actionEffects, asMath, entryBody, entryError, entryScope, paramsText, sharedDraft, sharedState, wordingGroups, splitVariants, toRewrite } from '../notation-model.js';
+import { NOTATION_SEGMENTS, actionEffects, asMath, colorMath, entryBody, entryError, entryScope, paramsText, sharedDraft, sharedState, wordingGroups, splitVariants, toRewrite } from '../notation-model.js';
 import { colorParams, inferParams, paramGroups, trustParams } from '../notation-params.js';
 
 /** A symbol with its parameters in color: pointing at one says what type of object it stands for. */
@@ -18,7 +18,7 @@ const NotationSymbol = {
       const el = this.$refs.el;
       if (!el) return;
       const params = this.params || [];
-      const text = params.length ? `$${colorParams(this.symbol, params)}$` : asMath(this.symbol);
+      const text = params.length ? colorMath(asMath(this.symbol), params) : asMath(this.symbol);
       el.textContent = text;
       if (!window.renderMathInElement) { this.retry = setTimeout(() => this.paint(), 400); return; } // KaTeX is loaded with defer
       window.renderMathInElement(el, { delimiters: [{ left: '$', right: '$', display: false }], throwOnError: false, trust: trustParams });

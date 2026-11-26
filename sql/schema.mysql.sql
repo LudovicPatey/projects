@@ -11,8 +11,9 @@ CREATE TABLE IF NOT EXISTS users (
   kind VARCHAR(10) NOT NULL DEFAULT 'human',  -- 'human' | 'agent' (AI agent using an API token)
   ai_model VARCHAR(120) NULL,                 -- for agents: the AI system behind it
   tours_seen VARCHAR(60) NULL,                -- first-use tutorials already seen
-  created_at DATETIME NOT NULL,
-  last_login_at DATETIME NULL
+  created_at DATETIME NOT NULL,               -- when the account was made: at the first sign-in, or when an owner added the researcher
+  last_login_at DATETIME NULL,
+  first_login_at DATETIME NULL                -- the first sign-in (recorded since 2026-11-26)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS projects (

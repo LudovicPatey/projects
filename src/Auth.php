@@ -199,9 +199,11 @@ final class Auth
         $u = Db::one("SELECT id, name FROM users WHERE orcid = ? AND kind = 'human'", [$orcid]);
         if ($u) {
             Db::update('users', ['last_login_at' => $now] + ($name ? ['name' => $name] : []), 'id = :id', ['id' => $u['id']]);
+            // The first sign-in, kept: an account an owner created by adding the researcher is used only from then on.
+            Db::run('UPDATE users SET first_login_at = ? WHERE id = ? AND first_login_at IS NULL', [$now, $u['id']]);
             $id = (int)$u['id'];
         } else {
-            $id = Db::insert('users', ['orcid' => $orcid, 'name' => $name ?: $orcid, 'created_at' => $now, 'last_login_at' => $now]);
+            $id = Db::insert('users', ['orcid' => $orcid, 'name' => $name ?: $orcid, 'created_at' => $now, 'last_login_at' => $now, 'first_login_at' => $now]);
         }
         session_regenerate_id(true);
         $_SESSION['uid'] = $id;

@@ -81,7 +81,7 @@ final class ProjectController
     public static function members(int $projectId): array
     {
         return Db::all(
-            'SELECT u.id, u.name, u.orcid, u.affiliation, u.kind, u.ai_model, pm.role, pm.joined_at,
+            'SELECT u.id, u.name, u.orcid, u.affiliation, u.kind, u.ai_model, pm.role, pm.joined_at, u.first_login_at,
                     CASE WHEN u.last_login_at IS NULL THEN 0 ELSE 1 END AS has_logged_in
              FROM project_members pm JOIN users u ON u.id = pm.user_id
              WHERE pm.project_id = ? ORDER BY u.name', [$projectId]);

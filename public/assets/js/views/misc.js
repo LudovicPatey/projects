@@ -1,7 +1,7 @@
 import { api } from '../api.js';
 import { explain } from '../action-help.js';
 import { store, go, link, attempt, toast, refreshProject, refreshMentionables, refreshCounters, markRead, markAllRead } from '../store.js';
-import { timeAgo, fullDate } from '../util.js';
+import { timeAgo, fullDate, memberSince } from '../util.js';
 import { aiTimeSummary, computeTime } from '../ai-model.js';
 import { FACT_SEGMENTS, PROOF_SEGMENTS, QUESTION_SEGMENTS, STRATEGY_SEGMENTS, dashboardComponents } from '../dashboard.js';
 
@@ -202,7 +202,7 @@ export const MembersView = {
         <dl class="contrib"><div><dd>{{ c(m).questions }}</dd><dt>Questions</dt></div><div><dd>{{ c(m).strategies }}</dd><dt>Strategies</dt></div><div><dd>{{ c(m).facts }}</dd><dt>Facts</dt></div><div><dd>{{ c(m).reviews }}</dd><dt>Reviews</dt></div><div><dd>{{ c(m).files }}</dd><dt>Files</dt></div></dl>
         <footer><select v-if="isOwner" class="sm" :value="m.role" :aria-label="'Role of ' + m.name" @change="setRole(m, $event.target.value)"><option value="member">Member</option><option value="owner">Owner</option></select>
           <span v-else class="pill" :class="m.role === 'owner' ? 't-info' : 't-neutral'">{{ m.role === 'owner' ? 'Owner' : 'Member' }}</span>
-          <span class="muted small">{{ m.has_logged_in ? 'joined ' + timeAgo(m.joined_at) : 'has not signed in yet' }}</span><span class="grow"></span>
+          <span class="muted small" :title="m.joined_at ? 'Member since ' + fullDate(m.joined_at) : ''">{{ memberSince(m) }}</span><span class="grow"></span>
           <button v-if="isOwner && m.id !== me" class="btn sm" :title="explain('member.remove')" @click="removeM(m)">Remove</button><button v-if="m.id === me" class="btn sm" :title="explain('member.leave')" @click="removeM(m)">Leave</button></footer>
       </article>
     </div>
@@ -238,7 +238,7 @@ export const MembersView = {
     </modal>
   </div>`,
   methods: {
-    timeAgo,
+    timeAgo, fullDate, memberSince,
     c(m) { return this.contrib[m.id] || { questions: 0, strategies: 0, facts: 0, reviews: 0, files: 0 }; },
     async loadContrib() { try { this.contrib = (await api.get(`api/projects/${this.p.id}/dashboard`)).people; } catch { this.contrib = {}; } },
     async loadAgents() {

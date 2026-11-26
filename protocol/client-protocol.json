@@ -1,7 +1,7 @@
 {
  "min_version": "1.0.0",
  "client_version": "1.20.0",
- "fingerprint": "a580dd0ce84a3031fa35c7827c1395bd161e62d5436fc42d4dd69a44eafef032",
+ "fingerprint": "e3f8a522adedfc98b49d7e0afab234340cd71ec84d7905374da0ee9f89335d42",
  "routes": [
   "GET /api/ai/procedures AiTaskController::procedures",
   "GET /api/bib/{id}/pdf BibController::pdf",
@@ -108,7 +108,7 @@
   "AiTaskController::complete": "14649896d16f0ea92e077574c6cc23551b603cc748c2c80b72f835af4af99161",
   "AiTaskController::computeSummary": "a8b57a62535a0c6a88dc28ae65cef5b9402f8f9780a255496fd4957e5d637912",
   "AiTaskController::computers": "077278c83c71633481710259b9c80d4b7d24714599d7ab525dd13b4d6c2fc7e5",
-  "AiTaskController::context": "f5853ad3859a3dbcc86cb5b1685f41f6423113b53cd32d677bb8d50f4e95b172",
+  "AiTaskController::context": "a3600d9c15f285ca317d4d48415f99731fcb8b4fe414cd0a74163c83c942f085",
   "AiTaskController::conversationBlocked": "f32758b0c318c285be52be714f866a1368c141c814a73ed17274f29767916a6e",
   "AiTaskController::conversationComments": "5e6966d4aa5a5837698eb6f45632134ce5f7512306728fcf630e3e229a582f33",
   "AiTaskController::conversationHash": "edee696dcf4e3013026a75be4b20f37b502f78bc1eed6128113f66a7d8af0276",
@@ -395,10 +395,10 @@
   "Notify::mentions": "87e12b1918ae6b9f84992280147d662e5dc4a5fff01d5418c4f370b99106da23",
   "Notify::send": "49a37c414cc94840696f77cfb49f21cc9ee4bfed2c9785504b4ab0825b71d7fe",
   "Procedures::CAPABILITIES": "4dce42bbadf21b695afcf974783a43c20da9c3e58306e6347d7f13d1e61f5e30",
-  "Procedures::INSTRUCTIONS": "b5106dd0ed49c197b4d0cd31648c7c34d3ca2cec1f9ae007ee93f632627585d6",
+  "Procedures::INSTRUCTIONS": "225f5738cf781a65aa0ff90cbf570c0cef02fcdd5ebe680997e0f1416f5136c5",
   "Procedures::REQUEST_NOTE": "24b0a276d5999286c5ee3500049fb549cab02c47210fcc847ff3fd0c652e1b6a",
   "Procedures::SCHEMAS": "b3c57915d7210b5c4cd4266f7922fac59019e5ca1b8c5ef279e27fc11729629a",
-  "Procedures::apply": "27fa792366af2f6f70ababc4a0d7be891da634e41bb706691b619c79fbe4ff77",
+  "Procedures::apply": "bd7e70fee803fb2fb21e44ca55eb57f57e5591f8f33ba51bc51f95acb19ec8a3",
   "Procedures::capabilities": "0cd0fd2bbacd82074d877b676192b2e11c0b127be10e089ebd2c1de62a47729e",
   "Procedures::defs": "c0089c4f2d7fa926a1e8e6e5b3591add612d802cf891aaf4d3df1184a9936c9b",
   "Procedures::has": "203dad6c3384cffbdd266434aa8286ddabbcbbed33b7a514a2bd53f87a93ef5d",
@@ -406,12 +406,12 @@
   "Procedures::list": "fd902cd70f726ee895c827bb507b356ee2644dd9562ecefcde4e2a761a336ec5",
   "Procedures::mismatch": "7ee1df1a1e0b5e79e6004e4dcd7d604f0a54750de92a8b3acca8577793a54702",
   "Procedures::recipe": "95c923776bf9f033d0aa14a95f4528fb4033effb2569940b303545adf05d0995",
-  "Procedures::recordSourceCheck": "db55dbf2b4cf117ca4ffdeb267e4f93a2cb42192c08d1f98da160dabdb8a29a8",
+  "Procedures::recordSourceCheck": "31cc4968acdba15d2ca7fcd3ad09cb779dae12c9a233ad2ba6a3fe114e40007e",
   "Procedures::variant": "63d2b798ce253327a8d0d7472961455fa896e7e93657eeedb2ae6f0adf4e7af0",
   "Procedures::version": "eb27a90773d55526e2d4aa6eb29d06d927ab1bdfb5954c3ef1a40b9a5f626583",
   "ProjectController::canCreate": "99b77ff6a28721afaf239e3383695c8357e9a929c17d2bb66d57386e200d0055",
   "ProjectController::list": "39d5f05d12079b783fe44daa964873315f7ada8bd6aaa76dadd3401aa5dec3e8",
-  "ProjectController::members": "95f943c282d8e525476a0bdda06f2f63c3046724b32b1f2df44d4305ea85ed53",
+  "ProjectController::members": "4ea940f516680546c7b4ad96931a960a8952e62b00b3585596bb00184113aa98",
   "Provenance::agentModel": "5db96fa4e573802a8531b0af6017329eefac8f26271e65547a087b78eb6c306f",
   "Provenance::milliseconds": "6ef2dd7baa41d9f361dc1ddb47b518073600b710292370662877e8f925ca1ea1",
   "Provenance::model": "c51e018c2458c7d85047a57210e76db3d0a8fe53f8c653c89406013f77afa929",
@@ -520,18 +520,18 @@
   "Sweeps::checkCandidates": "95a77eb900ca6a73f78ee5818053a4a3d55c42c3bd6223062fcc4dd0f7eff935",
   "Sweeps::due": "faed8e55b32b035878aa3e76530edb72573f75a187a2652506caea1dea8e052b",
   "Sweeps::open": "fe7c1966141916d76981b7f085c45eb78833d0d5438b9001388dfcbd63950883",
-  "Sweeps::pendingForFact": "ef75061198f00aca5145329397ab8de686a1bbd6870a82b99028a22afe225dfd",
+  "Sweeps::pendingForFact": "91d37ce68f69195dc12a90e5eca723a2aa800608a78005a8cb12f8dac6c0743b",
   "Sweeps::pendingItems": "2188dc62f5de49c18a219dc85cab268497b1e24875049a2879eacf430a085ddd",
   "Sweeps::rested": "084fbe29c1b6352592d57a85e5c08709d80e8a73d1a12ca6ca179cd4f4ef6656",
-  "Sweeps::reviewCandidates": "fc4e7d1142ce07213608e34a4f3a3c9c65fd36dd390fe0678fe3a2ec25c80917",
+  "Sweeps::reviewCandidates": "cd877249025c218489e2a7ff02bcdc7c719982507b1a70ce0da493164bffe933",
   "Sweeps::rewriteCandidates": "d9316dba3ccd9c1ef51e0067e864b80805a7ab7bb3470716587db8f6d71867af",
   "Sweeps::secondCandidates": "4dcda004bf9c1e05153373eb210cde77214d16ef5be7e12dacaee1a6a775947c",
   "Sweeps::setting": "367cd3fda6ea7563d64307aa088114375d74efe7b4330e53088eb74d33d070d3",
-  "Sweeps::sourceCandidates": "6c522bded3eaf090aee12413f06cb13e5e2adabb793548299549d5a907b59bcb",
+  "Sweeps::sourceCandidates": "4be0feac3d94e749cde173e8edd363057ebb52ccc55d0c9968afee379c433d2b",
   "Sweeps::stale": "04575d602277808fe90f6ba8c5f190b0c7179d43bcd1fcd24c18a745ba026769",
   "Sweeps::symbolCandidates": "2555222139beb041b1d1c807308777ed46a276d47c7ee46dc29e92af31c2a83b",
   "Sweeps::symbolStates": "36cacd34f5aa8107299862778a625d57106abf47c8dd1ce26f2cf77a4d756db8",
-  "Sweeps::take": "a82eb0ca22215e8d2f77a2ac7455613addd68ad3b3ffa20157a024835e399817",
+  "Sweeps::take": "52b20aac464deab5a00452a324d6abaf0d677971ee16308abded6bb21e201e3a",
   "Sweeps::tried": "b6abdf2613efb84a49ee4998a1ab796f14067c96a92928da04cd538a0009947c",
   "Sweeps::typeCandidates": "9ab42f8a496524c406252d22c849bda3940d7e47643c796bb0a697434a485e92"
  },
@@ -1397,6 +1397,33 @@
     "+NotationController::classesOf",
     "+NotationController::groupsFor",
     "+NotationController::recordClasses"
+   ]
+  },
+  {
+   "date": "2026-11-26",
+   "decision": "compatible",
+   "client_version": "1.20.0",
+   "min_version": "1.0.0",
+   "note": "Sweep recipes: symbols numbered by 'no' and mapped through the snapshot; proof reviews skip the claiming model's own proofs; full batches carry on; audit export gains params. Released clients only pass these through.",
+   "changed": [
+    "AiTaskController::context",
+    "Procedures::INSTRUCTIONS",
+    "Procedures::apply",
+    "Procedures::recordSourceCheck",
+    "Sweeps::pendingForFact",
+    "Sweeps::reviewCandidates",
+    "Sweeps::sourceCandidates",
+    "Sweeps::take"
+   ]
+  },
+  {
+   "date": "2026-11-26",
+   "decision": "compatible",
+   "client_version": "1.20.0",
+   "min_version": "1.0.0",
+   "note": "Members gain first_login_at; the client never reads members.",
+   "changed": [
+    "ProjectController::members"
    ]
   }
  ]

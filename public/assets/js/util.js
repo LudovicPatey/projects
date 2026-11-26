@@ -14,6 +14,21 @@ export function timeAgo(s) {
   return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
+/**
+ * When a researcher became a member, in words that say who did what: an owner adds a researcher by ORCID iD, and the researcher
+ * signs in later, or never. "joined" only when they signed in before or as they became a member (the creator of the project, or
+ * an account that already existed). The first sign-in is recorded since 2026-11-26: before, only that they signed in is known.
+ */
+export function memberSince(m) {
+  const added = parseDate(m?.joined_at);
+  if (!added) return '';
+  if (!m.has_logged_in) return `added ${timeAgo(m.joined_at)}, has not signed in yet`;
+  const first = parseDate(m.first_login_at);
+  if (!first) return `added ${timeAgo(m.joined_at)}`;
+  if (first.getTime() <= added.getTime() + 60000) return `joined ${timeAgo(m.joined_at)}`;
+  return `added ${timeAgo(m.joined_at)}, first signed in ${timeAgo(m.first_login_at)}`;
+}
+
 export function fullDate(s) {
   const d = parseDate(s);
   if (!d) return '';
