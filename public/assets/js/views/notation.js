@@ -3,7 +3,7 @@ import { link, attempt, toast } from '../store.js';
 import { timeAgo } from '../util.js';
 import { Kpi, StackBar } from '../dashboard.js';
 import { clipMath } from '../fact-format.js';
-import { NOTATION_SEGMENTS, actionEffects, asMath, entryBody, entryError, entryScope, paramsText, sharedDraft, splitVariants, toRewrite } from '../notation-model.js';
+import { NOTATION_SEGMENTS, actionEffects, asMath, entryBody, entryError, entryScope, paramsText, sharedDraft, sharedState, splitVariants, toRewrite } from '../notation-model.js';
 import { colorParams, inferParams, paramGroups, trustParams } from '../notation-params.js';
 
 /** A symbol with its parameters in color: pointing at one says what type of object it stands for. */
@@ -41,7 +41,7 @@ const entryEditor = `<div class="notation-edit">
   <label class="field"><span>Symbol (LaTeX)</span><input v-model="editing.symbol"></label>
   <label class="field"><span>Meaning</span><textarea v-model="editing.meaning" rows="3"></textarea></label>
   <label v-if="editing.params || inferParams(editing.symbol).length" class="field"><span>Parameters and their types</span><textarea v-model="editing.params" rows="2" placeholder="X, Y: infinite block sequences"></textarea></label>
-  <p v-if="editing.params !== undefined && inferParams(editing.symbol).length" class="muted small">One line per type. The entry then applies to these objects only: the same symbol between other objects keeps its own meaning.</p>
+  <p v-if="editing.params !== undefined && inferParams(editing.symbol).length" class="muted small">One line per type. The entry then applies to these objects only: the same symbol between other objects keeps its own meaning. A letter that is part of the name, such as the W of Weihrauch reducibility, gets the type "not a parameter".</p>
   <label class="field"><span>How sources differ</span><textarea v-model="editing.note" rows="2"></textarea></label>
   <p v-if="editing.agreed" class="muted small">Changing the symbol, its meaning or the types makes it a proposal again.</p>
   <div class="row-end"><button class="btn ghost sm" @click="editing = null">Cancel</button><button class="btn primary sm" @click="save">Save</button></div></div>`;
@@ -49,9 +49,10 @@ const entryEditor = `<div class="notation-edit">
 const entryView = (by, actions) => `<div class="notation-symbol"><notation-symbol :symbol="e.symbol" :params="e.params"/></div>
   <div class="notation-body"><rich-content :html="e.meaning_html"/>
     <div v-if="e.params?.length" class="notation-scope" :class="{untyped: !scopeOf(e).typed}"><span class="scope-label">Applies to</span>
-      <span v-for="g in paramGroups(e.params)" :key="g.type" class="pm-group"><template v-for="(p, j) in g.params" :key="p.name"><span class="pm-name" :class="'pm-' + (p.i % 4)"><math-text :text="'$' + p.name + '$'"/></span>{{ j < g.params.length - 1 ? ', ' : '' }}</template>: <span :class="{'pm-missing': !g.type}">{{ g.type || 'type not stated yet' }}</span></span>
-      <small v-if="!scopeOf(e).typed" class="scope-hint">The AI fills in the types when it reviews the notation, or say them with Edit. Until then, the meaning says what the entry applies to.</small>
+      <span v-for="g in paramGroups(e.params)" :key="g.type" class="pm-group"><template v-for="(p, j) in g.params" :key="p.name"><span class="pm-name" :class="'pm-' + (p.i % 4)"><math-text :text="'$' + p.name + '$'"/></span>{{ j < g.params.length - 1 ? ', ' : '' }}</template>: <math-text v-if="g.type" :text="g.type"/><span v-else class="pm-missing">type not stated yet</span></span>
+      <small v-if="!scopeOf(e).typed" class="scope-hint">{{ typesHint(e) }} Until then, the meaning says what the entry applies to.</small>
       <small v-else class="scope-hint">The same symbol between other objects keeps its own meaning.</small></div>
+    <ai-pending :items="e.ai_pending"/>
     <p v-if="e.note_text" class="notation-note"><icon name="lightbulb" :size="13"/> <math-text :text="e.note_text"/></p>
     <template v-for="g in [['instances', 'In particular settings'], ['clashes', 'Other meanings in sources']]" :key="g[0]"><div v-if="splitVariants(e.variants)[g[0]].length" class="notation-variants-group" :class="'g-' + g[0]"><small>{{ g[1] }}</small>
       <ul class="notation-variants"><li v-for="(v, i) in splitVariants(e.variants)[g[0]]" :key="i"><math-text :text="asMath(v.symbol)"/> <span><math-text :text="v.meaning"/></span><small v-if="v.where">{{ v.where }}</small></li></ul></div></template>
@@ -95,8 +96,14 @@ export const NotationPanel = {
         onKeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.currentTarget.click(); } } };
     },
     clipMath,
-    timeAgo, link, asMath, splitVariants, actionEffects, paramGroups, inferParams,
+    timeAgo, link, asMath, splitVariants, sharedState, actionEffects, paramGroups, inferParams,
     scopeOf(e) { return entryScope(e); },
+    /** Who gives the missing types: the notation review queued for it, the sweep that settles a proposal, or the members. */
+    typesHint(e) {
+      if (e.ai_pending?.length) return '';
+      if (e.status === 'proposed') return 'The notation sweep gives them when it settles this proposal, or say them with Edit.';
+      return 'A notation review read it without typing them: say them with Edit.';
+    },
     /** A button's tooltip: what it changes, and what it leaves as it is. */
     effect(e, action) { const r = actionEffects(e).find((x) => x.action === action); return r ? `${r.changes} Unchanged: ${r.keeps}`.replace(/\$/g, '') : ''; },
     async load() {
@@ -112,7 +119,7 @@ export const NotationPanel = {
       this.busy = false;
       if (r) { this.draft = { symbol: '', meaning: '', note: '', fact: '', params: '' }; await this.load(); }
     },
-    edit(e) { this.editing = { id: e.id, symbol: e.symbol, meaning: e.meaning_text, note: e.note_text, fact: e.definition_fact_id || '', params: paramsText(e.params || []), agreed: e.status === 'agreed' }; },
+    edit(e) { this.editing = { id: e.id, symbol: e.symbol, meaning: e.meaning_text, note: e.note_text, fact: e.definition_fact_id || '', params: paramsText(e.params || [], e.fixed || []), agreed: e.status === 'agreed' }; },
     async save() {
       const problem = entryError(this.editing);
       if (problem) return toast(problem, 'error');
@@ -170,7 +177,8 @@ export const NotationPanel = {
             <p class="muted small">Each fact defines the symbols that are not project symbols, so that it reads alone. These symbols are defined in several facts. An AI settles them on its own, thirty at a time, once the project is quiet: it makes a symbol global, keeps it local to its paper, or records it as another spelling of an entry. Its choices appear among the agreed and local entries, and under Consolidate, where any member undoes them.</p>
             <article v-for="s in d.shared.slice(0, 30)" :key="s.symbol" class="notation-shared">
               <div class="notation-symbol"><math-text :text="asMath(s.symbol)"/></div>
-              <div class="notation-body"><small v-if="s.spellings?.length > 1" class="muted">Written {{ s.spellings.length }} ways: <template v-for="(w, i) in s.spellings.slice(0, 5)" :key="w"><math-text :text="asMath(w)"/>{{ i < Math.min(s.spellings.length, 5) - 1 ? ', ' : '' }}</template></small><small class="muted">In {{ s.facts }} facts<template v-if="s.meanings.length > 1"> · defined in {{ s.meanings.length }} wordings<template v-if="!s.entry">, not compared yet</template></template><template v-if="s.entry?.clashes"> · <b class="warn-text">{{ s.entry.clashes }} other meaning{{ s.entry.clashes > 1 ? 's' : '' }} in sources</b></template></small>
+              <div class="notation-body"><small v-if="s.spellings?.length > 1" class="muted">Written {{ s.spellings.length }} ways: <template v-for="(w, i) in s.spellings.slice(0, 5)" :key="w"><math-text :text="asMath(w)"/>{{ i < Math.min(s.spellings.length, 5) - 1 ? ', ' : '' }}</template></small><small class="muted">In {{ s.facts }} facts<template v-if="s.meanings.length > 1"> · defined in {{ s.meanings.length }} wordings</template><template v-if="s.entry?.clashes"> · <b class="warn-text">{{ s.entry.clashes }} other meaning{{ s.entry.clashes > 1 ? 's' : '' }} in sources</b></template></small>
+                <small v-if="sharedState(s)" class="shared-state" :class="'s-' + s.sweep"><icon :name="s.sweep === 'left' ? 'users' : 'sparkles'" :size="12"/> {{ sharedState(s) }}</small>
                 <ul class="notation-variants"><li v-for="(m, i) in s.meanings" :key="i"><math-text :text="m.meaning"/> <small><template v-for="(id, j) in m.facts.slice(0, 4)" :key="id"><a :href="link('facts', id)">{{ labels.get(id) || '#' + id }}</a>{{ j < Math.min(m.facts.length, 4) - 1 ? ', ' : '' }}</template><template v-if="m.facts.length > 4"> and {{ m.facts.length - 4 }} more</template></small></li></ul></div>
               <div class="notation-actions"><span v-if="s.entry" class="pill t-neutral" :title="s.entry.status === 'derived' ? 'An expression in agreed project symbols: it needs no entry of its own' : ''">{{ s.entry.status === 'derived' ? 'from project symbols' : s.entry.status }}</span><button v-else class="btn sm" @click="fromShared(s)">Propose as global</button></div>
             </article>

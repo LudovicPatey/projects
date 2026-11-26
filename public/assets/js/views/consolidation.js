@@ -104,6 +104,7 @@ export const ConsolidationPanel = {
                 </div>
                 <blockquote v-if="s.kind === 'cite' && s.data?.statement" class="cons-new small"><span class="muted">New cited result, for {{ s.data.ref_label }}:</span> <math-text :text="s.data.statement"/></blockquote>
                 <p class="cons-reason small"><icon name="sparkles" :size="12"/> <math-text :text="s.reason_text"/> <ai-meta compact :model="s.ai_model" :user="s.ai_user_name" :ms="s.ai_generation_ms"/></p>
+                <ai-pending v-if="s.status === 'proposed'" :items="s.ai_pending" compact/>
                 <p v-if="s.second_verdict === 'unsure' || s.second_verdict === 'apply'" class="cons-reason cons-second small"><icon name="eye" :size="12"/> <b>Second reading{{ s.second_verdict === 'apply' ? ', agreed but could not apply it' : ', left to you' }}:</b> <math-text :text="s.second_reason || ''"/> <ai-meta compact :model="s.second_ai_model"/></p>
                 <p v-else-if="s.second_verdict === 'kept'" class="muted small">Brought back by a member after the second reading dropped it.</p>
               </div>

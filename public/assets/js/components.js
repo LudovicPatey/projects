@@ -1,7 +1,7 @@
 import { initials, colorFor, formatDuration } from './util.js';
 import { store, unreadCount, markAllRead, attempt } from './store.js';
 import { api } from './api.js';
-import { AI_KINDS, usageView } from './ai-model.js';
+import { AI_KINDS, pendingView, usageView } from './ai-model.js';
 
 let usageLoad = null;
 /** The person's AI requests of the last 24 hours, fetched once for every AI button of the page, again when asked. */
@@ -105,6 +105,17 @@ export const AiMeta = {
   template: `<span v-if="model" class="ai-meta" :class="{compact}" :title="title"><icon name="bot" :size="11"/> <b>{{ model }}</b><span v-if="user && !compact"> · for {{ user }}</span><span v-if="duration"> · {{ duration }}</span></span>`,
 };
 
+/**
+ * Says that an object is not in its final state: an AI pass is still due on it, which one, what it will do, and what a person should
+ * do meanwhile. `items`: [{sweep, open}] from the server.
+ */
+export const AiPending = {
+  props: { items: Array, compact: Boolean },
+  computed: { passes() { return pendingView(this.items); } },
+  template: `<div v-if="passes.length" class="ai-pending" :class="{compact}" role="note"><icon name="clock" :size="13"/><span><b>Not final yet: waiting for {{ passes.length > 1 ? 'AI passes' : 'an AI pass' }}.</b>
+    <template v-for="p in passes" :key="p.sweep"> <span class="ai-pending-pass" :title="p.text"><b>{{ p.name }}</b><template v-if="!compact">: {{ p.text }}</template></span></template></span></div>`,
+};
+
 /** The same AI request from anywhere it is relevant. It joins the queue shown on the AI page. */
 export const AiAction = {
   props: { kind: String, sourceType: String, sourceId: Number, label: String, disabled: Boolean, title: String },
@@ -191,6 +202,7 @@ export function registerCommon(app) {
   app.component('agent-tag', AgentTag);
   app.component('ai-meta', AiMeta);
   app.component('ai-action', AiAction);
+  app.component('ai-pending', AiPending);
   app.component('unread-badge', UnreadBadge);
   app.component('mark-all-read', MarkAllRead);
 }

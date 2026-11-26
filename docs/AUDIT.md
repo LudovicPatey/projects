@@ -67,6 +67,8 @@ taken by an AI, with its reason recorded and a way for people to overrule it.
 
 ### 4. The interface
 
+Check every rule of `docs/INTERFACE.md`.
+
 The interface lets people understand the state of the project and act on it.
 
 - Run the visual check of `AGENTS.md` (`scripts/visual-audit.js` at 1440, 1024, 800 and 375) on the main views, then look at
@@ -77,6 +79,7 @@ The interface lets people understand the state of the project and act on it.
   never cut inside a formula.
 - Wording: short, exact, no jargon from the code. The help center and the first-use tour describe what the page shows today.
 - Actions: members do not know the interface. For each button, could a newcomer tell, before clicking, what it changes and what
+- Data still waiting for an AI pass: does every fact, entry or proposal that a sweep will still change say so, with which pass and what to do meanwhile? A member who cannot tell may fix by hand what an AI is about to redo, or take a draft for final.
   it leaves as it is, and what a choice applies to? A button whose name could mean several things, or whose effect reaches
   further than it looks (a whole project, other facts, people), says so beside it or on hover, and in its confirmation.
 - Phones: the overview, a fact and a discussion must be usable at 375 pixels.

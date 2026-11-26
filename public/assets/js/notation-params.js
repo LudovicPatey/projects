@@ -16,12 +16,35 @@ const isLetter = (t) => /^[A-Za-z]$/.test(t) || new RegExp(`^${FONTED}$`).test(t
 /** A font command written without braces, as in \mathsf D: the letter after it is the name, not a parameter. */
 const FONT_CMD = /^\\(?:mathrm|mathsf|mathit|mathbf|mathcal|mathscr|mathfrak|mathbb|boldsymbol|operatorname|textrm|text|rm|sf|bf|it|cal)$/;
 
-/** The indexes of the tokens that are parameters: letters, not the argument of a font command written without braces. */
+/** A relation or arrow: a letter written under or over it, c in \le_c or T in \equiv_T, names the relation and is not a parameter. */
+export const RELATION = /^(?:\\(?:le|leq|leqslant|ge|geq|geqslant|lt|gt|ne|neq|equiv|sim|simeq|approx|cong|prec|preceq|succ|succeq|subset|subseteq|supset|supseteq|sqsubseteq|sqsupseteq|vdash|models|to|rightarrow|Rightarrow|leftarrow|leftrightarrow|mid)|[<>=])$/;
+
+/**
+ * The indexes of the tokens that are parameters: letters, not the argument of a font command written without braces, and not the
+ * subscript or superscript of a relation, as c in P \le_c Q.
+ */
 function paramTokens(toks) {
   const out = new Set();
   let prev = '';
+  let rel = false; // the last token was a relation, or a script of one
+  let script = 0; // 1 after _ or ^ of a relation, 2 inside its braces
+  let depth = 0;
   toks.forEach((t, i) => {
     if (!t.trim()) return;
+    if (script === 2) {
+      if (t === '{') depth++;
+      else if (t === '}' && --depth === 0) { script = 0; rel = true; }
+      prev = t;
+      return;
+    }
+    if (script === 1) {
+      script = 0;
+      if (t === '{') { script = 2; depth = 1; prev = t; return; }
+      rel = true; prev = t;
+      return; // one letter or command: the label of the relation
+    }
+    if ((t === '_' || t === '^') && rel) { script = 1; prev = t; return; }
+    rel = RELATION.test(t);
     if (isLetter(t) && !FONT_CMD.test(prev)) out.add(i);
     prev = t;
   });
@@ -39,12 +62,23 @@ export function inferParams(symbol) {
   return [...out.values()];
 }
 
-/** The parameters of an entry, {name, type}: those its symbol is written with, typed when someone said so, then any other given. */
+/** The type a person or the AI gives a letter that belongs to the name: c in \le_c names the relation and stands for nothing. */
+export const NOT_A_PARAMETER = 'not a parameter';
+
+/** Whether a type says that the letter is part of the name, "not a parameter", or as an AI wrote it, "fixed subscript, not a variable". */
+export const isFixed = (type) => /\bnot an? (?:parameter|variable)\b/i.test(String(type || ''));
+
+/**
+ * The parameters of an entry, {name, type}: those its symbol is written with, typed when someone said so, then any other given. A letter
+ * whose type says it is not a parameter is left out.
+ */
 export function paramsOf(entry) {
   const given = Array.isArray(entry?.params) ? entry.params.filter((p) => p?.name) : [];
+  const fixed = new Set([...given.filter((p) => isFixed(p.type)).map((p) => key(p.name)), ...(entry?.fixed || []).map(key)]);
   const type = new Map(given.map((p) => [key(p.name), String(p.type || '')]));
   const out = new Map(inferParams(entry?.symbol).map((n) => [key(n), { name: n, type: type.get(key(n)) || '' }]));
   for (const p of given) if (!out.has(key(p.name))) out.set(key(p.name), { name: bare(p.name), type: String(p.type || '') });
+  for (const k of fixed) out.delete(k);
   return [...out.values()];
 }
 

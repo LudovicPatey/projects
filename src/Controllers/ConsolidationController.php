@@ -52,7 +52,10 @@ final class ConsolidationController
         $counts = array_fill_keys(self::KINDS, 0);
         foreach ($rows as $s) if ($s['status'] === 'proposed') $counts[$s['kind']]++;
         $task = Db::one("SELECT id, status, created_at FROM ai_tasks WHERE project_id = ? AND kind = 'consolidate' AND (source_type IS NULL OR source_type <> 'sweep') AND status IN ('pending', 'running') ORDER BY id DESC LIMIT 1", [$pid]);
-        Response::json(['suggestions' => array_map([self::class, 'present'], $rows), 'facts' => (object)$facts, 'counts' => $counts,
+        // A proposal a second AI reading will apply or drop is not final: people may still decide it, but need not.
+        $second = \App\Sweeps::pendingItems($pid)['second'];
+        $present = fn($s) => self::present($s) + ['ai_pending' => isset($second[(int)$s['id']]) ? [['sweep' => 'second', 'open' => $second[(int)$s['id']]]] : []];
+        Response::json(['suggestions' => array_map($present, $rows), 'facts' => (object)$facts, 'counts' => $counts,
             'auto' => (bool)Db::value('SELECT consolidation_auto FROM projects WHERE id = ?', [$pid]),
             'topics' => self::topics($pid), 'waiting' => $task ? ['id' => (int)$task['id'], 'status' => $task['status'], 'created_at' => $task['created_at']] : null]);
     }

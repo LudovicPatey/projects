@@ -21,7 +21,12 @@ final class NotationController
     {
         $pid = $r->int('id');
         Access::member($pid);
-        Response::json(['entries' => self::entries($pid), 'definitions' => self::definitions($pid), 'shared' => self::shared($pid), 'progress' => self::progress($pid), 'hash' => self::hash($pid)]);
+        // What the symbols sweep will do with each symbol nobody settled yet, so that the page says when the AI compares its wordings.
+        $states = \App\Sweeps::symbolStates($pid);
+        $pending = \App\Sweeps::pendingItems($pid)['types'];
+        $entries = array_map(fn($e) => $e + ['ai_pending' => isset($pending[$e['id']]) ? [['sweep' => 'types', 'open' => $pending[$e['id']]]] : []], self::entries($pid));
+        $shared = array_map(fn($s) => $s + ['sweep' => $s['entry'] === null || $s['entry']['status'] === 'proposed' ? ($states[self::notionKey($s['symbol'])] ?? 'left') : null], self::shared($pid));
+        Response::json(['entries' => $entries, 'definitions' => self::definitions($pid), 'shared' => $shared, 'progress' => self::progress($pid), 'hash' => self::hash($pid)]);
     }
 
     /** People and AI clients propose an entry. Only a person agrees on it. */
@@ -558,12 +563,32 @@ final class NotationController
     public static function paramsOf(array $n): array
     {
         $given = json_decode((string)($n['params_json'] ?? ''), true) ?: [];
+        $fixed = array_flip(array_map(fn($x) => self::paramKey($x), self::fixedOf($n)));
         $type = [];
         foreach ($given as $p) if (is_array($p) && isset($p['name'])) $type[self::paramKey((string)$p['name'])] = (string)($p['type'] ?? '');
         $out = [];
         foreach (self::inferParams((string)$n['symbol']) as $name) $out[self::paramKey($name)] = ['name' => $name, 'type' => $type[self::paramKey($name)] ?? ''];
         foreach ($given as $p) if (is_array($p) && isset($p['name'])) $out[self::paramKey((string)$p['name'])] ??= ['name' => (string)$p['name'], 'type' => (string)($p['type'] ?? '')];
-        return array_values($out);
+        return array_values(array_diff_key($out, $fixed));
+    }
+
+    /** The type given to a letter that belongs to the name, c in \le_c: it stands for nothing. The same as NOT_A_PARAMETER in notation-params.js. */
+    public const NOT_A_PARAMETER = 'not a parameter';
+
+    /** Whether a type says the letter is part of the name: "not a parameter", or as an AI wrote it, "fixed subscript, not a variable". */
+    public static function isFixed(string $type): bool
+    {
+        return (bool)preg_match('/\bnot an? (?:parameter|variable)\b/i', $type);
+    }
+
+    /** @return list<string> the letters of an entry given the type "not a parameter": paramsOf leaves them out. */
+    public static function fixedOf(array $n): array
+    {
+        $out = [];
+        foreach (json_decode((string)($n['params_json'] ?? ''), true) ?: [] as $p) {
+            if (is_array($p) && isset($p['name']) && self::isFixed((string)($p['type'] ?? ''))) $out[] = (string)$p['name'];
+        }
+        return $out;
     }
 
     /** The letters a symbol is written with: one Latin letter alone, or one letter in a font such as \mathcal{D}. Names such as FS are not. */
@@ -576,8 +601,23 @@ final class NotationController
         if (preg_match('/(?<!\\\\)\b[A-Za-z]+-[A-Za-z]/', $s) || array_filter($toks, fn($t) => preg_match('/^[A-Za-z]{4,}$/', $t))) return [];
         $out = [];
         $prev = '';
+        $rel = false; $script = 0; $depth = 0; // a letter under or over a relation, c in P \le_c Q, names the relation
         foreach ($toks as $t) {
             if (trim($t) === '') continue;
+            if ($script === 2) {
+                if ($t === '{') $depth++;
+                elseif ($t === '}' && --$depth === 0) { $script = 0; $rel = true; }
+                $prev = $t;
+                continue;
+            }
+            if ($script === 1) {
+                $script = 0;
+                if ($t === '{') { $script = 2; $depth = 1; } else $rel = true;
+                $prev = $t;
+                continue;
+            }
+            if (($t === '_' || $t === '^') && $rel) { $script = 1; $prev = $t; continue; }
+            $rel = (bool)preg_match(self::RELATION, $t);
             $letter = preg_match('/^[A-Za-z]$/', $t) || preg_match('/^\\\\(?:mathcal|mathscr|mathfrak|mathbf|boldsymbol)\s*\{/', $t);
             // After a font command written without braces, \mathsf D, the letter is the name.
             $named = preg_match('/^\\\\(?:mathrm|mathsf|mathit|mathbf|mathcal|mathscr|mathfrak|mathbb|boldsymbol|operatorname|textrm|text|rm|sf|bf|it|cal)$/', $prev);
@@ -587,6 +627,9 @@ final class NotationController
         // A symbol that is one letter only, such as \mathcal{U}, is a name, not a parameter.
         return count(array_filter($toks, fn($t) => trim($t) !== '')) === 1 ? [] : array_values($out);
     }
+
+    /** A relation or arrow, as RELATION in notation-params.js. */
+    private const RELATION = '/^(?:\\\\(?:le|leq|leqslant|ge|geq|geqslant|lt|gt|ne|neq|equiv|sim|simeq|approx|cong|prec|preceq|succ|succeq|subset|subseteq|supset|supseteq|sqsubseteq|sqsupseteq|vdash|models|to|rightarrow|Rightarrow|leftarrow|leftrightarrow|mid)|[<>=])$/';
 
     private static function paramKey(string $name): string
     {
@@ -683,6 +726,7 @@ final class NotationController
         $n['variants'] = json_decode((string)$n['variants_json'], true) ?: [];
         $n['facts'] = json_decode((string)$n['facts_json'], true) ?: [];
         $n['params'] = self::paramsOf($n);
+        $n['fixed'] = self::fixedOf($n);
         $n['meaning_text'] = Sanitizer::toText((string)$n['meaning_html']);
         $n['decided_by_kind'] = self::decidedBy($n); // null, consolidation or person
         $n['note_text'] = $n['note_html'] ? Sanitizer::toText((string)$n['note_html']) : '';

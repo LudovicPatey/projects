@@ -200,7 +200,8 @@ the members. Answer in "decisions", one entry per symbol, with its "symbol" as l
 "entries_to_type" lists entries of the notation written with parameters, X and Y in "Y \leq X", that do not say what they stand for.
 For each, read its meaning and give in "types" its "entry" id and "params": each parameter of "params" with its "name" as listed and its
 "type", the kind of object it stands for, such as "infinite block sequences", "colorings of pairs" or "natural numbers", in a few words.
-The entry then applies to those objects only, and the same symbol between other objects keeps its own meaning. Leave out an entry whose
+The entry then applies to those objects only, and the same symbol between other objects keeps its own meaning. A letter that is part of
+the name and stands for nothing, the W of a reducibility written $\le_W$, gets the type "not a parameter". Leave out an entry whose
 meaning does not say what its parameters are. "decisions" or "types" may be empty.
 TXT,
         'consolidate' => <<<'TXT'

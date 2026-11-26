@@ -83,9 +83,25 @@ export function entryError(d) {
 export const entryBody = (d) => ({ symbol: String(d.symbol).trim(), meaning_text: String(d.meaning).trim(), note_text: String(d.note || '').trim(), definition_fact_id: d.fact ? +d.fact : null, ...(d.facts?.length ? { facts: d.facts } : {}),
   ...(d.params !== undefined ? { params: parseParams(d.params) } : {}) });
 
+/**
+ * Where a symbol defined in several facts stands with the AI, from the "sweep" the server gives: when its wordings are compared and it
+ * is settled, or that the AI left it to the members. Empty once it has an entry.
+ */
+export function sharedState(s) {
+  const what = s?.meanings?.length > 1 ? 'compares its wordings and settles it' : 'settles it';
+  switch (s?.sweep) {
+    case 'reading': return `The AI ${what} now, in the symbols sweep under way.`;
+    case 'next': return `The AI ${what} in the next symbols sweep, once nobody has added facts for a while.`;
+    case 'later': return `The AI ${what} in a later symbols sweep: thirty symbols at a time, the most used first.`;
+    case 'left': return 'Two symbols sweeps read it without settling it: it is left to the members. Propose it as global, or discuss it.';
+    default: return '';
+  }
+}
+
 /** "X, Y: infinite block sequence", one line per type, as the form writes the parameters. */
-export function paramsText(params) {
-  return paramGroups(params).map((g) => `${g.params.map((p) => p.name).join(', ')}: ${g.type}`).join('\n');
+export function paramsText(params, fixed = []) {
+  return [...paramGroups(params).map((g) => `${g.params.map((p) => p.name).join(', ')}: ${g.type}`),
+    ...(fixed.length ? [`${fixed.join(', ')}: not a parameter`] : [])].join('\n');
 }
 
 /** The lines of the form back to [{name, type}]. A line without a colon gives names without a type. */

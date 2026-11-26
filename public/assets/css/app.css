@@ -1720,3 +1720,16 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: non
 .usage-meter.t-bad { border-color: var(--bad); background: var(--bad-bg); }
 .usage-meter small { display: block; margin-top: 5px; color: var(--muted); line-height: 1.4; }
 .btn.at-limit { opacity: .55; }
+
+/* When the AI settles a symbol defined in several facts, or that it left it to the members. */
+.shared-state { display: flex; align-items: center; gap: 5px; margin-top: 3px; color: var(--muted); }
+.shared-state.s-left { color: var(--warn); }
+
+/* An object not in its final state: an AI pass is still due on it (Sweeps::pendingForFact, pendingItems). */
+.ai-pending { display: flex; align-items: flex-start; gap: 7px; margin: 6px 0 10px; padding: 7px 10px; border: 1px dashed var(--line); border-radius: 8px; background: var(--panel-2); color: var(--muted); font-size: 13px; line-height: 1.45; }
+.ai-pending > .icon, .ai-pending > svg { flex: none; margin-top: 2px; }
+.ai-pending > span { min-width: 0; }
+.ai-pending b { color: var(--text); font-weight: 600; }
+.ai-pending-pass { display: block; margin-top: 2px; }
+.ai-pending.compact { margin: 4px 0; padding: 4px 8px; font-size: 12px; }
+.ai-pending.compact .ai-pending-pass { display: inline; margin: 0; }

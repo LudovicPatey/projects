@@ -1517,6 +1517,8 @@ final class FactController
                     FROM fact_suggestions s LEFT JOIN users d ON d.id = s.decided_by LEFT JOIN users ub ON ub.id = s.undone_by
                     LEFT JOIN facts a ON a.id = s.fact_id LEFT JOIN facts b ON b.id = s.other_fact_id
                     WHERE (s.fact_id = ? OR s.other_fact_id = ?) AND s.status IN ('accepted', 'undone') ORDER BY s.decided_at DESC, s.id DESC LIMIT 100", [$id, $id]));
+        // The AI passes it still waits for: it is not in its final state, and people need not fix by hand what an AI is about to do.
+        $out['ai_pending'] = \App\Sweeps::pendingForFact($pid, $id);
         $out['worth_reading'] = $f['highlight_at'] ? ['reason' => $f['highlight_reason'], 'at' => $f['highlight_at'], 'model' => $f['highlight_model']] : null;
         // The agreed notation, so that a reader sees the meaning of each symbol the fact uses.
         // Each with its parameters and their types: an entry applies to those objects only.

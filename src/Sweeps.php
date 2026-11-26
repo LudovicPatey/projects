@@ -131,6 +131,52 @@ final class Sweeps
     }
 
     /**
+     * The AI passes a fact still waits for, so that people see it is not in its final state and do not fix by hand what an AI is about
+     * to do: its rewrite in the project notation, the check of that rewrite, the check of a cited result against its source, the review
+     * of its proof. `open`: a sweep of that kind waits for a client or runs. @return list<array{sweep: string, open: bool}>
+     */
+    public static function pendingForFact(int $pid, int $fid): array
+    {
+        $f = Db::one('SELECT id, deleted_at, retracted_at FROM facts WHERE id = ? AND project_id = ?', [$fid, $pid]);
+        if (!$f || $f['deleted_at'] !== null || $f['retracted_at'] !== null) return [];
+        $out = [];
+        if (in_array($fid, array_column(self::rewriteCandidates($pid), 0), true)) $out[] = 'rewrite';
+        else {
+            $mine = array_map('intval', array_column(Db::all('SELECT id FROM fact_rephrasings WHERE fact_id = ?', [$fid]), 'id'));
+            if (array_intersect($mine, self::checkCandidates($pid))) $out[] = 'check';
+        }
+        foreach (self::sourceCandidates($pid) as $group) if (in_array($fid, array_column($group, 0), true)) { $out[] = 'source'; break; }
+        if (in_array($fid, self::reviewCandidates($pid), true)) $out[] = 'review';
+        return array_map(fn($s) => ['sweep' => $s, 'open' => self::open($pid, $s) !== null], $out);
+    }
+
+    /**
+     * The AI passes entries and proposals of a project wait for: the typing of an entry's parameters, the second reading of a proposal.
+     * @return array{types: array<int, bool>, second: array<int, bool>} by id, whether a sweep of that kind waits or runs
+     */
+    public static function pendingItems(int $pid): array
+    {
+        $types = self::open($pid, 'symbols') !== null;
+        $second = self::open($pid, 'second') !== null;
+        return ['types' => array_fill_keys(self::typeCandidates($pid), $types), 'second' => array_fill_keys(self::secondCandidates($pid), $second)];
+    }
+
+    /**
+     * Where each symbol without a settled entry stands with the symbols sweep: "reading" in a sweep that waits or runs, "next" in the next
+     * one (the most used first, SYMBOLS_BATCH at a time), "later" in a sweep after it, "left" when two sweeps read it without settling
+     * it, so that it is left to the members. @return array<string, string> by notion key
+     */
+    public static function symbolStates(int $pid): array
+    {
+        $out = [];
+        foreach (self::symbolCandidates($pid) as $i => $k) $out[$k] = $i < self::SYMBOLS_BATCH ? 'next' : 'later';
+        if ($open = self::open($pid, 'symbols')) {
+            foreach (json_decode((string)Db::value('SELECT snapshot_json FROM ai_tasks WHERE id = ?', [$open]), true)['symbols'] ?? [] as $k) $out[(string)$k] = 'reading';
+        }
+        return $out;
+    }
+
+    /**
      * Proved facts whose current revision nobody reviewed, person or AI, and that no review sweep read yet: those many facts rely on
      * first, then the facts worth reading, then the others. @return list<int> fact ids
      */

@@ -42,6 +42,28 @@ export const SWEEP_KINDS = {
   second_reading: { label: 'Second reading of proposals', short: 'Second reading', icon: 'eye', hint: 'Another AI reads again the consolidation proposals it was not sure of, applies those it agrees with and drops the others.' },
 };
 
+/**
+ * The AI passes an object may still wait for, by sweep: what the pass will do, and what a person should do meanwhile. Shown so that
+ * nobody fixes by hand what an AI is about to do, and nobody takes the object for final.
+ */
+export const PENDING_PASSES = {
+  rewrite: { name: 'Rewrite in the project notation', does: 'An AI writes this fact in the agreed notation, beside its reviewed text, which stays as it is.', meanwhile: 'No need to rewrite it by hand.' },
+  check: { name: 'Check of the rewrite', does: 'A second AI compares the rewrite in the project notation with the original, and hides it if it changes the meaning.', meanwhile: 'You can still judge it yourself: your verdict wins.' },
+  source: { name: 'Check against the source', does: 'An AI looks for this result in its source and records whether the source states it.', meanwhile: 'You can still accept it yourself if you read the source.' },
+  review: { name: 'Proof review', does: 'An AI referees the proof against the facts it relies on: correct, a gap or an error. It runs on clients with Review proofs turned on.', meanwhile: 'People can review it too.' },
+  types: { name: 'Notation review', does: 'An AI says what the parameters of this entry stand for, and so what the entry applies to.', meanwhile: 'No need to type them by hand, though Edit lets you.' },
+  second: { name: 'Second reading', does: 'Another AI reads this proposal again: it applies it if it agrees, and drops it otherwise.', meanwhile: 'You can still accept or reject it yourself.' },
+};
+
+/** The notice for the passes an object waits for: [{sweep, open}] from the server. Empty when it is in its final state. */
+export function pendingView(items) {
+  return (items || []).filter((p) => PENDING_PASSES[p?.sweep]).map((p) => {
+    const pass = PENDING_PASSES[p.sweep];
+    const when = p.open ? 'Queued now: it runs as soon as an AI client takes it.' : 'Queued once nobody has added facts for a while, when an AI client asks for work.';
+    return { sweep: p.sweep, name: pass.name, text: `${pass.does} ${when} ${pass.meanwhile}` };
+  });
+}
+
 /** What the interface says about a kind of task, requestable or not. */
 export const kindInfo = (kind) => AI_KINDS[kind] || SWEEP_KINDS[kind] || null;
 

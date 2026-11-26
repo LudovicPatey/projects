@@ -5,9 +5,9 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import { after, before, test } from 'node:test';
 import { startApp } from './harness.mjs';
-import { colorParams, inferParams, paramsOf, relationPattern, trustParams } from '../public/assets/js/notation-params.js';
+import { colorParams, inferParams, isFixed, paramsOf, relationPattern, trustParams } from '../public/assets/js/notation-params.js';
 import { notationMarker } from '../public/assets/js/notation-marks.js';
-import { actionEffects, entryBody, entryScope, parseParams, paramsText } from '../public/assets/js/notation-model.js';
+import { actionEffects, entryBody, entryScope, parseParams, paramsText, sharedState } from '../public/assets/js/notation-model.js';
 
 const ANN = '0000-0002-1825-0097';
 const BLOCKS = [{ name: 'Y', type: 'infinite block sequences' }, { name: 'X', type: 'infinite block sequences' }];
@@ -73,6 +73,37 @@ test('an entry keeps its parameters; changing their types reopens an agreed entr
   assert.equal(same.data.status, 'agreed', 'the same types: still agreed');
   const other = await app.call(ann, 'PATCH', `/api/notation/${e.id}`, { params: [{ name: 'X', type: 'sets' }, { name: 'Y', type: 'sets' }] });
   assert.equal(other.data.status, 'proposed', 'other types: what it applies to changed');
+});
+
+test('a letter under a relation, or typed "not a parameter", names the symbol and stands for nothing', async () => {
+  for (const s of ['\\le_c', '\\le_W', '\\le_{sW}', '\\equiv_T', '\\leq^{\\mathrm{u}}_c']) assert.deepEqual(inferParams(s), [], s);
+  assert.deepEqual(inferParams('\\mathsf P \\le_c \\mathsf Q'), [], 'P and Q in \\mathsf without braces are names');
+  assert.deepEqual(inferParams('P \\le_W Q'), ['P', 'Q']);
+  assert.equal(colorParams('P \\le_W Q', paramsOf({ symbol: 'P \\le_W Q' })), '{\\htmlClass{oq-pm oq-pm-0}{P}} \\le_W {\\htmlClass{oq-pm oq-pm-1}{Q}}');
+  assert.deepEqual(inferParams('\\mathsf{RT}^n_k'), ['n', 'k'], 'the exponents of a name stay parameters');
+  assert.ok(isFixed('fixed subscript, not a variable: $\\le_c$ relates two problems')); assert.ok(isFixed('not a parameter')); assert.ok(!isFixed('natural numbers'));
+  const typed = [{ name: 'c', type: 'fixed subscript, not a variable' }, { name: 'X', type: 'sets' }];
+  assert.deepEqual(paramsOf({ symbol: 'c(X)', params: typed }), [{ name: 'X', type: 'sets' }]);
+  assert.equal(paramsText([{ name: 'X', type: 'sets' }], ['c']), 'X: sets\nc: not a parameter', 'the form keeps the mark');
+  // On the server: stored entries typed this way lose the letter at once, and the form gets it back as "not a parameter".
+  const e = (await app.call(ann, 'POST', `/api/projects/${pid}/notation`, { symbol: 'c(X)', meaning_text: 'The c-hull of X.', params: typed })).data;
+  assert.deepEqual(e.params, [{ name: 'X', type: 'sets' }]); assert.deepEqual(e.fixed, ['c']);
+  assert.deepEqual((await app.call(ann, 'POST', `/api/projects/${pid}/notation`, { symbol: 'P \\le_W Q', meaning_text: 'Weihrauch reducibility.' })).data.params.map((p) => p.name), ['P', 'Q']);
+  assert.match(fs.readFileSync('src/Procedures.php', 'utf8'), /gets the type "not a parameter"/);
+});
+
+test('a symbol defined in several facts says when the AI compares and settles it', async () => {
+  assert.equal(sharedState({ sweep: 'next', meanings: [1, 2] }), 'The AI compares its wordings and settles it in the next symbols sweep, once nobody has added facts for a while.');
+  assert.match(sharedState({ sweep: 'later', meanings: [1] }), /^The AI settles it in a later symbols sweep/);
+  assert.match(sharedState({ sweep: 'reading', meanings: [1] }), /now/);
+  assert.match(sharedState({ sweep: 'left', meanings: [1] }), /left to the members/);
+  assert.equal(sharedState({ sweep: null, entry: { status: 'agreed' } }), '');
+  const p2 = (await app.call(ann, 'POST', '/api/projects', { title: 'Shared', question_html: '<p>Q</p>' })).data.id;
+  const fact = (ref, m) => ({ ref, title: ref, kind: 'lemma', labels: ['conclusion'], method: 'deduced', statement_text: 'Every $\\mathrm{SG}$ works.', proof_text: 'P.', glossary: { '\\mathrm{SG}': m } });
+  await app.call(key, 'POST', `/api/projects/${p2}/facts/batch`, { format: 'native', ai_model: 'm', facts: [fact('a', 'a semigroup'), fact('b', 'a closed semigroup')] });
+  const s = (await app.call(ann, 'GET', `/api/projects/${p2}/notation`)).data.shared.find((x) => x.symbol === '\\mathrm{SG}');
+  assert.equal(s?.sweep, 'next', JSON.stringify(s));
+  assert.doesNotMatch(fs.readFileSync('public/assets/js/views/notation.js', 'utf8'), /not compared yet/);
 });
 
 test('the AI recipes ask for the types, and a rewrite keeps a symbol between objects of another type', async () => {
