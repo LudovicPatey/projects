@@ -43,7 +43,8 @@ after(() => { app?.stop(); stub?.close(); });
 test('a second AI compares each rewrite with its original; an unfaithful one is hidden and tried once more, and a person overrules it', async () => {
   const P = (ref) => ({ ref, title: ref, kind: 'lemma', labels: ['conclusion'], method: 'deduced', statement_text: `$FS(H)$ is an IP set ${ref}.`, proof_text: 'P.', glossary: { '$FS(H)$': 'the finite sums of H, with 0' } });
   await facts(pid, [P('r1'), P('r2')]);
-  const e = (await app.call(ann, 'POST', `/api/projects/${pid}/notation`, { symbol: 'FS(X)', meaning_text: 'The non-empty finite sums of $X$.' })).data;
+  // Typed: an entry without types would first go to the symbols sweep, which rewrites wait for.
+  const e = (await app.call(ann, 'POST', `/api/projects/${pid}/notation`, { symbol: 'FS(X)', meaning_text: 'The non-empty finite sums of $X$.', params: [{ name: 'X', type: 'sets of numbers' }] })).data;
   await app.call(ann, 'POST', `/api/notation/${e.id}/status`, { status: 'agreed' });
   let t = (await claim(['notation'])).data.task;
   let r = await answer(t, { summary: '', facts: t.context.facts_to_rewrite.map((f) => ({ fact_id: f.fact_id, unchanged: false, statement: f.statement.replace('FS(H)', 'FS(X)'), proof: 'P.', local_notation: [], uses: [{ symbol: 'FS(H)', meaning_here: 'with 0', project_symbol: 'FS(X)' }] })) });

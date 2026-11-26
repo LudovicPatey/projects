@@ -501,8 +501,9 @@ CREATE TABLE IF NOT EXISTS fact_source_checks (
   id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   fact_id INT UNSIGNED NOT NULL,
   revision_no INT UNSIGNED NOT NULL,
-  verdict VARCHAR(10) NOT NULL,           -- 'confirmed' | 'differs' | 'not_found'
+  verdict VARCHAR(10) NOT NULL,           -- 'confirmed' | 'differs' | 'not_found' | 'unreadable' (the AI could not read the source)
   body_html MEDIUMTEXT NULL,
+  had_source TINYINT(1) NULL,             -- the AI had the text of the source (a project file or the PDF of the reference); null: not recorded
   ai_model VARCHAR(120) NULL,
   ai_user_id INT UNSIGNED NULL,
   ai_generation_ms INT UNSIGNED NULL,

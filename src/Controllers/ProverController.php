@@ -247,8 +247,8 @@ final class ProverController
         $ref = array_filter(array_intersect_key($ref, array_flip(['key', 'authors', 'title', 'arxiv', 'year', 'venue', 'doi', 'url', 'cited_for'])), fn($v) => is_scalar($v) || is_array($v));
         if (!($ref['title'] ?? null) && !($ref['doi'] ?? null) && !($ref['arxiv'] ?? null)) throw new HttpError(422, 'Give the reference: at least a title, a DOI or an arXiv id.');
         $check = (array)$r->input('check', []);
-        $verdict = in_array($check['verdict'] ?? null, ['confirmed', 'differs', 'not_found'], true) ? $check['verdict'] : null;
-        if (!$verdict) throw new HttpError(422, 'Give the source check: confirmed, differs or not_found.');
+        $verdict = in_array($check['verdict'] ?? null, ['confirmed', 'differs', 'not_found', 'unreadable'], true) ? $check['verdict'] : null;
+        if (!$verdict) throw new HttpError(422, 'Give the source check: confirmed, differs, not_found or unreadable.');
         $fid = FactController::addFact($pid, ['title' => $r->str('title'), 'kind' => 'theorem', 'labels' => ['conclusion'], 'method' => 'extracted', 'statement_text' => $r->str('statement'),
             'external_refs' => [$ref], 'ai_model' => $x['ai_model'], 'tool' => 'prover', 'notes' => 'Cited by the native prover'], true);
         $f = Db::one('SELECT * FROM facts WHERE id = ?', [$fid]);

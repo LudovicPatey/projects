@@ -18,13 +18,16 @@ use App\Controllers\NotationController;
  * apply, applying those it agrees with and dropping the others, and "symbols" settles the symbols several facts define and the
  * project notation does not have yet: global, local, or another spelling of an entry. People can overrule all three.
  *
+ * "review" referees the proofs nobody reviewed, and "symbols" also types the parameters of entries nobody typed.
+ *
  * Settings, in minutes or hours, in config.php under "sweeps": quiet_minutes (30), check_minutes (5), rewrite_hours (1),
- * source_hours (1), check_hours (1), second_hours (1), symbols_hours (1), consolidate_hours (24; 0 consolidates only after extractions).
+ * source_hours (1), check_hours (1), second_hours (1), symbols_hours (1), review_hours (1), review (true; false turns proof reviews off),
+ * consolidate_hours (24; 0 consolidates only after extractions).
  */
 final class Sweeps
 {
     /** A sweep's kind of task. */
-    public const KINDS = ['rewrite' => 'notation', 'source' => 'source_check', 'check' => 'rewrite_check', 'second' => 'second_reading', 'symbols' => 'consolidate'];
+    public const KINDS = ['rewrite' => 'notation', 'source' => 'source_check', 'check' => 'rewrite_check', 'second' => 'second_reading', 'symbols' => 'consolidate', 'review' => 'proof_review'];
     /** At most this many facts in one session, and this much text to rewrite. */
     public const REWRITE_BATCH = 12;
     public const REWRITE_CHARS = 40000;
@@ -36,7 +39,12 @@ final class Sweeps
     public const SECOND_BATCH = 25;
     /** Symbols that several facts define, with no entry of the project notation yet, settled in one session. */
     public const SYMBOLS_BATCH = 30;
-    private const BATCH = ['rewrite' => self::REWRITE_BATCH, 'source' => self::SOURCE_BATCH, 'check' => self::CHECK_BATCH, 'second' => self::SECOND_BATCH, 'symbols' => self::SYMBOLS_BATCH];
+    /** Proofs refereed in one session, and the text they may hold with their dependencies. */
+    public const REVIEW_BATCH = 6;
+    public const REVIEW_CHARS = 50000;
+    /** Entries whose parameters have no type yet, typed in the same session. */
+    public const TYPES_BATCH = 30;
+    private const BATCH = ['rewrite' => self::REWRITE_BATCH, 'source' => self::SOURCE_BATCH, 'check' => self::CHECK_BATCH, 'second' => self::SECOND_BATCH, 'symbols' => self::SYMBOLS_BATCH, 'review' => self::REVIEW_BATCH];
 
     private static function setting(string $key, float $default): float
     {
@@ -79,13 +87,18 @@ final class Sweeps
         return $id ? (int)$id : null;
     }
 
-    /** The last sweep of this kind ended long enough ago, or it did a full batch and work is left: it carries on. */
+    /**
+     * The last sweep of this kind ended long enough ago, or it did a full batch and work is left: it carries on. A batch that stopped
+     * at its size limit, long facts, is full too: the backlog after a change of notation is not taken a few facts an hour.
+     */
     private static function rested(int $pid, string $sweep): bool
     {
-        $last = Db::one("SELECT finished_at, result_json, snapshot_json FROM ai_tasks WHERE project_id = ? AND kind = ? AND source_type = 'sweep' AND status IN ('done', 'failed') ORDER BY id DESC LIMIT 1", [$pid, self::KINDS[$sweep]]);
+        $last = Db::one("SELECT status, finished_at, result_json, snapshot_json FROM ai_tasks WHERE project_id = ? AND kind = ? AND source_type = 'sweep' AND status IN ('done', 'failed') ORDER BY id DESC LIMIT 1", [$pid, self::KINDS[$sweep]]);
         if (!$last) return true;
         $result = json_decode((string)$last['result_json'], true) ?: [];
-        $did = max(count($result['fact_ids'] ?? []), count($result['suggestion_ids'] ?? []), count(json_decode((string)$last['snapshot_json'], true)['symbols'] ?? []));
+        $snap = json_decode((string)$last['snapshot_json'], true) ?: [];
+        if (!empty($snap['full']) && $last['status'] === 'done') return true; // a failed one rests, so that it does not fail again at once
+        $did = max(count($result['fact_ids'] ?? []), count($result['suggestion_ids'] ?? []), count($snap['symbols'] ?? []), count($snap['types'] ?? []));
         if ($did >= self::BATCH[$sweep]) return true;
         return strtotime((string)$last['finished_at'] . ' UTC') <= time() - 3600 * self::setting($sweep . '_hours', 1);
     }
@@ -94,7 +107,7 @@ final class Sweeps
     {
         return (bool)match ($sweep) {
             'rewrite' => self::rewriteCandidates($pid), 'source' => self::sourceCandidates($pid),
-            'check' => self::checkCandidates($pid), 'second' => self::secondCandidates($pid), 'symbols' => self::symbolCandidates($pid),
+            'check' => self::checkCandidates($pid), 'second' => self::secondCandidates($pid), 'review' => self::reviewCandidates($pid), 'symbols' => self::symbolCandidates($pid) || self::typeCandidates($pid),
         };
     }
 
@@ -115,6 +128,41 @@ final class Sweeps
             if (($tried[$k] ?? 0) < 2) $out[$k] = true;
         }
         return array_keys($out);
+    }
+
+    /**
+     * Proved facts whose current revision nobody reviewed, person or AI, and that no review sweep read yet: those many facts rely on
+     * first, then the facts worth reading, then the others. @return list<int> fact ids
+     */
+    public static function reviewCandidates(int $pid): array
+    {
+        if (!Config::get('sweeps.review', true)) return [];
+        $tried = self::tried($pid, 'proof_review', null);
+        $reviewed = [];
+        foreach (Db::all('SELECT DISTINCT v.fact_id FROM fact_reviews v JOIN facts f ON f.id = v.fact_id AND v.revision_no = f.current_revision WHERE f.project_id = ?', [$pid]) as $v) $reviewed[(int)$v['fact_id']] = true;
+        $out = [];
+        foreach (FactController::graph($pid)['facts'] as $f) {
+            $key = (int)$f['id'] . ':' . (int)$f['current_revision'];
+            if ($f['basis'] !== 'proved' || $f['status'] !== 'unchecked' || $f['retracted_at'] !== null || isset($reviewed[(int)$f['id']]) || isset($tried[$key])) continue;
+            $out[] = [(int)$f['id'], count($f['dependents']) * 2 + (!empty($f['worth_reading']) ? 5 : 0)];
+        }
+        usort($out, fn($a, $b) => [$b[1], $a[0]] <=> [$a[1], $b[0]]);
+        return array_column($out, 0);
+    }
+
+    /**
+     * Agreed and local entries written with parameters that nobody typed: the symbols sweep says what each parameter stands for, so
+     * that an entry applies to those objects only. An entry a sweep read without typing it is not read again. @return list<int> entry ids
+     */
+    public static function typeCandidates(int $pid): array
+    {
+        $tried = self::tried($pid, 'consolidate', null);
+        $out = [];
+        foreach (Db::all("SELECT id, symbol, params_json FROM notations WHERE project_id = ? AND status IN ('agreed', 'local') ORDER BY status = 'agreed' DESC, id", [$pid]) as $n) {
+            $params = NotationController::paramsOf($n);
+            if ($params && !array_filter($params, fn($p) => trim($p['type']) !== '') && !isset($tried['type:' . $n['id']])) $out[] = (int)$n['id'];
+        }
+        return $out;
     }
 
     /**
@@ -160,11 +208,24 @@ final class Sweeps
         return $out;
     }
 
-    /** Cited results nobody accepted and no AI checked, at their current revision, by the source they were found in. @return array<string, list<array{0: int, 1: int}>> */
+    /**
+     * Cited results nobody accepted and no AI checked, at their current revision, by the source they were found in. A result whose
+     * last check had no text of its source and could not find or read it is checked once more, when its source can now be read.
+     * @return array<string, list<array{0: int, 1: int}>>
+     */
     public static function sourceCandidates(int $pid): array
     {
         $tried = self::tried($pid, 'source_check', null);
-        foreach (Db::all('SELECT c.fact_id, c.revision_no FROM fact_source_checks c JOIN facts f ON f.id = c.fact_id WHERE f.project_id = ?', [$pid]) as $c) $tried[$c['fact_id'] . ':' . $c['revision_no']] = true;
+        $blind = [];
+        foreach (Db::all('SELECT c.fact_id, c.revision_no, c.verdict, c.had_source FROM fact_source_checks c JOIN facts f ON f.id = c.fact_id WHERE f.project_id = ? ORDER BY c.id', [$pid]) as $c) {
+            $k = $c['fact_id'] . ':' . $c['revision_no'];
+            $tried[$k] = true;
+            // The last check decides: one made with the source, or one that found the result, needs no other.
+            $blind[$k] = in_array($c['verdict'], ['not_found', 'unreadable'], true) && !(int)$c['had_source'] ? ($blind[$k] ?? 0) + 1 : -1;
+        }
+        foreach ($blind as $k => $n) {
+            if ($n === 1 && AiTaskController::readableSource((int)explode(':', $k)[0])) unset($tried[$k]); // once only
+        }
         $groups = [];
         foreach (FactController::graph($pid)['facts'] as $f) {
             if ($f['basis'] !== 'cited' || $f['status'] !== 'unchecked' || $f['retracted_at'] !== null) continue;
@@ -190,7 +251,15 @@ final class Sweeps
             }
             if ($t['status'] !== 'done') continue;
             if (in_array($kind, ['rewrite_check', 'second_reading'], true)) { foreach ($snap['items'] ?? [] as $id) $done[(int)$id] = true; continue; }
-            if ($kind === 'consolidate') { if ($t['source_type'] === 'sweep') foreach ($snap['symbols'] ?? [] as $k) $done[(string)$k] = ($done[(string)$k] ?? 0) + 1; continue; }
+            // A proof read at one revision: a new revision is read again.
+            if ($kind === 'proof_review') { foreach ($snap['facts'] ?? [] as [$f, $rev]) $done["$f:$rev"] = true; continue; }
+            if ($kind === 'consolidate') {
+                if ($t['source_type'] === 'sweep') {
+                    foreach ($snap['symbols'] ?? [] as $k) $done[(string)$k] = ($done[(string)$k] ?? 0) + 1;
+                    foreach ($snap['types'] ?? [] as $id) $done['type:' . (int)$id] = 1;
+                }
+                continue;
+            }
             if ($t['source_type'] !== 'fact') foreach ($snap['facts'] ?? [] as [$f, $rev]) $done["$f:$rev"] = true;
             elseif (preg_match('/^srcchk:(\d+):(\d+)$/', (string)$t['dedupe_key'], $m)) $done["$m[1]:$m[2]"] = true;
         }
@@ -205,25 +274,37 @@ final class Sweeps
     {
         $pid = (int)$t['project_id'];
         if ($t['kind'] === 'notation') {
-            $batch = []; $chars = 0;
+            $batch = []; $chars = 0; $full = false;
             foreach (self::rewriteCandidates($pid) as [$f, $rev]) {
                 $size = (int)Db::value('SELECT LENGTH(statement_html) + LENGTH(COALESCE(proof_html, \'\')) FROM fact_revisions WHERE fact_id = ? AND revision_no = ?', [$f, $rev]);
-                if ($batch && ($chars + $size > self::REWRITE_CHARS || count($batch) >= self::REWRITE_BATCH)) break;
+                if ($batch && ($chars + $size > self::REWRITE_CHARS || count($batch) >= self::REWRITE_BATCH)) { $full = true; break; }
                 $batch[] = [$f, $rev]; $chars += $size;
             }
-            $snap = ['facts' => $batch, 'hash' => NotationController::hash($pid)];
+            // Full: more was left than this batch could hold. The facts it holds count as tried, so none is taken again and again.
+            $snap = ['facts' => $batch, 'hash' => NotationController::hash($pid), 'full' => $full];
         } elseif ($t['kind'] === 'rewrite_check') {
-            $batch = []; $chars = 0;
+            $batch = []; $chars = 0; $full = false;
             foreach (self::checkCandidates($pid) as $id) {
                 $size = (int)Db::value('SELECT LENGTH(x.statement_html) + LENGTH(COALESCE(x.proof_html, \'\')) + LENGTH(r.statement_html) + LENGTH(COALESCE(r.proof_html, \'\'))
                     FROM fact_rephrasings x JOIN fact_revisions r ON r.fact_id = x.fact_id AND r.revision_no = x.revision_no WHERE x.id = ?', [$id]);
-                if ($batch && ($chars + $size > self::CHECK_CHARS || count($batch) >= self::CHECK_BATCH)) break;
+                if ($batch && ($chars + $size > self::CHECK_CHARS || count($batch) >= self::CHECK_BATCH)) { $full = true; break; }
                 $batch[] = $id; $chars += $size;
             }
-            $snap = ['items' => $batch];
+            $snap = ['items' => $batch, 'full' => $full];
         } elseif ($t['kind'] === 'consolidate') {
-            $batch = array_slice(self::symbolCandidates($pid), 0, self::SYMBOLS_BATCH);
-            $snap = ['symbols' => $batch];
+            $symbols = array_slice(self::symbolCandidates($pid), 0, self::SYMBOLS_BATCH);
+            $types = array_slice(self::typeCandidates($pid), 0, self::TYPES_BATCH);
+            $batch = array_merge($symbols, $types);
+            $snap = ['symbols' => $symbols, 'types' => $types];
+        } elseif ($t['kind'] === 'proof_review') {
+            $batch = []; $chars = 0; $full = false;
+            foreach (self::reviewCandidates($pid) as $fid) {
+                $rev = (int)Db::value('SELECT current_revision FROM facts WHERE id = ?', [$fid]);
+                $size = (int)Db::value('SELECT LENGTH(statement_html) + LENGTH(COALESCE(proof_html, \'\')) FROM fact_revisions WHERE fact_id = ? AND revision_no = ?', [$fid, $rev]);
+                if ($batch && ($chars + $size > self::REVIEW_CHARS || count($batch) >= self::REVIEW_BATCH)) { $full = true; break; }
+                $batch[] = [$fid, $rev]; $chars += $size;
+            }
+            $snap = ['facts' => $batch, 'full' => $full];
         } elseif ($t['kind'] === 'second_reading') {
             $batch = array_slice(self::secondCandidates($pid), 0, self::SECOND_BATCH);
             $snap = ['items' => $batch];

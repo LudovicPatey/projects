@@ -151,7 +151,7 @@ final class AiTaskController
         // A person's own client may record the Danus run they just launched, and nothing else.
         if (Auth::isAi() && !(Auth::isClient() && $kind === 'derive')) throw new HttpError(403, 'Only a person can do this.');
         if (!in_array($kind, self::kinds(), true)) throw new HttpError(422, 'Choose what the AI should do.');
-        if (in_array($kind, ['rewrite_check', 'second_reading'], true)) throw new HttpError(422, 'The platform queues this on its own, whenever there is work for it.');
+        if (in_array($kind, ['rewrite_check', 'second_reading', 'proof_review'], true)) throw new HttpError(422, 'The platform queues this on its own, whenever there is work for it.');
         $since = gmdate('Y-m-d H:i:s', time() - 86400);
         if ((int)Db::value('SELECT COUNT(*) FROM ai_tasks WHERE requested_by = ? AND created_at > ? AND dedupe_key IS NULL', [Auth::id(), $since]) >= self::MAX_REQUESTS_PER_DAY) {
             throw new HttpError(429, 'You have reached the limit of AI requests for today.');
@@ -978,6 +978,13 @@ final class AiTaskController
                 $ctx['symbols'][] = ['symbol' => $n['symbol'], 'spellings' => [$n['symbol']], 'facts' => count($facts), 'meanings' => [], 'entry' => $entryOf($n) + ['facts' => array_map($fact, $facts)]];
             }
             $ctx['notation'] = NotationController::forTask($pid, false);
+            // Entries written with parameters nobody typed: what each one stands for.
+            $ctx['entries_to_type'] = [];
+            foreach (json_decode((string)$t['snapshot_json'], true)['types'] ?? [] as $id) {
+                $n = Db::one('SELECT id, symbol, meaning_html, status, params_json FROM notations WHERE id = ? AND project_id = ?', [(int)$id, $pid]);
+                if ($n) $ctx['entries_to_type'][] = ['id' => (int)$n['id'], 'symbol' => $n['symbol'], 'status' => $n['status'], 'meaning' => Sanitizer::toText((string)$n['meaning_html']),
+                    'params' => array_column(NotationController::paramsOf($n), 'name')];
+            }
         }
         if ($t['kind'] === 'notation' && $type === 'sweep') {
             // A batch of facts to write again in the agreed notation, each with what its source meant by its symbols.
@@ -993,17 +1000,16 @@ final class AiTaskController
             }
         }
         if ($t['kind'] === 'source_check' && in_array($type, [null, 'sweep'], true)) {
-            // A batch: the cited results found in one source, with that document when the project has it.
-            $ctx['cited_results'] = []; $docs = [];
+            // A batch: the cited results found in one source, with that document or the PDF of that reference when the project has it.
+            $ctx['cited_results'] = [];
             foreach (self::batchFacts($t) as $fid) {
                 $f = Db::one('SELECT f.id, f.label, f.title, f.current_revision, r.statement_html, r.external_refs_json FROM facts f JOIN fact_revisions r ON r.fact_id = f.id AND r.revision_no = f.current_revision WHERE f.id = ?', [$fid]);
                 $srcs = array_values(array_filter(FactController::presentSources($fid, (int)$f['current_revision']), fn($s) => !$s['hidden'] && $s['covers'] !== 'context'));
                 $ctx['cited_results'][] = ['id' => $fid, 'label' => $f['label'], 'title' => $f['title'], 'statement' => Sanitizer::toText((string)$f['statement_html']),
                     'references' => json_decode((string)$f['external_refs_json'], true), 'sources' => array_map(fn($s) => ['type' => $s['type'], 'label' => $s['label'] ?? $s['type'], 'page' => $s['page'] ?? null, 'quote' => $s['quote']], $srcs)];
-                $doc = Db::value("SELECT source_id FROM fact_sources WHERE fact_id = ? AND revision_no = ? AND source_type = 'document' AND covers <> 'context' LIMIT 1", [$fid, $f['current_revision']]);
-                if ($doc) $docs[(int)$doc] = true;
             }
-            if (count($docs) === 1) $ctx['document'] = self::documentContext((int)array_key_first($docs), null);
+            $doc = self::sourceCheckDocument($t);
+            if ($doc) $ctx['document'] = $doc;
         }
         if ($t['kind'] === 'rewrite_check') {
             // Each rewrite beside the original it must say exactly, with the notation it follows.
@@ -1020,6 +1026,22 @@ final class AiTaskController
             }
         }
         if ($t['kind'] === 'second_reading') $ctx += ConsolidationController::secondContext($pid, self::batchItems($t));
+        if ($t['kind'] === 'proof_review') {
+            // Each proof with what it may rely on: its dependencies, assumed as stated, and the outside results it still uses.
+            $graph = array_column(FactController::graph($pid)['facts'], null, 'id');
+            $ctx['facts'] = [];
+            foreach (self::batchFacts($t) as $fid) {
+                $f = Db::one('SELECT f.id, f.label, f.title, f.kind, r.statement_html, r.proof_html, r.external_refs_json FROM facts f JOIN fact_revisions r ON r.fact_id = f.id AND r.revision_no = f.current_revision WHERE f.id = ? AND f.project_id = ?', [$fid, $pid]);
+                if (!$f) continue;
+                $ctx['facts'][] = ['fact_id' => (int)$f['id'], 'label' => $f['label'], 'title' => $f['title'], 'kind' => $f['kind'],
+                    'statement' => Sanitizer::toText((string)$f['statement_html']), 'proof' => Sanitizer::toText((string)$f['proof_html']),
+                    'external_refs' => json_decode((string)$f['external_refs_json'], true),
+                    'outside_refs' => array_values(array_map(fn($x) => ['label' => $x['label'], 'settled' => $x['resolved']], $graph[$fid]['outside_refs'] ?? [])),
+                    'dependencies' => array_map(fn($d) => ['label' => $d['label'], 'title' => $d['title'], 'statement' => Sanitizer::toText((string)$d['statement_html']),
+                        'basis' => $graph[(int)$d['id']]['basis'] ?? null, 'status' => $graph[(int)$d['id']]['status'] ?? null], Db::all(
+                        'SELECT f.id, f.label, f.title, r.statement_html FROM fact_deps d JOIN facts f ON f.id = d.depends_on_id JOIN fact_revisions r ON r.fact_id = f.id AND r.revision_no = f.current_revision WHERE d.fact_id = ? LIMIT 50', [$fid]))];
+            }
+        }
         if ($t['kind'] === 'extract') {
             $ctx['comments'] = array_slice(array_map(function ($c) {
                 $a = json_decode((string)$c['anchor_json'], true);
@@ -1087,8 +1109,8 @@ final class AiTaskController
                 $ctx['fact']['sources'] = array_values(array_map(fn($s) => ['type' => $s['type'], 'label' => $s['label'] ?? $s['type'], 'page' => $s['page'] ?? null, 'quote' => $s['quote']],
                     array_filter(FactController::presentSources($id, (int)$ctx['fact']['current_revision']), fn($s) => !$s['hidden'] && $s['covers'] !== 'context')));
                 unset($ctx['fact']['proof']);
-                $doc = Db::value("SELECT source_id FROM fact_sources WHERE fact_id = ? AND revision_no = ? AND source_type = 'document' AND covers <> 'context' LIMIT 1", [$id, $ctx['fact']['current_revision']]);
-                if ($doc) $ctx['document'] = self::documentContext((int)$doc, null);
+                $doc = self::sourceCheckDocument($t);
+                if ($doc) $ctx['document'] = $doc;
             }
             if (in_array($t['kind'], ['review', 'lean'], true)) {
                 $ctx['fact']['external_refs'] = json_decode((string)Db::value('SELECT external_refs_json FROM fact_revisions WHERE fact_id = ? AND revision_no = ?', [$id, $ctx['fact']['current_revision']]), true);
@@ -1123,6 +1145,41 @@ final class AiTaskController
     private static function thread(array $rows): array
     {
         return array_map(fn($m) => ['id' => (int)$m['id'], 'author' => $m['author'], 'is_ai' => $m['kind'] === 'agent', 'at' => $m['created_at'], 'text' => Sanitizer::toText((string)$m['body_html'])], $rows);
+    }
+
+    /**
+     * The text a source check reads: the document its cited results were found in, or the PDF of their reference. A batch shares
+     * one source; when its results come from several, none is given. Null: the AI has only web search, and says when it could not read.
+     */
+    public static function sourceCheckDocument(array $t): ?array
+    {
+        $facts = $t['source_type'] === 'fact' ? [(int)$t['source_id']] : self::batchFacts($t);
+        $found = [];
+        foreach ($facts as $fid) {
+            $s = self::readableSource($fid);
+            $found[$s ? $s[0] . ':' . $s[1] : ''] = $s;
+        }
+        if (count($found) !== 1 || !($s = reset($found))) return null;
+        return $s[0] === 'document' ? self::documentContext($s[1], null) : self::referenceDocument($s[1]);
+    }
+
+    /** Where a cited result can be read: the project file it was found in, else its reference when that has a PDF. @return ?array{0: string, 1: int} */
+    public static function readableSource(int $fid): ?array
+    {
+        $rev = (int)Db::value('SELECT current_revision FROM facts WHERE id = ?', [$fid]);
+        $doc = Db::value("SELECT s.source_id FROM fact_sources s JOIN documents d ON d.id = s.source_id AND d.deleted_at IS NULL WHERE s.fact_id = ? AND s.revision_no = ? AND s.source_type = 'document' AND s.covers <> 'context' LIMIT 1", [$fid, $rev]);
+        if ($doc) return ['document', (int)$doc];
+        $bib = Db::value("SELECT s.source_id FROM fact_sources s JOIN bib_entries b ON b.id = s.source_id AND b.pdf_blob_id IS NOT NULL WHERE s.fact_id = ? AND s.revision_no = ? AND s.source_type = 'bib' AND s.covers <> 'context' LIMIT 1", [$fid, $rev]);
+        return $bib ? ['bib', (int)$bib] : null;
+    }
+
+    /** The PDF of a reference, shaped as a document with one file, which clients download from /api/files/bib/{id}. */
+    private static function referenceDocument(int $bid): ?array
+    {
+        $b = Db::one('SELECT id, cite_key, title FROM bib_entries WHERE id = ? AND pdf_blob_id IS NOT NULL', [$bid]);
+        if (!$b) return null;
+        return ['id' => null, 'reference_id' => (int)$b['id'], 'title' => $b['title'], 'description' => null, 'origin' => 'reference', 'current_version_id' => null, 'version_id' => null,
+            'files' => [['id' => 'bib/' . (int)$b['id'], 'role' => 'pdf', 'filename' => $b['cite_key'] . '.pdf']]];
     }
 
     private static function documentContext(int $id, ?int $versionId): ?array
@@ -1214,14 +1271,17 @@ final class AiTaskController
         if ($t['source_type'] === 'sweep' && !($snap['facts'] ?? $snap['items'] ?? [])) {
             // A sweep takes its batch when a client takes it.
             $subject = ['notation' => 'facts not yet in the project notation', 'source_check' => 'cited results not yet checked',
-                'rewrite_check' => 'rewrites not yet compared with their original', 'second_reading' => 'proposals waiting for people',
+                'rewrite_check' => 'rewrites not yet compared with their original', 'second_reading' => 'proposals waiting for people', 'proof_review' => 'proofs nobody reviewed yet',
                 'consolidate' => 'symbols several facts define, not yet in the project notation'][$t['kind']] ?? null;
         } elseif ($t['source_type'] === 'sweep' && isset($snap['symbols'])) {
-            $n = count($snap['symbols']);
-            $subject = "$n symbol" . ($n === 1 ? '' : 's');
+            $n = count($snap['symbols']); $m = count($snap['types'] ?? []);
+            $subject = implode(' and ', array_filter([$n ? "$n symbol" . ($n === 1 ? '' : 's') : '', $m ? "$m entr" . ($m === 1 ? 'y' : 'ies') . ' to type' : ''])) ?: '0 symbols';
         } elseif ($t['source_type'] === 'sweep' && isset($snap['items'])) {
             $n = count($snap['items']);
             $subject = $t['kind'] === 'rewrite_check' ? "$n rewrite" . ($n === 1 ? '' : 's') : "$n proposal" . ($n === 1 ? '' : 's');
+        } elseif ($t['kind'] === 'proof_review' && $t['source_type'] === 'sweep') {
+            $n = count(json_decode((string)$t['snapshot_json'], true)['facts'] ?? []);
+            $subject = "$n proof" . ($n === 1 ? '' : 's');
         } elseif ($t['kind'] === 'notation' && $t['source_type'] === 'sweep') {
             $n = count(json_decode((string)$t['snapshot_json'], true)['facts']);
             $subject = "$n fact" . ($n === 1 ? '' : 's');
@@ -1253,7 +1313,7 @@ final class AiTaskController
 
     /** Lower runs sooner. */
     private const PRIORITY = ['ask' => 10, 'review' => 20, 'source_check' => 30, 'bib' => 30, 'consolidate' => 40, 'notation' => 40, 'lean' => 40,
-        'second_reading' => 45, 'notation_settle' => 45, 'derive' => 50, 'source_sweep' => 55, 'notation_rephrase' => 60, 'rewrite_check' => 65, 'extract' => 70];
+        'second_reading' => 45, 'notation_settle' => 45, 'derive' => 50, 'source_sweep' => 55, 'notation_rephrase' => 60, 'rewrite_check' => 65, 'proof_review' => 68, 'extract' => 70];
     /** A member's own request goes before the same work queued by the platform. */
     private const ASKED_BOOST = 10;
 

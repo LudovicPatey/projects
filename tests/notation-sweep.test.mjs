@@ -43,7 +43,7 @@ test('a symbols sweep settles every symbol without an entry: adopt, local, or an
   assert.deepEqual(syms, ['\\lambda(n)', '\\mathrm{Subt}', '\\mathsf{RT}^1', '\\mathsf{RT}^1_{<\\infty}'].sort());
   assert.ok(t.context.notation.some((n) => n.id === mu), 'with the entries, to attach a spelling to');
   assert.ok(!t.context.fact_texts, 'not the whole database');
-  const r = await answer(t, { summary: '', decisions: [
+  const r = await answer(t, { summary: '', types: [], decisions: [
     { symbol: '\\mathsf{RT}^1', action: 'adopt', entry: null, project_symbol: '\\mathsf{RT}^1', meaning: 'Every finite coloring of $\\mathbb{N}$ has an infinite homogeneous set.', note: '', variants: [], params: [], fact: ids.a, reason: 'Equivalent wordings of one principle.' },
     { symbol: '\\mathrm{Subt}', action: 'local', entry: null, project_symbol: null, meaning: 'Closed under differences, in this paper.', note: null, variants: [], params: [], fact: ids.a, reason: 'One paper\'s name.' },
     { symbol: '\\lambda(n)', action: 'adopt', entry: null, project_symbol: '\\lambda(n)', meaning: 'The least binary exponent of $n$.', note: '', variants: [], params: [], fact: ids.a, reason: 'Used beside mu.' },
@@ -58,7 +58,17 @@ test('a symbols sweep settles every symbol without an entry: adopt, local, or an
   assert.equal(by('\\mathrm{Subt}').status, 'local'); assert.equal(by('\\mathrm{Subt}').definition_fact_id, ids.a, 'a local entry knows its paper');
   assert.ok(by('\\mu(n)').variants.some((v) => v.relation === 'instance'), 'a spelling recorded on the entry');
   assert.equal((await shared()).filter((x) => !x.entry).length, 0, 'nothing left without an entry');
-  assert.equal((await claim(['consolidate'])).data.task, null, 'nothing left to settle');
+  // The entries it adopted are written with a parameter nobody typed: the next sweep says what it stands for.
+  const typing = (await claim(['consolidate'])).data.task;
+  assert.ok(typing, 'a sweep for the types'); assert.equal(typing.context.symbols.length, 0);
+  const lam = typing.context.entries_to_type.find((x) => x.symbol === '\\lambda(n)');
+  assert.deepEqual(lam.params, ['n']);
+  const tr = await answer(typing, { summary: '', decisions: [], types: [{ entry: lam.id, params: [{ name: 'n', type: 'positive integers' }, { name: 'zz', type: 'ignored: not a parameter' }] }, { entry: 999999, params: [{ name: 'n', type: 'x' }] }] });
+  assert.equal(tr.status, 200, JSON.stringify(tr.data)); assert.match(tr.data.summary_text, /1 entry typed/);
+  const lamEntry = (await app.call(ann, 'GET', `/api/projects/${pid}/notation`)).data.entries.find((x) => x.id === lam.id);
+  assert.deepEqual(lamEntry.params, [{ name: 'n', type: 'positive integers' }]);
+  assert.equal(lamEntry.status, 'agreed', 'typing changes nothing else');
+  assert.equal((await claim(['consolidate'])).data.task, null, 'nothing left to settle: an entry read once is not read again');
   const cons = (await app.call(ann, 'GET', `/api/projects/${pid}/consolidation`)).data;
   assert.equal(cons.suggestions.filter((x) => x.kind === 'notation' && x.auto_applied).length, 3, 'each choice listed under Consolidate, undoable');
   assert.equal(cons.waiting, null, 'the sweep is not shown as a waiting consolidation');
@@ -87,7 +97,7 @@ test('the sweep also settles proposed entries by their id, keeps the facts\' spe
   const syms = t.context.symbols.map((x) => x.symbol);
   assert.ok(['P-branch', 'P-condition'].every((x) => syms.includes(x)) && !syms.some((x) => x.includes(',') || x.includes('$')), `one-word names are split: ${syms}`);
   assert.equal(t.context.symbols.find((x) => x.symbol === 'fip').entry.id, prop, 'a proposed entry comes with its symbol');
-  const r = await app.call(key, 'POST', `/api/ai/tasks/${t.id}/answer`, { lease: t.lease, ai_model: 'claude-opus-5-5', answer: { summary: '', decisions: [
+  const r = await app.call(key, 'POST', `/api/ai/tasks/${t.id}/answer`, { lease: t.lease, ai_model: 'claude-opus-5-5', answer: { summary: '', types: [], decisions: [
     { symbol: 'fip', action: 'adopt', entry: prop, project_symbol: null, meaning: null, note: null, variants: [], params: [], fact: null, reason: 'Standard.' },
     { symbol: 'semigroup', action: 'adopt', entry: null, project_symbol: 'semigroup (\\beta\\mathbb N)', meaning: 'Hirst\'s code for a closed subsemigroup of $\\beta\\mathbb N$.', note: '', variants: [], params: [], fact: f.a, reason: 'One notion.' },
   ] } });
@@ -97,7 +107,7 @@ test('the sweep also settles proposed entries by their id, keeps the facts\' spe
   assert.ok(n.shared.find((x) => x.symbol === 'semigroup').entry, 'the facts\' spelling counts as the adopted entry');
   t = (await claimP()).data.task;
   assert.ok(t.context.symbols.some((x) => x.symbol === 'P-branch'), 'a symbol left once is read once more');
-  await app.call(key, 'POST', `/api/ai/tasks/${t.id}/answer`, { lease: t.lease, ai_model: 'claude-opus-5-5', answer: { summary: '', decisions: [] } });
+  await app.call(key, 'POST', `/api/ai/tasks/${t.id}/answer`, { lease: t.lease, ai_model: 'claude-opus-5-5', answer: { summary: '', types: [], decisions: [] } });
   assert.equal((await claimP()).data.task, null, 'but not a third time');
 });
 
@@ -118,7 +128,7 @@ test('an expression in agreed symbols needs no entry, an indexed one does, and t
   const syms = t.context.symbols.map((x) => x.symbol);
   assert.ok(!syms.includes('\\mathrm{FIN}\\cup\\{\\emptyset\\}') && syms.includes('\\mathrm{FIN}_k'), `${syms}`);
   assert.match(t.recipe.instructions, /never adopt or keep local a mere combination/);
-  const r = await app.call(key, 'POST', `/api/ai/tasks/${t.id}/answer`, { lease: t.lease, ai_model: 'claude-opus-5-5', answer: { summary: '', decisions: [
+  const r = await app.call(key, 'POST', `/api/ai/tasks/${t.id}/answer`, { lease: t.lease, ai_model: 'claude-opus-5-5', answer: { summary: '', types: [], decisions: [
     { symbol: '\\mathcal P_{fin}(\\mathbb N)', action: 'reject', entry: prop, project_symbol: null, meaning: null, note: null, variants: [], params: [], fact: f.a, reason: 'FIN together with the empty set.' },
     { symbol: '\\mathrm{FIN}_k', action: 'reject', entry: null, project_symbol: null, meaning: null, note: null, variants: [], params: [], fact: f.a, reason: 'Ignored: no entry to reject.' },
   ] } });

@@ -5,6 +5,7 @@ namespace App;
 
 use App\Controllers\AiTaskController;
 use App\Controllers\ConsolidationController;
+use App\Controllers\FactController;
 use App\Controllers\NotationController;
 
 /**
@@ -26,6 +27,7 @@ final class Procedures
             'notation' => ['label' => 'Project notation', 'description' => 'Propose a common notation for the project, and write facts again in it, when a member asks.', 'tier' => 'strong', 'capabilities' => []],
             'consolidate' => ['label' => 'Consolidate the facts', 'description' => 'After extractions, read the whole facts database and propose merges of duplicates, links across sources, open questions, subject tags, the cited results behind the outside references of proofs, and the project\'s notation.', 'tier' => 'strong', 'capabilities' => []],
             'rewrite_check' => ['label' => 'Check rewrites', 'description' => 'Compare each fact an AI rewrote in the project notation with its original, and say whether it states exactly the same. A rewrite found unfaithful is not shown. People can overrule the verdict.', 'tier' => 'strong', 'capabilities' => []],
+            'proof_review' => ['label' => 'Review proofs', 'description' => 'Referee the proofs nobody reviewed yet, a few at a time, as an independent reader: correct, a gap, or an error. Each review is shown with its model, like any AI review, and people can review the fact too.', 'tier' => 'strong', 'capabilities' => []],
             'second_reading' => ['label' => 'Second reading', 'description' => 'Read again the consolidation\'s proposals it was not sure enough to apply, and apply or drop each one, so that people decide only what needs them. Everything can be undone.', 'tier' => 'strong', 'capabilities' => []],
             'source_check' => ['label' => 'Check a cited result', 'description' => 'Read the source of a result cited without proof, and say whether it states the result as written. People still accept it.', 'tier' => 'fast', 'capabilities' => ['document', 'web_search']],
         ];
@@ -111,8 +113,9 @@ TASK: "fact" in task.json is a cited result: a statement that the project takes 
 Check whether its source really states it. "fact.references" names the work it is cited from, and "fact.sources" quote where the project found it.
 When the folder has the text of the source (document.txt or paper.pdf), read it. Otherwise use web search to find the work and the result in it.
 Answer in "verdict": "confirmed" if the work states this result, as written or in an equivalent form; "differs" if it states something
-different, for example with other hypotheses, a weaker conclusion or another setting; "not_found" if you could not find the result in it,
-or could not read the work. In "where", give the theorem number and page when you found it, or an empty string. In "explanation", say what the
+different, for example with other hypotheses, a weaker conclusion or another setting; "not_found" if you read the work and the result is
+not in it; "unreadable" if you could not read the work at all: no text in the folder, and web search did not give you what
+it states. In "where", give the theorem number and page when you found it, or an empty string. In "explanation", say what the
 work states, quoting it briefly, and how it differs when it does. You do not judge whether the result is true, only what the work says.
 TXT,
         'source_check_batch' => <<<'TXT'
@@ -122,7 +125,8 @@ project found the result. When the folder has the text of a source (document.txt
 find each work and the result in it; several results often come from the same work, so read it once.
 Answer in "checks", one entry per result, with its "fact_id". "verdict": "confirmed" if the work states this result, as written or in an
 equivalent form; "differs" if it states something different, for example with other hypotheses, a weaker conclusion or another setting;
-"not_found" if you could not find the result in it, or could not read the work. In "where", give the theorem number and page when you
+"not_found" if you read the work and the result is not in it; "unreadable" if you could not read the work at all: no text in the folder,
+and web search did not give you what it states. In "where", give the theorem number and page when you
 found it, or an empty string. In "explanation", say what the work states, quoting it briefly, and how it differs when it does. You do not
 judge whether a result is true, only what the work says.
 TXT,
@@ -139,6 +143,19 @@ the original meant, a step of the proof dropped or changed. A symbol the rewrite
 another, is faithful when "rewrite.local_notation" defines it with the original's meaning; left undefined, it is unfaithful. In "note", for an unfaithful rewrite, say precisely what changed, quoting
 both; for a faithful one, an empty string or a short remark. Answer in "checks", one entry per rewrite with its "rewrite_id". Leave out
 a rewrite you cannot judge, rather than guess. An unfaithful rewrite is not shown, and the original stays as it is.
+TXT,
+        'proof_review' => <<<'TXT'
+TASK: "facts" in task.json lists facts of the project whose proofs nobody reviewed yet. Act as a strict, independent referee of each one.
+Another AI wrote them, from papers or its own work, so assume nothing. Check the statement and every step of the proof, relative to its
+"dependencies": assume that each dependency holds as stated, including a "cited" one, a result of another work that people check
+against its source, and check that the proof uses each one as stated. Do not search the web: a proof may rely only on its dependencies
+and on standard facts. If it uses a result of another work that is not among its dependencies, report a gap that names it.
+A proof that only says the source proves it, or "follows at once from Lemma 3.1", is correct when the dependencies it names give the
+result at once; otherwise it is a gap.
+Answer in "reviews", one entry per fact with its "fact_id". "verdict": "correct" only if you checked the entire proof and found no
+error or gap; "gap" if a step is unjustified or uses a result that is not among its dependencies; "incorrect" if a step or the statement
+is false, with a counterexample if you can. In "explanation", name the exact location of each issue; for "correct", say what you checked.
+Do not repair the proofs. Leave out a fact you could not check carefully, rather than guess.
 TXT,
         'second_reading' => <<<'TXT'
 TASK: "proposals" in task.json lists changes that an AI proposed after reading the whole facts database of the project, but was not
@@ -180,6 +197,11 @@ yourself, so that people need not:
 A notion the agreed symbols express directly needs no entry: never adopt or keep local a mere combination of them.
 Give "fact": the id of a fact that defines it, from its meanings or its entry. Fields that do not apply are null or empty. In "reason", one sentence for
 the members. Answer in "decisions", one entry per symbol, with its "symbol" as listed. Every choice can be undone.
+"entries_to_type" lists entries of the notation written with parameters, X and Y in "Y \leq X", that do not say what they stand for.
+For each, read its meaning and give in "types" its "entry" id and "params": each parameter of "params" with its "name" as listed and its
+"type", the kind of object it stands for, such as "infinite block sequences", "colorings of pairs" or "natural numbers", in a few words.
+The entry then applies to those objects only, and the same symbol between other objects keeps its own meaning. Leave out an entry whose
+meaning does not say what its parameters are. "decisions" or "types" may be empty.
 TXT,
         'consolidate' => <<<'TXT'
 TASK: consolidate the facts database of this project. Facts were extracted one source at a time, so no extraction
@@ -245,11 +267,12 @@ TXT,
         'notation_rephrase' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'unchanged', 'statement', 'proof', 'local_notation', 'uses'], "properties" => ["summary" => ["type" => 'string'], "unchanged" => ["type" => 'boolean'], "statement" => ["type" => 'string'], "proof" => ["type" => ['string', 'null']], "local_notation" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'meaning'], "properties" => ["symbol" => ["type" => 'string'], "meaning" => ["type" => 'string']]]], "uses" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'meaning_here', 'project_symbol'], "properties" => ["symbol" => ["type" => 'string'], "meaning_here" => ["type" => 'string'], "project_symbol" => ["type" => 'string']]]]]],
         'consolidate' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'suggestions'], "properties" => ["summary" => ["type" => 'string'], "suggestions" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['kind', 'fact', 'other_fact', 'new_kind', 'title', 'topics', 'ref', 'statement', 'notation', 'reason', 'confidence'], "properties" => ["kind" => ["type" => 'string', "enum" => ['same', 'depends', 'kind', 'question', 'topics', 'cite', 'progress', 'notation']], "notation" => ["type" => ['object', 'null'], "additionalProperties" => false, "required" => ['action', 'entry', 'symbol', 'meaning', 'note', 'variants', 'params'], "properties" => ["params" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['name', 'type'], "properties" => ["name" => ["type" => 'string'], "type" => ["type" => 'string']]]], "action" => ["type" => 'string', "enum" => ['adopt', 'local', 'reject']], "entry" => ["type" => ['integer', 'null']], "symbol" => ["type" => ['string', 'null']], "meaning" => ["type" => ['string', 'null']], "note" => ["type" => ['string', 'null']], "variants" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'meaning', 'where', 'relation'], "properties" => ["symbol" => ["type" => 'string'], "meaning" => ["type" => 'string'], "where" => ["type" => 'string'], "relation" => ["type" => 'string', "enum" => ['instance', 'clash']]]]]]], "ref" => ["type" => ['string', 'null']], "statement" => ["type" => ['string', 'null']], "confidence" => ["type" => 'string', "enum" => ['high', 'medium', 'low']], "fact" => ["type" => 'string'], "other_fact" => ["type" => ['string', 'null']], "new_kind" => ["type" => ['string', 'null'], "enum" => ['definition', 'lemma', 'proposition', 'theorem', 'corollary', 'conjecture', 'remark', null]], "title" => ["type" => ['string', 'null']], "topics" => ["type" => 'array', "items" => ["type" => 'string']], "reason" => ["type" => 'string']]]]]],
         'notation_rephrase_batch' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'facts'], "properties" => ["summary" => ["type" => 'string'], "facts" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['fact_id', 'unchanged', 'statement', 'proof', 'local_notation', 'uses'], "properties" => ["fact_id" => ["type" => 'integer'], "unchanged" => ["type" => 'boolean'], "statement" => ["type" => 'string'], "proof" => ["type" => ['string', 'null']], "local_notation" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'meaning'], "properties" => ["symbol" => ["type" => 'string'], "meaning" => ["type" => 'string']]]], "uses" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'meaning_here', 'project_symbol'], "properties" => ["symbol" => ["type" => 'string'], "meaning_here" => ["type" => 'string'], "project_symbol" => ["type" => 'string']]]]]]]]],
-        'source_check_batch' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'checks'], "properties" => ["summary" => ["type" => 'string'], "checks" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['fact_id', 'verdict', 'where', 'explanation'], "properties" => ["fact_id" => ["type" => 'integer'], "verdict" => ["type" => 'string', "enum" => ['confirmed', 'differs', 'not_found']], "where" => ["type" => 'string'], "explanation" => ["type" => 'string']]]]]],
+        'source_check_batch' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'checks'], "properties" => ["summary" => ["type" => 'string'], "checks" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['fact_id', 'verdict', 'where', 'explanation'], "properties" => ["fact_id" => ["type" => 'integer'], "verdict" => ["type" => 'string', "enum" => ['confirmed', 'differs', 'not_found', 'unreadable']], "where" => ["type" => 'string'], "explanation" => ["type" => 'string']]]]]],
         'rewrite_check' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'checks'], "properties" => ["summary" => ["type" => 'string'], "checks" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['rewrite_id', 'verdict', 'note'], "properties" => ["rewrite_id" => ["type" => 'integer'], "verdict" => ["type" => 'string', "enum" => ['faithful', 'unfaithful']], "note" => ["type" => 'string']]]]]],
+        'proof_review' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'reviews'], "properties" => ["summary" => ["type" => 'string'], "reviews" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['fact_id', 'verdict', 'explanation'], "properties" => ["fact_id" => ["type" => 'integer'], "verdict" => ["type" => 'string', "enum" => ['correct', 'gap', 'incorrect']], "explanation" => ["type" => 'string']]]]]],
         'second_reading' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'decisions'], "properties" => ["summary" => ["type" => 'string'], "decisions" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['suggestion_id', 'verdict', 'reason'], "properties" => ["suggestion_id" => ["type" => 'integer'], "verdict" => ["type" => 'string', "enum" => ['apply', 'drop', 'unsure']], "reason" => ["type" => 'string']]]]]],
-        'consolidate_notation' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'decisions'], "properties" => ["summary" => ["type" => 'string'], "decisions" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'action', 'entry', 'project_symbol', 'meaning', 'note', 'variants', 'params', 'fact', 'reason'], "properties" => ["symbol" => ["type" => 'string'], "params" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['name', 'type'], "properties" => ["name" => ["type" => 'string'], "type" => ["type" => 'string']]]], "action" => ["type" => 'string', "enum" => ['adopt', 'local', 'same', 'reject']], "entry" => ["type" => ['integer', 'null']], "project_symbol" => ["type" => ['string', 'null']], "meaning" => ["type" => ['string', 'null']], "note" => ["type" => ['string', 'null']], "variants" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'meaning', 'where', 'relation'], "properties" => ["symbol" => ["type" => 'string'], "meaning" => ["type" => 'string'], "where" => ["type" => 'string'], "relation" => ["type" => 'string', "enum" => ['instance', 'clash']]]]], "fact" => ["type" => ['integer', 'null']], "reason" => ["type" => 'string']]]]]],
-        'source_check' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'verdict', 'where', 'explanation'], "properties" => ["summary" => ["type" => 'string'], "verdict" => ["type" => 'string', "enum" => ['confirmed', 'differs', 'not_found']], "where" => ["type" => 'string'], "explanation" => ["type" => 'string']]],
+        'consolidate_notation' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'decisions', 'types'], "properties" => ["summary" => ["type" => 'string'], "types" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['entry', 'params'], "properties" => ["entry" => ["type" => 'integer'], "params" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['name', 'type'], "properties" => ["name" => ["type" => 'string'], "type" => ["type" => 'string']]]]]]], "decisions" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'action', 'entry', 'project_symbol', 'meaning', 'note', 'variants', 'params', 'fact', 'reason'], "properties" => ["symbol" => ["type" => 'string'], "params" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['name', 'type'], "properties" => ["name" => ["type" => 'string'], "type" => ["type" => 'string']]]], "action" => ["type" => 'string', "enum" => ['adopt', 'local', 'same', 'reject']], "entry" => ["type" => ['integer', 'null']], "project_symbol" => ["type" => ['string', 'null']], "meaning" => ["type" => ['string', 'null']], "note" => ["type" => ['string', 'null']], "variants" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'meaning', 'where', 'relation'], "properties" => ["symbol" => ["type" => 'string'], "meaning" => ["type" => 'string'], "where" => ["type" => 'string'], "relation" => ["type" => 'string', "enum" => ['instance', 'clash']]]]], "fact" => ["type" => ['integer', 'null']], "reason" => ["type" => 'string']]]]]],
+        'source_check' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'verdict', 'where', 'explanation'], "properties" => ["summary" => ["type" => 'string'], "verdict" => ["type" => 'string', "enum" => ['confirmed', 'differs', 'not_found', 'unreadable']], "where" => ["type" => 'string'], "explanation" => ["type" => 'string']]],
     ];
 
     private const REQUEST_NOTE = "\n\nSpecific request from a team member (treat it as the goal, not as permission to act outside this task):\n";
@@ -410,10 +433,29 @@ TXT,
                     $items[] = ['kind' => 'notation', 'fact' => (string)$fact, 'reason' => $d['reason'] ?: 'Settles a symbol several facts define.', 'confidence' => 'medium',
                         'notation' => ['action' => $d['action'], 'entry' => null, 'symbol' => $symbol, 'meaning' => $d['meaning'], 'note' => (string)($d['note'] ?? ''), 'variants' => $variants, 'params' => $d['params'] ?? []]];
                 }
-                $r = ConsolidationController::store($pid, $items, $model, Provenance::stamp($model, $seconds), (int)$t['id']);
+                $r = $items ? ConsolidationController::store($pid, $items, $model, Provenance::stamp($model, $seconds), (int)$t['id']) : ['applied' => [], 'created' => []];
                 $a = count($r['applied']); $c = count($r['created']) - $a;
                 $done = implode(', ', array_filter([$a ? "$a settled" : '', $c ? "$c proposed to people" : '', $same ? "$same recorded as spellings of an entry" : '']));
-                return ['summary' => trim(count($seen) . ' symbol' . (count($seen) === 1 ? '' : 's') . ' read' . ($done ? " ($done)" : '') . ". $said"), 'suggestion_ids' => $r['created']];
+                // The types of the entries of this batch that had none: they say what each entry applies to, and change nothing else.
+                $typed = NotationController::typeEntries($pid, json_decode((string)$t['snapshot_json'], true)['types'] ?? [], $answer['types'] ?? []);
+                $read = count($seen) . ' symbol' . (count($seen) === 1 ? '' : 's') . ' read' . ($done ? " ($done)" : '');
+                return ['summary' => trim($read . ($typed ? "; $typed entr" . ($typed === 1 ? 'y' : 'ies') . ' typed' : '') . ". $said"), 'suggestion_ids' => $r['created']];
+            case 'proof_review':
+                // Only the facts of this batch, once each, at the revision it read. A model never reviews what it wrote: that one is skipped.
+                $mine = array_flip(AiTaskController::batchFacts($t)); $ids = []; $by = ['correct' => 0, 'gap' => 0, 'incorrect' => 0]; $refused = 0;
+                $each = is_numeric($seconds) ? $seconds / max(1, count($answer['reviews'])) : null;
+                foreach ($answer['reviews'] as $v) {
+                    $fid = (int)$v['fact_id'];
+                    if (!isset($mine[$fid]) || in_array($fid, $ids, true)) continue;
+                    $text = trim((string)$v['explanation']) ?: ($v['verdict'] === 'correct' ? 'No issue found.' : '');
+                    if ($text === '') continue;
+                    try { FactController::recordReview(Request::internal(['verdict' => $v['verdict'], 'body_text' => $text, 'ai_model' => $model, 'generation_seconds' => $each], ['id' => $fid])); }
+                    catch (HttpError $e) { if (!in_array($e->status, [403, 409, 422], true)) throw $e; $refused++; continue; }
+                    $ids[] = $fid; $by[$v['verdict']]++;
+                }
+                $n = count($ids);
+                $what = implode(', ', array_filter([$by['correct'] ? "{$by['correct']} correct" : '', $by['gap'] ? "{$by['gap']} with a gap" : '', $by['incorrect'] ? "{$by['incorrect']} with an error" : '', $refused ? "$refused this model wrote" : '']));
+                return ['summary' => trim("$n proof" . ($n === 1 ? '' : 's') . ' reviewed' . ($what ? " ($what)" : '') . ". $said"), 'fact_ids' => $ids];
             case 'second_reading':
                 $mine = array_flip(AiTaskController::batchItems($t)); $ids = []; $by = ['applied' => 0, 'dropped' => 0, 'unsure' => 0, 'failed' => 0];
                 foreach ($answer['decisions'] as $d) {
@@ -428,7 +470,7 @@ TXT,
                 $n = count($ids);
                 return ['summary' => trim("$n proposal" . ($n === 1 ? '' : 's') . ' read again' . ($what ? " ($what)" : '') . ". $said"), 'suggestion_ids' => $ids];
             case 'source_check_batch':
-                $ids = []; $by = ['confirmed' => 0, 'differs' => 0, 'not_found' => 0];
+                $ids = []; $by = ['confirmed' => 0, 'differs' => 0, 'not_found' => 0, 'unreadable' => 0];
                 $mine = array_flip(AiTaskController::batchFacts($t));
                 foreach ($answer['checks'] as $c) {
                     $fid = (int)$c['fact_id'];
@@ -437,7 +479,7 @@ TXT,
                     $ids[] = $fid; $by[$c['verdict']]++;
                 }
                 $n = count($ids);
-                $what = implode(', ', array_filter([$by['confirmed'] ? "{$by['confirmed']} confirmed" : '', $by['differs'] ? "{$by['differs']} differ" : '', $by['not_found'] ? "{$by['not_found']} not found" : '']));
+                $what = implode(', ', array_filter([$by['confirmed'] ? "{$by['confirmed']} confirmed" : '', $by['differs'] ? "{$by['differs']} differ" : '', $by['not_found'] ? "{$by['not_found']} not found" : '', $by['unreadable'] ? "{$by['unreadable']} with a source it could not read" : '']));
                 return ['summary' => trim("$n cited result" . ($n === 1 ? '' : 's') . ' checked' . ($what ? " ($what)" : '') . ". $said"), 'fact_ids' => $ids];
         }
         throw new HttpError(422, 'Unknown procedure.');
@@ -453,9 +495,11 @@ TXT,
         if (trim((string)$answer['where']) !== '') $text .= "\n\nWhere: " . trim((string)$answer['where']);
         Db::insert('fact_source_checks', Provenance::stamp($model, $seconds) + ['fact_id' => $fid, 'revision_no' => (int)$f['current_revision'], 'verdict' => $answer['verdict'],
             'body_html' => $text !== '' ? Sanitizer::clean(Sanitizer::textToHtml($text, (int)$f['project_id']))['html'] : null, 'ai_model' => $model,
-            'checked_by' => Auth::id(), 'task_id' => (int)$t['id'], 'created_at' => Db::now()]);
+            'checked_by' => Auth::id(), 'task_id' => (int)$t['id'], 'created_at' => Db::now(),
+            // Whether the AI had the text of the source: a check made blind is made again once the source can be read.
+            'had_source' => isset($t['kind']) && AiTaskController::sourceCheckDocument($t) ? 1 : 0]);
         Activity::touch((int)$f['project_id'], 'fact', $fid, 'updated');
-        $said = ['confirmed' => 'The source states it', 'differs' => 'The source states something different', 'not_found' => 'The result was not found in the source'][$answer['verdict']];
+        $said = ['confirmed' => 'The source states it', 'differs' => 'The source states something different', 'not_found' => 'The result was not found in the source', 'unreadable' => 'The source could not be read'][$answer['verdict']];
         return ['summary' => trim("$said. " . trim((string)$answer['summary'])), 'fact_ids' => [$fid]];
     }
 

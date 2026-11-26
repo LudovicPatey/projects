@@ -26,7 +26,7 @@ const CHAIN = {
   unchecked: 'Depends on an unchecked fact or a citation nobody accepted',
   incomplete: 'Depends on a proof that still uses an outside result directly',
 };
-const SOURCE_CHECK = { confirmed: ['The source states it', 'green'], differs: ['The source states something different', 'amber'], not_found: ['Not found in the source', 'amber'] };
+const SOURCE_CHECK = { confirmed: ['The source states it', 'green'], differs: ['The source states something different', 'amber'], not_found: ['Not found in the source', 'amber'], unreadable: ['The source could not be read', ''] };
 
 const BASIS = {
   message_author: 'author of the message', comment_author: 'author of the comment', bibliography: 'authors in the bibliography',

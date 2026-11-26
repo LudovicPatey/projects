@@ -599,6 +599,30 @@ final class NotationController
         return false;
     }
 
+    /**
+     * Types given by the symbols sweep to entries of its batch that had none. Only the parameters the symbol is written with, and
+     * never types someone already gave. @return int the entries typed
+     */
+    public static function typeEntries(int $pid, array $batch, array $given): int
+    {
+        $mine = array_flip(array_map('intval', $batch));
+        $typed = 0;
+        foreach ($given as $g) {
+            $id = (int)($g['entry'] ?? 0);
+            if (!isset($mine[$id])) continue;
+            unset($mine[$id]);
+            $n = Db::one('SELECT id, symbol, params_json FROM notations WHERE id = ? AND project_id = ?', [$id, $pid]);
+            if (!$n || self::typed((string)$n['params_json'])) continue;
+            $names = array_flip(array_map([self::class, 'paramKey'], array_column(self::paramsOf($n), 'name')));
+            $params = array_values(array_filter(self::params(is_array($g['params'] ?? null) && array_is_list($g['params']) ? $g['params'] : []),
+                fn($p) => isset($names[self::paramKey($p['name'])]) && trim($p['type']) !== ''));
+            if (!$params) continue;
+            Db::update('notations', ['params_json' => json_encode($params, JSON_UNESCAPED_UNICODE), 'updated_at' => Db::now()], 'id = :id', ['id' => $id]);
+            $typed++;
+        }
+        return $typed;
+    }
+
     /** A piece of a symbol cut at a LaTeX thin space, such as X\ out of X\,\tilde\in\,U, or two symbols kept as one, X[b]$, $X[Y]. */
     public static function brokenSymbol(string $symbol): bool
     {

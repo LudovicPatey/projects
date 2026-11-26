@@ -16,6 +16,7 @@ export const AI_KINDS = {
 export const SWEEP_KINDS = {
   rewrite_check: { label: 'Check rewrites in the project notation', short: 'Rewrite check', icon: 'eye', hint: 'A second AI compares each rewrite with its original. One that changes the meaning is not shown. People can overrule it.' },
   notation_settle: { label: 'Settle the project notation', short: 'Notation sweep', icon: 'book', hint: 'Decides the symbols several facts define and the project notation does not have yet: global, local to their paper, or another spelling of an entry.' },
+  proof_review: { label: 'Review proofs nobody reviewed', short: 'Proof review', icon: 'check-circle', hint: 'An independent AI referees each proof nobody reviewed, the facts others rely on first: correct, a gap or an error. It counts like any AI review, and people can review too.' },
   second_reading: { label: 'Second reading of proposals', short: 'Second reading', icon: 'eye', hint: 'Another AI reads again the consolidation proposals it was not sure of, applies those it agrees with and drops the others.' },
 };
 

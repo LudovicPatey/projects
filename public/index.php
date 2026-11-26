@@ -81,6 +81,8 @@ $routes = [
     ['POST',   '/api/documents/{id}/versions',            [DocumentController::class, 'addVersion']],
     ['POST',   '/api/documents/{id}/versions/{vid}/restore', [DocumentController::class, 'restore']],
     ['GET',    '/api/files/{fid}',                        [DocumentController::class, 'file']],
+    // The PDF of a reference, given to AI clients as the file of a document ("bib/{id}"), so that a source check can read it.
+    ['GET',    '/api/files/bib/{id}',                     [BibController::class, 'pdf']],
     ['GET',    '/api/versions/{vid}/zip',                 [DocumentController::class, 'zip']],
     // bug reports and feature requests
     ['GET',    '/api/feedback',                           [FeedbackController::class, 'list']],

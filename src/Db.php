@@ -215,6 +215,8 @@ final class Db
         if (!self::isSqlite()) $migrations[] = 'ALTER TABLE ai_tasks MODIFY kind VARCHAR(40) NOT NULL';
         // The objects a notation entry is written with, X and Y in "Y \\leq X", and their type: it applies to those only.
         $migrations[] = 'ALTER TABLE notations ADD COLUMN params_json TEXT NULL';
+        // Whether a source check had the text of the source: one made blind is made again once the source is readable.
+        $migrations[] = 'ALTER TABLE fact_source_checks ADD COLUMN had_source TINYINT(1) NULL';
         foreach ($migrations as $m) {
             try { self::pdo()->exec($m); } catch (\PDOException) { /* already applied */ }
         }

@@ -669,6 +669,13 @@ final class FactController
     /** One review per reviewer and revision: reviewing again replaces the previous verdict. */
     public static function review(Request $r): never
     {
+        [$fid, $created] = self::recordReview($r);
+        Response::json(self::present(Access::fact($fid)), $created ? 201 : 200);
+    }
+
+    /** Records a review of a fact's current revision, by a person or an AI. @return array{0: int, 1: bool} the fact, and whether the review is new */
+    public static function recordReview(Request $r): array
+    {
         $f = Access::fact($r->int('id'));
         if ($f['retracted_at']) throw new HttpError(422, 'This fact is retracted.');
         $verdict = $r->str('verdict');
@@ -710,7 +717,7 @@ final class FactController
         if ((int)$rev['author_id'] !== Auth::id() && Access::isMember((int)$f['project_id'], (int)$rev['author_id'])) {
             Notify::send((int)$rev['author_id'], (int)$f['project_id'], 'fact_review', ['link' => $link, 'excerpt' => $f['label'] . ': ' . $verdict]);
         }
-        Response::json(self::present(Access::fact((int)$f['id'])), $old ? 200 : 201);
+        return [(int)$f['id'], !$old];
     }
 
     /**
