@@ -699,16 +699,27 @@ final class FactController
         }
         $model = Provenance::agentModel($r);
         $now = Db::now();
-        $old = Db::value('SELECT id FROM fact_reviews WHERE fact_id = ? AND revision_no = ? AND reviewer_id = ? AND reviewer_kind = ?', [$f['id'], $f['current_revision'], Auth::id(), $kind]);
+        // A person has one review of a revision; an AI client has one per model, so that two models give two independent reviews.
+        $old = $kind === 'agent'
+            ? Db::value('SELECT id FROM fact_reviews WHERE fact_id = ? AND revision_no = ? AND reviewer_id = ? AND reviewer_kind = ? AND LOWER(ai_model) = ?', [$f['id'], $f['current_revision'], Auth::id(), $kind, mb_strtolower(trim((string)$model))])
+            : Db::value('SELECT id FROM fact_reviews WHERE fact_id = ? AND revision_no = ? AND reviewer_id = ? AND reviewer_kind = ?', [$f['id'], $f['current_revision'], Auth::id(), $kind]);
         $row = Provenance::stamp($model, $r->input('generation_seconds')) + ['verdict' => $verdict, 'statement_verdict' => $statement, 'ai_model' => $model, 'body_html' => $body['html'] ?? null, 'updated_at' => $now];
         if ($old) {
             Db::update('fact_reviews', $row, 'id = :id', ['id' => $old]);
             $rid = (int)$old;
         } else {
-            $rid = Db::insert('fact_reviews', $row + [
-                'fact_id' => $f['id'], 'revision_no' => $f['current_revision'], 'reviewer_id' => Auth::id(),
-                'reviewer_kind' => $kind, 'created_at' => $now,
-            ]);
+            try {
+                $rid = Db::insert('fact_reviews', $row + [
+                    'fact_id' => $f['id'], 'revision_no' => $f['current_revision'], 'reviewer_id' => Auth::id(),
+                    'reviewer_kind' => $kind, 'created_at' => $now,
+                ]);
+            } catch (\PDOException $e) {
+                // A local SQLite database made before reviews were kept per model: the review of this member is replaced, as before.
+                $prev = Db::value('SELECT id FROM fact_reviews WHERE fact_id = ? AND revision_no = ? AND reviewer_id = ? AND reviewer_kind = ?', [$f['id'], $f['current_revision'], Auth::id(), $kind]);
+                if (!$prev) throw $e;
+                Db::update('fact_reviews', $row, 'id = :id', ['id' => $prev]);
+                $rid = (int)$prev; $old = $prev;
+            }
         }
         Activity::touch((int)$f['project_id'], 'fact', (int)$f['id'], 'review', $rid);
         if ($verdict !== 'correct') QuestionController::factChanged((int)$f['project_id'], (int)$f['id'], "{$f['label']} was " . ($statement === 'true' ? 'accepted with a disputed proof' : ($verdict === 'incorrect' ? 'denied' : 'reported with a gap')));

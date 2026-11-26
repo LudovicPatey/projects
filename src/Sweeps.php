@@ -183,6 +183,15 @@ final class Sweeps
      * Proved facts whose current revision nobody reviewed, person or AI, and that no review sweep read yet: those many facts rely on
      * first, then the facts worth reading, then the others. @return list<int> fact ids
      */
+    /** How many models may read a proof without reviewing it before it is left to people. */
+    public const REVIEW_READERS = 2;
+
+    /** The models that read each proof without reviewing it, by "fact:revision", lowercased. */
+    public static function reviewReaders(int $pid): array
+    {
+        return self::tried($pid, 'proof_review', null);
+    }
+
     public static function reviewCandidates(int $pid, ?array $graph = null): array
     {
         if (!Config::get('sweeps.review', true)) return [];
@@ -192,7 +201,8 @@ final class Sweeps
         $out = [];
         foreach (($graph ?? FactController::graph($pid))['facts'] as $f) {
             $key = (int)$f['id'] . ':' . (int)$f['current_revision'];
-            if ($f['basis'] !== 'proved' || $f['status'] !== 'unchecked' || $f['retracted_at'] !== null || isset($reviewed[(int)$f['id']]) || isset($tried[$key])) continue;
+            if ($f['basis'] !== 'proved' || $f['status'] !== 'unchecked' || $f['retracted_at'] !== null || isset($reviewed[(int)$f['id']])) continue;
+            if (count(array_unique($tried[$key] ?? [])) >= self::REVIEW_READERS) continue; // read by two models without a review: left to people
             $out[] = [(int)$f['id'], count($f['dependents']) * 2 + (!empty($f['worth_reading']) ? 5 : 0)];
         }
         usort($out, fn($a, $b) => [$b[1], $a[0]] <=> [$a[1], $b[0]]);
@@ -291,7 +301,7 @@ final class Sweeps
     private static function tried(int $pid, string $kind, ?string $hash): array
     {
         $done = [];
-        foreach (Db::all("SELECT source_type, dedupe_key, snapshot_json, status FROM ai_tasks WHERE project_id = ? AND kind = ? AND status IN ('done', 'failed')", [$pid, $kind]) as $t) {
+        foreach (Db::all("SELECT source_type, dedupe_key, snapshot_json, status, ai_model FROM ai_tasks WHERE project_id = ? AND kind = ? AND status IN ('done', 'failed')", [$pid, $kind]) as $t) {
             $snap = json_decode((string)$t['snapshot_json'], true) ?: [];
             if ($kind === 'notation') {
                 // A rewrite tried in this notation, by a sweep that finished: failed sweeps are tried again.
@@ -301,7 +311,8 @@ final class Sweeps
             if ($t['status'] !== 'done') continue;
             if (in_array($kind, ['rewrite_check', 'second_reading'], true)) { foreach ($snap['items'] ?? [] as $id) $done[(int)$id] = true; continue; }
             // A proof read at one revision: a new revision is read again.
-            if ($kind === 'proof_review') { foreach ($snap['facts'] ?? [] as [$f, $rev]) $done["$f:$rev"] = true; continue; }
+            // The models that read it, at its revision: one that left it out, unable to check it, hands it to another model once.
+            if ($kind === 'proof_review') { foreach ($snap['facts'] ?? [] as [$f, $rev]) $done["$f:$rev"][] = mb_strtolower(trim((string)$t['ai_model'])); continue; }
             if ($kind === 'consolidate') {
                 if ($t['source_type'] === 'sweep') {
                     foreach ($snap['symbols'] ?? [] as $k) {
@@ -362,10 +373,13 @@ final class Sweeps
             $batch = []; $chars = 0; $full = false;
             // A model never reviews what it wrote: those proofs wait for a client running another model, instead of being refused
             // and then counted as read.
+            // Nor one this model already read and left out: another model gets it.
             $model = mb_strtolower(trim((string)($t['ai_model'] ?? '')));
+            $readers = self::reviewReaders($pid);
             foreach (self::reviewCandidates($pid) as $fid) {
                 $f = Db::one('SELECT current_revision, ai_model FROM facts WHERE id = ?', [$fid]);
                 if ($model !== '' && mb_strtolower(trim((string)$f['ai_model'])) === $model) continue;
+                if ($model !== '' && in_array($model, $readers[$fid . ':' . $f['current_revision']] ?? [], true)) continue;
                 $rev = (int)$f['current_revision'];
                 $size = (int)Db::value('SELECT LENGTH(statement_html) + LENGTH(COALESCE(proof_html, \'\')) FROM fact_revisions WHERE fact_id = ? AND revision_no = ?', [$fid, $rev]);
                 if ($batch && ($chars + $size > self::REVIEW_CHARS || count($batch) >= self::REVIEW_BATCH)) { $full = true; break; }

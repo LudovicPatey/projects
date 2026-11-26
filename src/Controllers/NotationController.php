@@ -498,7 +498,7 @@ final class NotationController
     public static function recordClasses(int $pid, string $key, array $meanings, array $given, ?int $decidedEntry, string $model, int $task): void
     {
         $out = []; $used = [];
-        foreach ($given as $c) {
+        foreach (array_values($given) as $pos => $c) {
             $keys = [];
             foreach (is_array($c['meanings'] ?? null) ? $c['meanings'] : [] as $no) {
                 $i = (int)$no - 1;
@@ -507,12 +507,24 @@ final class NotationController
             if (!$keys) continue;
             $entry = is_numeric($c['entry'] ?? null) && Db::value('SELECT 1 FROM notations WHERE id = ? AND project_id = ?', [(int)$c['entry'], $pid]) ? (int)$c['entry'] : null;
             $decided = !empty($c['decided']);
-            $out[] = ['label' => mb_substr(trim((string)($c['label'] ?? '')), 0, 300), 'entry_id' => $entry ?? ($decided ? $decidedEntry : null), 'decided' => $decided, 'keys' => $keys];
+            // "no": the class's number in the answer, by which the decision that settles it names it.
+            $out[] = ['no' => $pos + 1, 'label' => mb_substr(trim((string)($c['label'] ?? '')), 0, 300), 'entry_id' => $entry ?? ($decided ? $decidedEntry : null), 'decided' => $decided, 'keys' => $keys];
         }
         if (!$out) return;
         Db::run('DELETE FROM notation_classes WHERE project_id = ? AND symbol_key = ?', [$pid, $key]);
         Db::insert('notation_classes', ['project_id' => $pid, 'symbol_key' => mb_substr($key, 0, 191), 'classes_json' => json_encode($out, JSON_UNESCAPED_UNICODE),
             'ai_model' => $model, 'task_id' => $task, 'created_at' => Db::now()]);
+    }
+
+    /** A group of wordings is the meaning of this entry: set by the decision that settles it, once its entry exists. */
+    public static function linkClass(int $pid, string $key, int $no, int $entry): void
+    {
+        $row = Db::one('SELECT id, classes_json FROM notation_classes WHERE project_id = ? AND symbol_key = ?', [$pid, $key]);
+        if (!$row || !Db::value('SELECT 1 FROM notations WHERE id = ? AND project_id = ?', [$entry, $pid])) return;
+        $classes = json_decode((string)$row['classes_json'], true) ?: [];
+        foreach ($classes as &$c) if ((int)($c['no'] ?? 0) === $no) $c['entry_id'] = $entry;
+        unset($c);
+        Db::update('notation_classes', ['classes_json' => json_encode($classes, JSON_UNESCAPED_UNICODE)], 'id = :id', ['id' => $row['id']]);
     }
 
     /**

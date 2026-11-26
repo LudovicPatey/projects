@@ -1,7 +1,7 @@
 {
  "min_version": "1.0.0",
  "client_version": "1.20.0",
- "fingerprint": "6a18f37341223164e5b304f495775b9b269d5953d506112892cfa6a9eff76a77",
+ "fingerprint": "4d2f794949323a88d8a715dbd5b83b464eae3d253f208d4be136302a6044a284",
  "routes": [
   "GET /api/ai/procedures AiTaskController::procedures",
   "GET /api/bib/{id}/pdf BibController::pdf",
@@ -318,7 +318,7 @@
   "FactController::proposeProof": "5fac4e0914d1988066dda73e48a190264f969627db75b7de0afdbf38ade18953",
   "FactController::provenance": "ee075c6f9668905f148a9797b608c2908934fbbecbcf3131d0a0f3ea4fe5ae7b",
   "FactController::provingContext": "a67db2a974b04789fc5cf8af12c49ad412730486d38a590f321d01178c978b36",
-  "FactController::recordReview": "cc313c382c9c429b62f9b0a3d689510d950256299bae7a2335eb2d7203b601e4",
+  "FactController::recordReview": "a830a50a59b1255a35e423cc3f68efa082b8b4a702057ced9384d9375961b810",
   "FactController::requireAi": "93402e521b4ce6bcc9fe56d4629494537eef316f6651ed64125cbbf5b6f8217b",
   "FactController::review": "f84443351d586a79574ba2f9c7f243081561b2299740b462b2c018b78f48eb64",
   "FactController::reviewProof": "aa15af7bd28e1291d76a15e3e5108446b95d8e974848ba21e9e633f7d41dbbfc",
@@ -371,6 +371,7 @@
   "NotationController::isFixed": "f8e97bb5f92ba3760b6ff3a0ee9d1fbcab354e31b6c8c06322a0644f52c9ef49",
   "NotationController::isProofVariable": "123de275951aa6bbde9309700f854268bbf60a60e3dddcd82a8b55906689476f",
   "NotationController::key": "5a9316d22ecabb2fc5424251872a380862fd040b2d583566b09ee9101dfedd18",
+  "NotationController::linkClass": "7f70bc08ec11da8e457640d19cc111ffa9a4eb73db54bb464c08bf750317394a",
   "NotationController::list": "b32133f637c6bea3494314821c100785bf2c8ad1e40b7e347d949e24dc72016d",
   "NotationController::localFor": "a781388235616281dceaeadd9bf10f85a2767d690246d1b78b1c9dce2114908a",
   "NotationController::localNotation": "b0ff351e3cc94d7c7c42ca07486b3f625970bbc5157fe86bfa18c64680bc8eca",
@@ -382,7 +383,7 @@
   "NotationController::present": "f1e122c8e201a76645af94ad49f99ac2cbfb1cb80533225e79bbf301a7f68df9",
   "NotationController::progress": "c3ed90f3e5fac2677406ddc3fb16b8ade8c6abb3cf9800749250854710294c1a",
   "NotationController::propose": "60380f3a722c8d5ca16d1dca6273aa8b99d5fc7d37877dff49274e9b4014a079",
-  "NotationController::recordClasses": "a7fa208388144a9b3d877ef17f134b58dd4ddfb9c40da2e3e152f016e87c9d17",
+  "NotationController::recordClasses": "1ad8e507980a608d3ace6e7a73322e2a7120eb9bb8b86e0b09bbeb9cf34316d3",
   "NotationController::rephrase": "cac5dc5b0f6c5450ef736063bc530092cbd84e0518d7578409834a7b988b8d16",
   "NotationController::rephraseFact": "0e2386c80da0d4ed93ddbc4f72c7c5951b27dd3f5f2295910ff23e64b8647e1d",
   "NotationController::sameText": "026ac8a0ef9a81d2632205062e60bdbe1add138f997862c11506d6673484822a",
@@ -397,10 +398,10 @@
   "Notify::mentions": "87e12b1918ae6b9f84992280147d662e5dc4a5fff01d5418c4f370b99106da23",
   "Notify::send": "49a37c414cc94840696f77cfb49f21cc9ee4bfed2c9785504b4ab0825b71d7fe",
   "Procedures::CAPABILITIES": "4dce42bbadf21b695afcf974783a43c20da9c3e58306e6347d7f13d1e61f5e30",
-  "Procedures::INSTRUCTIONS": "00a4641784b57628e2dc49c42acb942e37f111280850c36e1c4e05d27d5958ba",
+  "Procedures::INSTRUCTIONS": "6f68fab6aa0f5b9d4b54b5b6bee99863620c80b3df7e1fc2efd7ad2f072fdd73",
   "Procedures::REQUEST_NOTE": "24b0a276d5999286c5ee3500049fb549cab02c47210fcc847ff3fd0c652e1b6a",
-  "Procedures::SCHEMAS": "b3c57915d7210b5c4cd4266f7922fac59019e5ca1b8c5ef279e27fc11729629a",
-  "Procedures::apply": "fcf61f99c818aeb37459f02882116fd86fd2d8450b195b7a12ca2cd595ad9be5",
+  "Procedures::SCHEMAS": "eec26e814425c81c4a4e1a252ac654706daed574f9d1ad6347cb07e98df6c3f3",
+  "Procedures::apply": "d2485ea9c850dcedaa7adbbca9ba3f33b543c71c6b9b412f08b2bc972eb41e0e",
   "Procedures::capabilities": "0cd0fd2bbacd82074d877b676192b2e11c0b127be10e089ebd2c1de62a47729e",
   "Procedures::defs": "c0089c4f2d7fa926a1e8e6e5b3591add612d802cf891aaf4d3df1184a9936c9b",
   "Procedures::has": "203dad6c3384cffbdd266434aa8286ddabbcbbed33b7a514a2bd53f87a93ef5d",
@@ -513,6 +514,7 @@
   "Sweeps::KINDS": "eb522b67a8e113d5d15a081dc04fc39aed4f2f6a48106b0de92a97c2515bed92",
   "Sweeps::REVIEW_BATCH": "fa2cc5ae3483536ea3b6fc27f10c0e15385559ea96ea44c5270dff3396050595",
   "Sweeps::REVIEW_CHARS": "8d070888b7619baffbf063d89b57c0295970980e650a90c1dd5ca6dea95085a5",
+  "Sweeps::REVIEW_READERS": "00ae79c6a0a3657d87f6c6afc59181fe3b2481753bf9e1439511c3717219364e",
   "Sweeps::REWRITE_BATCH": "79ed2de7b4690700d6aefa1f3742d6d09c96c59f6faaf44f256e5b5972fcfb36",
   "Sweeps::REWRITE_CHARS": "ca76bb65fe49dd0e1c63aff43d7a6eaf88ce3705374d1f9e5d790591fd435fc9",
   "Sweeps::SECOND_BATCH": "df5a71cfa01a0b0beb74e2a36f5a0eadf3add4b9d57b386e6067ff99a4f07a01",
@@ -525,7 +527,8 @@
   "Sweeps::pendingForFact": "91d37ce68f69195dc12a90e5eca723a2aa800608a78005a8cb12f8dac6c0743b",
   "Sweeps::pendingItems": "2188dc62f5de49c18a219dc85cab268497b1e24875049a2879eacf430a085ddd",
   "Sweeps::rested": "084fbe29c1b6352592d57a85e5c08709d80e8a73d1a12ca6ca179cd4f4ef6656",
-  "Sweeps::reviewCandidates": "cd877249025c218489e2a7ff02bcdc7c719982507b1a70ce0da493164bffe933",
+  "Sweeps::reviewCandidates": "773e62dddcdfca4d6fbb8c98a5decd61d3acae75e46f4d234b8a32f4dd75f55f",
+  "Sweeps::reviewReaders": "f4fedf7cbfa15e89bd5c6c23807a7b0ce61df1ad3cf83e350b2dceca2d68547a",
   "Sweeps::rewriteCandidates": "d9316dba3ccd9c1ef51e0067e864b80805a7ab7bb3470716587db8f6d71867af",
   "Sweeps::secondCandidates": "4dcda004bf9c1e05153373eb210cde77214d16ef5be7e12dacaee1a6a775947c",
   "Sweeps::setting": "367cd3fda6ea7563d64307aa088114375d74efe7b4330e53088eb74d33d070d3",
@@ -533,8 +536,8 @@
   "Sweeps::stale": "04575d602277808fe90f6ba8c5f190b0c7179d43bcd1fcd24c18a745ba026769",
   "Sweeps::symbolCandidates": "2555222139beb041b1d1c807308777ed46a276d47c7ee46dc29e92af31c2a83b",
   "Sweeps::symbolStates": "36cacd34f5aa8107299862778a625d57106abf47c8dd1ce26f2cf77a4d756db8",
-  "Sweeps::take": "52b20aac464deab5a00452a324d6abaf0d677971ee16308abded6bb21e201e3a",
-  "Sweeps::tried": "b6abdf2613efb84a49ee4998a1ab796f14067c96a92928da04cd538a0009947c",
+  "Sweeps::take": "b1704ebb9b5e51cd6e4a015c26d12cf5d2e239ef63ad92b1bff161eb6d06878f",
+  "Sweeps::tried": "7ba4a983165b1b98af74c6e11ce1d448c412f43b6f16b94dc44bdde3a5406524",
   "Sweeps::typeCandidates": "9ab42f8a496524c406252d22c849bda3940d7e47643c796bb0a697434a485e92"
  },
  "history": [
@@ -1444,6 +1447,26 @@
     "Procedures::apply",
     "+AiTaskController::pinRewrite",
     "+ConsolidationController::applySafely"
+   ]
+  },
+  {
+   "date": "2026-11-26",
+   "decision": "compatible",
+   "client_version": "1.20.0",
+   "min_version": "1.0.0",
+   "note": "consolidate_notation decisions gain class (the group of wordings they settle); a missing class is read as null. Proof reviews go to another model when one left a proof out; AI reviews are kept per model. Clients only pass answers through.",
+   "changed": [
+    "FactController::recordReview",
+    "NotationController::recordClasses",
+    "Procedures::INSTRUCTIONS",
+    "Procedures::SCHEMAS",
+    "Procedures::apply",
+    "Sweeps::reviewCandidates",
+    "Sweeps::take",
+    "Sweeps::tried",
+    "+NotationController::linkClass",
+    "+Sweeps::REVIEW_READERS",
+    "+Sweeps::reviewReaders"
    ]
   }
  ]

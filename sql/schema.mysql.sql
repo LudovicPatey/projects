@@ -299,7 +299,8 @@ CREATE TABLE IF NOT EXISTS fact_reviews (
   body_html MEDIUMTEXT NULL,
   created_at DATETIME NOT NULL,
   updated_at DATETIME NOT NULL,
-  UNIQUE KEY uq_fact_review (fact_id, revision_no, reviewer_id, reviewer_kind),
+  -- One review per person, and per AI model: two models run under one member's key give two independent reviews.
+  UNIQUE KEY uq_fact_review_model (fact_id, revision_no, reviewer_id, reviewer_kind, ai_model),
   FOREIGN KEY (fact_id) REFERENCES facts(id) ON DELETE CASCADE,
   FOREIGN KEY (reviewer_id) REFERENCES users(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

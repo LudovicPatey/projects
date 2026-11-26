@@ -204,7 +204,10 @@ words, such as "Hirst's code for a closed subsemigroup of $\beta\mathbb N$"; "en
 null; and "decided", true for the class this decision adopts, keeps local or records as "same". People see the classes, so that
 they know which wordings agree and which differ. A symbol with one wording has one class. When the wordings fall into several classes,
 the decision settles one of them, usually the one most facts use, marked "decided": give each other class the "entry" that already
-has its meaning, if one does, and record a meaning that matters but has no entry as a "clash" variant of the decision.
+has its meaning, if one does. When several classes are meanings that each matter, give one decision per class, all with the same
+"symbol", each naming in "class" the number of its class (its place in "classes", from 1): one class can be adopted and another kept
+local to its paper, or recorded as "same" as an existing entry. Give "classes" in the first of these decisions and an empty list in the
+others. "class" is null for a symbol settled by one decision.
 A notion the agreed symbols express directly needs no entry: never adopt or keep local a mere combination of them.
 Give "fact": the id of a fact that defines it, from its meanings or its entry. Fields that do not apply are null or empty. In "reason", one sentence for
 the members. Answer in "decisions", one entry per symbol, with its "symbol" as listed. Every choice can be undone.
@@ -283,7 +286,7 @@ TXT,
         'rewrite_check' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'checks'], "properties" => ["summary" => ["type" => 'string'], "checks" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['rewrite_id', 'verdict', 'note'], "properties" => ["rewrite_id" => ["type" => 'integer'], "verdict" => ["type" => 'string', "enum" => ['faithful', 'unfaithful']], "note" => ["type" => 'string']]]]]],
         'proof_review' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'reviews'], "properties" => ["summary" => ["type" => 'string'], "reviews" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['fact_id', 'verdict', 'explanation'], "properties" => ["fact_id" => ["type" => 'integer'], "verdict" => ["type" => 'string', "enum" => ['correct', 'gap', 'incorrect']], "explanation" => ["type" => 'string']]]]]],
         'second_reading' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'decisions'], "properties" => ["summary" => ["type" => 'string'], "decisions" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['suggestion_id', 'verdict', 'reason'], "properties" => ["suggestion_id" => ["type" => 'integer'], "verdict" => ["type" => 'string', "enum" => ['apply', 'drop', 'unsure']], "reason" => ["type" => 'string']]]]]],
-        'consolidate_notation' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'decisions', 'types'], "properties" => ["summary" => ["type" => 'string'], "types" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['entry', 'params'], "properties" => ["entry" => ["type" => 'integer'], "params" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['name', 'type'], "properties" => ["name" => ["type" => 'string'], "type" => ["type" => 'string']]]]]]], "decisions" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'action', 'entry', 'project_symbol', 'meaning', 'note', 'variants', 'params', 'fact', 'reason', 'classes'], "properties" => ["symbol" => ["type" => 'string'], "classes" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['meanings', 'label', 'entry', 'decided'], "properties" => ["meanings" => ["type" => 'array', "items" => ["type" => 'integer']], "label" => ["type" => 'string'], "entry" => ["type" => ['integer', 'null']], "decided" => ["type" => 'boolean']]]], "params" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['name', 'type'], "properties" => ["name" => ["type" => 'string'], "type" => ["type" => 'string']]]], "action" => ["type" => 'string', "enum" => ['adopt', 'local', 'same', 'reject']], "entry" => ["type" => ['integer', 'null']], "project_symbol" => ["type" => ['string', 'null']], "meaning" => ["type" => ['string', 'null']], "note" => ["type" => ['string', 'null']], "variants" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'meaning', 'where', 'relation'], "properties" => ["symbol" => ["type" => 'string'], "meaning" => ["type" => 'string'], "where" => ["type" => 'string'], "relation" => ["type" => 'string', "enum" => ['instance', 'clash']]]]], "fact" => ["type" => ['integer', 'null']], "reason" => ["type" => 'string']]]]]],
+        'consolidate_notation' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'decisions', 'types'], "properties" => ["summary" => ["type" => 'string'], "types" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['entry', 'params'], "properties" => ["entry" => ["type" => 'integer'], "params" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['name', 'type'], "properties" => ["name" => ["type" => 'string'], "type" => ["type" => 'string']]]]]]], "decisions" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'action', 'entry', 'project_symbol', 'meaning', 'note', 'variants', 'params', 'fact', 'reason', 'classes', 'class'], "properties" => ["symbol" => ["type" => 'string'], "class" => ["type" => ['integer', 'null']], "classes" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['meanings', 'label', 'entry', 'decided'], "properties" => ["meanings" => ["type" => 'array', "items" => ["type" => 'integer']], "label" => ["type" => 'string'], "entry" => ["type" => ['integer', 'null']], "decided" => ["type" => 'boolean']]]], "params" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['name', 'type'], "properties" => ["name" => ["type" => 'string'], "type" => ["type" => 'string']]]], "action" => ["type" => 'string', "enum" => ['adopt', 'local', 'same', 'reject']], "entry" => ["type" => ['integer', 'null']], "project_symbol" => ["type" => ['string', 'null']], "meaning" => ["type" => ['string', 'null']], "note" => ["type" => ['string', 'null']], "variants" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'meaning', 'where', 'relation'], "properties" => ["symbol" => ["type" => 'string'], "meaning" => ["type" => 'string'], "where" => ["type" => 'string'], "relation" => ["type" => 'string', "enum" => ['instance', 'clash']]]]], "fact" => ["type" => ['integer', 'null']], "reason" => ["type" => 'string']]]]]],
         'source_check' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'verdict', 'where', 'explanation'], "properties" => ["summary" => ["type" => 'string'], "verdict" => ["type" => 'string', "enum" => ['confirmed', 'differs', 'not_found', 'unreadable']], "where" => ["type" => 'string'], "explanation" => ["type" => 'string']]],
     ];
 
@@ -355,7 +358,7 @@ TXT,
         $v = self::variant($t);
         // An answer to the recipe of before the groups of wordings, from a task claimed then, has no classes: none are recorded.
         if ($v === 'consolidate_notation' && is_array($answer) && is_array($answer['decisions'] ?? null)) {
-            foreach ($answer['decisions'] as &$d) if (is_array($d)) $d['classes'] ??= [];
+            foreach ($answer['decisions'] as &$d) if (is_array($d)) { $d['classes'] ??= []; if (!array_key_exists('class', $d)) $d['class'] = null; }
             unset($d);
         }
         $why = self::mismatch(self::SCHEMAS[$v], $answer, 'answer');
@@ -429,19 +432,27 @@ TXT,
                 // Only the symbols of this batch, once each. Adopt and local go through the consolidation, applied on their own when the
                 // project allows it, and undone like its other changes; "same" records a spelling of an existing entry.
                 $mine = array_flip(json_decode((string)$t['snapshot_json'], true)['symbols'] ?? []);
-                $items = []; $same = 0; $seen = []; $usedBy = null;
+                $items = []; $same = 0; $seen = []; $symbols = []; $grouped = []; $usedBy = null;
                 $wordings = null;
+                $settles = []; // for each item: [notion key, class number] of the group of wordings it settles
                 foreach ($answer['decisions'] as $d) {
                     $k = NotationController::notionKey((string)$d['symbol']);
-                    if (!isset($mine[$k]) || isset($seen[$k])) continue;
-                    $seen[$k] = true;
-                    // Which wordings agree and which differ, over the wordings the sweep was shown, for people to see.
-                    // Numbers name the wordings as the task showed them, recorded when it was taken.
-                    if (!empty($d['classes'])) {
+                    // One decision per symbol, or one per group of wordings: a symbol whose wordings are several meanings that each
+                    // matter gets a decision for each, naming its group in "class".
+                    $class = is_int($d['class'] ?? null) && $d['class'] > 0 ? $d['class'] : null;
+                    if (!isset($mine[$k]) || isset($seen["$k#" . ($class ?? 0)])) continue;
+                    $seen["$k#" . ($class ?? 0)] = true; $symbols[$k] = true;
+                    // Which wordings agree and which differ, over the wordings the sweep was shown, for people to see: from the first
+                    // decision of the symbol that gives them. Numbers name the wordings as the task showed them, recorded when it was taken.
+                    if (!empty($d['classes']) && !isset($grouped[$k])) {
                         $wordings ??= array_map(fn($keys) => array_map(fn($key) => ['key' => (string)$key], (array)$keys), json_decode((string)$t['snapshot_json'], true)['wordings'] ?? []);
-                        if (isset($wordings[$k])) NotationController::recordClasses($pid, $k, $wordings[$k], $d['classes'], $d['entry'] ? (int)$d['entry'] : null, (string)$model, (int)$t['id']);
+                        if (isset($wordings[$k])) { NotationController::recordClasses($pid, $k, $wordings[$k], $d['classes'], $d['entry'] && !$class ? (int)$d['entry'] : null, (string)$model, (int)$t['id']); $grouped[$k] = true; }
                     }
-                    if ($d['action'] === 'same') { if ($d['entry'] && NotationController::addSpelling($pid, (int)$d['entry'], (string)$d['symbol'], (string)($d['meaning'] ?? ''), (string)$d['reason'])) $same++; continue; }
+                    if ($d['action'] === 'same') {
+                        if ($d['entry'] && NotationController::addSpelling($pid, (int)$d['entry'], (string)$d['symbol'], (string)($d['meaning'] ?? ''), (string)$d['reason'])) $same++;
+                        if ($d['entry'] && $class) NotationController::linkClass($pid, $k, $class, (int)$d['entry']);
+                        continue;
+                    }
                     $fact = $d['fact'] ?: ($d['entry'] ? Db::value('SELECT definition_fact_id FROM notations WHERE id = ? AND project_id = ?', [(int)$d['entry'], $pid]) : null);
                     $fact = $fact ?: ($d['entry'] ? (json_decode((string)Db::value('SELECT facts_json FROM notations WHERE id = ? AND project_id = ?', [(int)$d['entry'], $pid]), true) ?: [null])[0] : null);
                     // Else a fact that defines the symbol.
@@ -449,6 +460,7 @@ TXT,
                     if ($d['action'] === 'reject' && !$d['entry']) continue; // only a proposed entry is rejected
                     // A proposed entry, settled by its id.
                     if ($d['entry'] && $fact && Db::value("SELECT 1 FROM notations WHERE id = ? AND project_id = ? AND status = 'proposed'", [(int)$d['entry'], $pid])) {
+                        if ($class) NotationController::linkClass($pid, $k, $class, (int)$d['entry']);
                         $items[] = ['kind' => 'notation', 'fact' => (string)$fact, 'reason' => $d['reason'] ?: 'Settles a proposed entry.', 'confidence' => 'medium',
                             'notation' => ['action' => $d['action'], 'entry' => (int)$d['entry'], 'symbol' => null, 'meaning' => null, 'note' => null, 'variants' => [], 'params' => $d['params'] ?? []]];
                         continue;
@@ -460,15 +472,26 @@ TXT,
                     if (NotationController::notionKey($symbol) !== $k && !array_filter($variants, fn($v) => NotationController::notionKey((string)$v['symbol']) === $k)) {
                         $variants[] = ['symbol' => (string)$d['symbol'], 'meaning' => 'as the facts write it', 'where' => 'facts of the project', 'relation' => 'instance'];
                     }
+                    $settles[count($items)] = $class ? [$k, $class] : null;
                     $items[] = ['kind' => 'notation', 'fact' => (string)$fact, 'reason' => $d['reason'] ?: 'Settles a symbol several facts define.', 'confidence' => 'medium',
                         'notation' => ['action' => $d['action'], 'entry' => null, 'symbol' => $symbol, 'meaning' => $d['meaning'], 'note' => (string)($d['note'] ?? ''), 'variants' => $variants, 'params' => $d['params'] ?? []]];
                 }
-                $r = $items ? ConsolidationController::store($pid, $items, $model, Provenance::stamp($model, $seconds), (int)$t['id']) : ['applied' => [], 'created' => []];
+                $r = $items ? ConsolidationController::store($pid, $items, $model, Provenance::stamp($model, $seconds), (int)$t['id']) : ['applied' => [], 'created' => [], 'skipped' => []];
+                // A group settled by a new entry points at it once the entry exists: applied at once, or when people accept it.
+                $skipped = array_flip(array_column($r['skipped'] ?? [], 'index'));
+                $sids = $r['created'];
+                foreach (array_keys($items) as $i) {
+                    if (isset($skipped[$i])) continue;
+                    $sid = array_shift($sids);
+                    if (!($settles[$i] ?? null) || !$sid) continue;
+                    $nid = Db::value('SELECT id FROM notations WHERE auto_suggestion_id = ?', [$sid]);
+                    if ($nid) NotationController::linkClass($pid, $settles[$i][0], $settles[$i][1], (int)$nid);
+                }
                 $a = count($r['applied']); $c = count($r['created']) - $a;
                 $done = implode(', ', array_filter([$a ? "$a settled" : '', $c ? "$c proposed to people" : '', $same ? "$same recorded as spellings of an entry" : '']));
                 // The types of the entries of this batch that had none: they say what each entry applies to, and change nothing else.
                 $typed = NotationController::typeEntries($pid, json_decode((string)$t['snapshot_json'], true)['types'] ?? [], $answer['types'] ?? []);
-                $read = count($seen) . ' symbol' . (count($seen) === 1 ? '' : 's') . ' read' . ($done ? " ($done)" : '');
+                $read = count($symbols) . ' symbol' . (count($symbols) === 1 ? '' : 's') . ' read' . ($done ? " ($done)" : '');
                 return ['summary' => trim($read . ($typed ? "; $typed entr" . ($typed === 1 ? 'y' : 'ies') . ' typed' : '') . ". $said"), 'suggestion_ids' => $r['created']];
             case 'proof_review':
                 // Only the facts of this batch, once each, at the revision it read. A model never reviews what it wrote: that one is skipped.
