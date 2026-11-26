@@ -123,6 +123,7 @@ final class ProjectAdmin
         }
         // Revisions, sources, dependencies, reviews, other proofs, Lean proofs, rewrites and the answers they back go with their fact.
         $out['suggestions'] = Db::run('DELETE FROM fact_suggestions WHERE project_id = ?', [$pid])->rowCount();
+        Db::run('DELETE FROM notation_classes WHERE project_id = ?', [$pid]); // the groups of the facts' wordings go with them
         Db::run('DELETE FROM facts WHERE project_id = ?', [$pid]);
         return $out;
     }
@@ -134,6 +135,7 @@ final class ProjectAdmin
             return ['entries' => Db::run("DELETE FROM notations WHERE project_id = ? AND status <> 'agreed'", [$pid])->rowCount(), 'rephrasings' => 0];
         }
         Db::run("DELETE FROM comments WHERE project_id = ? AND target_type = 'notation'", [$pid]);
+        Db::run('DELETE FROM notation_classes WHERE project_id = ?', [$pid]);
         $r = Db::run('DELETE FROM fact_rephrasings WHERE fact_id IN (SELECT id FROM facts WHERE project_id = ?)', [$pid])->rowCount();
         Db::run("DELETE FROM ai_tasks WHERE project_id = ? AND kind = 'notation'", [$pid]);
         return ['entries' => Db::run('DELETE FROM notations WHERE project_id = ?', [$pid])->rowCount(), 'rephrasings' => $r];

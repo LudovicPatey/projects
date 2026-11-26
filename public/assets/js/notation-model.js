@@ -83,6 +83,34 @@ export function entryError(d) {
 export const entryBody = (d) => ({ symbol: String(d.symbol).trim(), meaning_text: String(d.meaning).trim(), note_text: String(d.note || '').trim(), definition_fact_id: d.fact ? +d.fact : null, ...(d.facts?.length ? { facts: d.facts } : {}),
   ...(d.params !== undefined ? { params: parseParams(d.params) } : {}) });
 
+const STATUS_WORD = { agreed: 'agreed', local: 'local to its paper', proposed: 'proposed', derived: 'from project symbols' };
+
+/**
+ * The wordings of a symbol defined in several facts, in the groups of equivalent ones the symbols sweep recorded: one block per meaning,
+ * with its label and the entry it is, then the wordings no sweep compared yet. `summary` says it in a few words: "8 wordings, all
+ * equivalent", "5 wordings, 2 different meanings". Without groups, one block of every wording, as the facts give them.
+ */
+export function wordingGroups(s) {
+  const meanings = s?.meanings || [];
+  const groups = s?.classes || [];
+  const unread = s?.unclassified || [];
+  const n = meanings.length;
+  const blocks = groups.map((g, i) => {
+    const entry = g.entry || (g.decided ? s.entry : null);
+    return { key: `g${i}`, tone: i % 4, title: groups.length > 1 ? `Meaning ${i + 1}` : 'One meaning', label: g.label,
+      entry: entry && entry.id ? { ...entry, word: STATUS_WORD[entry.status] || entry.status } : null,
+      items: g.meanings.map((j) => meanings[j]).filter(Boolean) };
+  });
+  if (groups.length && unread.length) blocks.push({ key: 'unread', tone: null, title: 'Not compared yet', label: 'new since the last symbols sweep', entry: null, items: unread.map((j) => meanings[j]).filter(Boolean) });
+  if (!groups.length) blocks.push({ key: 'all', tone: null, title: '', label: '', entry: null, items: meanings });
+  let summary = '';
+  if (n > 1 && groups.length === 1 && !unread.length) summary = `${n} wordings, all equivalent`;
+  else if (n > 1 && groups.length > 1) summary = `${n} wordings, ${groups.length} different meanings${unread.length ? `, ${unread.length} not compared yet` : ''}`;
+  else if (n > 1 && groups.length === 1) summary = `${n} wordings, ${unread.length} not compared yet`;
+  else if (n > 1) summary = `${n} wordings, not compared yet`;
+  return { summary, blocks, grouped: groups.length > 0 };
+}
+
 /**
  * Where a symbol defined in several facts stands with the AI, from the "sweep" the server gives: when its wordings are compared and it
  * is settled, or that the AI left it to the members. Empty once it has an entry.

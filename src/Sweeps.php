@@ -121,7 +121,9 @@ final class Sweeps
         $out = [];
         foreach (NotationController::shared($pid, 2, 1000) as $x) {
             $k = NotationController::notionKey($x['symbol']);
-            if (($x['entry'] === null || $x['entry']['status'] === 'proposed') && ($tried[$k] ?? 0) < 2) $out[$k] = true;
+            // Wordings no sweep grouped yet, such as those read before sweeps grouped them, earn one more reading.
+            $times = ($tried[$k] ?? 0) - ($x['unclassified'] && !$x['classes'] && !isset($tried['grouped:' . $k]) ? 1 : 0);
+            if (($x['entry'] === null || $x['entry']['status'] === 'proposed') && $times < 2) $out[$k] = true;
         }
         foreach (Db::all("SELECT symbol FROM notations WHERE project_id = ? AND status = 'proposed' ORDER BY id", [$pid]) as $n) {
             $k = NotationController::notionKey($n['symbol']);
@@ -301,7 +303,10 @@ final class Sweeps
             if ($kind === 'proof_review') { foreach ($snap['facts'] ?? [] as [$f, $rev]) $done["$f:$rev"] = true; continue; }
             if ($kind === 'consolidate') {
                 if ($t['source_type'] === 'sweep') {
-                    foreach ($snap['symbols'] ?? [] as $k) $done[(string)$k] = ($done[(string)$k] ?? 0) + 1;
+                    foreach ($snap['symbols'] ?? [] as $k) {
+                        $done[(string)$k] = ($done[(string)$k] ?? 0) + 1;
+                        if (!empty($snap['grouping'])) $done['grouped:' . $k] = true; // read by a sweep asked to group its wordings
+                    }
                     foreach ($snap['types'] ?? [] as $id) $done['type:' . (int)$id] = 1;
                 }
                 continue;
@@ -341,7 +346,7 @@ final class Sweeps
             $symbols = array_slice(self::symbolCandidates($pid), 0, self::SYMBOLS_BATCH);
             $types = array_slice(self::typeCandidates($pid), 0, self::TYPES_BATCH);
             $batch = array_merge($symbols, $types);
-            $snap = ['symbols' => $symbols, 'types' => $types];
+            $snap = ['symbols' => $symbols, 'types' => $types, 'grouping' => true];
         } elseif ($t['kind'] === 'proof_review') {
             $batch = []; $chars = 0; $full = false;
             foreach (self::reviewCandidates($pid) as $fid) {

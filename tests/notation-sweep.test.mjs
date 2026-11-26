@@ -135,3 +135,38 @@ test('an expression in agreed symbols needs no entry, an indexed one does, and t
   assert.equal(r.status, 200, JSON.stringify(r.data));
   assert.equal((await app.call(ann, 'GET', `/api/projects/${p}/notation`)).data.entries.find((e) => e.id === prop).status, 'rejected');
 });
+
+test('the sweep groups the wordings of a symbol into equivalent ones, each pointing at its entry, and a renamed entry takes the facts\' word', async () => {
+  const p = (await app.call(ann, 'POST', '/api/projects', { title: 'Wordings', question_html: '<p>Q</p>' })).data.id;
+  const F = (ref, glossary) => ({ ref, title: ref, kind: 'lemma', labels: ['conclusion'], method: 'deduced', statement_text: `S ${ref}.`, proof_text: 'P.', glossary });
+  await app.call(key, 'POST', `/api/projects/${p}/facts/batch`, { format: 'native', ai_model: 'm', facts: [
+    F('a', { semigroup: 'a sequence $U$ with fip such that every $X\\in U$ satisfies $X\\,\\tilde\\in\\,U+U$' }),
+    F('b', { semigroup: '$U$ satisfies fip and every $X\\in U$ has $Y\\,\\tilde\\in\\,U$ with $X-n\\,\\tilde\\in\\,U$ for all $n\\in Y$' }),
+    F('c', { semigroup: 'a set with an associative operation' }),
+  ] });
+  // Agreed before, under another spelling, with the algebraic word as a clash: what the consolidation did on the live project.
+  const sg = (await app.call(ann, 'POST', `/api/projects/${p}/notation`, { symbol: 'semigroup (\\beta\\mathbb N)', meaning_text: 'Hirst\'s code for a closed subsemigroup.',
+    variants: [{ symbol: 'semigroup', meaning: 'an algebraic semigroup', where: 'Kreuzer', relation: 'clash' }] })).data.id;
+  await app.call(ann, 'POST', `/api/notation/${sg}/status`, { status: 'agreed' });
+  const row = async () => (await app.call(ann, 'GET', `/api/projects/${p}/notation`)).data.shared.find((x) => x.symbol === 'semigroup');
+  const before = await row();
+  assert.equal(before.entry, null); assert.deepEqual(before.classes, []); assert.deepEqual(before.unclassified, [0, 1, 2], 'not compared yet');
+  const claimP = () => app.call(key, 'POST', '/api/ai/tasks/claim', { client_name: 'c', ai_model: 'claude-opus-5-5', project_id: p, kinds: ['consolidate'], features: ['procedures', 'consolidate'], capabilities: [] });
+  const t = (await claimP()).data.task;
+  assert.match(t.recipe.instructions, /"classes" of mathematically equivalent wordings/);
+  const listed = t.context.symbols.find((x) => x.symbol === 'semigroup').meanings.map((m) => m.meaning);
+  const no = (re) => listed.findIndex((m) => re.test(m)) + 1;
+  const r = await app.call(key, 'POST', `/api/ai/tasks/${t.id}/answer`, { lease: t.lease, ai_model: 'claude-opus-5-5', answer: { summary: '', types: [], decisions: [
+    { symbol: 'semigroup', action: 'same', entry: sg, project_symbol: null, meaning: 'Hirst\'s code', note: null, variants: [], params: [], fact: null, reason: 'The project writes it semigroup (βN).',
+      classes: [{ meanings: [no(/U\+U/), no(/X-n/)], label: 'Hirst\'s code for a closed subsemigroup of $\\beta\\mathbb N$', entry: null, decided: true },
+        { meanings: [no(/associative/)], label: 'an algebraic semigroup', entry: null, decided: false }] },
+  ] } });
+  assert.equal(r.status, 200, JSON.stringify(r.data));
+  const after = await row();
+  assert.equal(after.classes.length, 2); assert.deepEqual(after.unclassified, []);
+  assert.equal(after.classes[0].entry.id, sg, 'the decided group is the entry the decision named');
+  assert.equal(after.classes[0].meanings.length, 2); assert.equal(after.classes[1].entry, null);
+  assert.equal(after.entry?.id, sg, 'the facts\' word is linked to the renamed entry, beside its clash');
+  const variants = (await app.call(ann, 'GET', `/api/projects/${p}/notation`)).data.entries.find((e) => e.id === sg).variants;
+  assert.deepEqual(variants.map((v) => v.relation).sort(), ['clash', 'instance']);
+});

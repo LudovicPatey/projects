@@ -192,8 +192,16 @@ yourself, so that people need not:
   whose meaning clashes with an entry of the project (such as Feferman's $(\mu)$ beside the project's $\mu(n)$). Give its "meaning" in
   those facts; the facts of that paper then read it with that meaning.
 - "same": it is another spelling of the entry "entry" (an id of "notation"), with the same meaning. A different meaning is never "same".
+  An entry the project writes otherwise covers it too: Towsner's "semigroup" is "same" as the entry "semigroup (\beta\mathbb N)", even when
+  that entry lists the algebraic "semigroup" as a clash.
 - "reject" (only for a proposed "entry"): the project's agreed symbols already express it, such as $\mathrm{FIN}\cup\{\emptyset\}$ for all
   finite sets once $\mathrm{FIN}$ is agreed, or it is not notation at all. Facts then write that expression rather than a symbol of its own.
+Group the "meanings" of each symbol into "classes" of mathematically equivalent wordings: one wording that unfolds another, or says
+the same with other words or letters, is in the same class; wordings that define different objects are in different classes. Each class
+gives "meanings", the numbers of its wordings in the list (from 1), every wording in exactly one class; "label", that meaning in a few
+words, such as "Hirst's code for a closed subsemigroup of $\beta\mathbb N$"; "entry", the id in "notation" of the entry this meaning is, or
+null; and "decided", true for the class this decision adopts, keeps local or records as "same". People see the classes, so that
+they know which wordings agree and which differ. A symbol with one wording has one class.
 A notion the agreed symbols express directly needs no entry: never adopt or keep local a mere combination of them.
 Give "fact": the id of a fact that defines it, from its meanings or its entry. Fields that do not apply are null or empty. In "reason", one sentence for
 the members. Answer in "decisions", one entry per symbol, with its "symbol" as listed. Every choice can be undone.
@@ -272,7 +280,7 @@ TXT,
         'rewrite_check' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'checks'], "properties" => ["summary" => ["type" => 'string'], "checks" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['rewrite_id', 'verdict', 'note'], "properties" => ["rewrite_id" => ["type" => 'integer'], "verdict" => ["type" => 'string', "enum" => ['faithful', 'unfaithful']], "note" => ["type" => 'string']]]]]],
         'proof_review' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'reviews'], "properties" => ["summary" => ["type" => 'string'], "reviews" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['fact_id', 'verdict', 'explanation'], "properties" => ["fact_id" => ["type" => 'integer'], "verdict" => ["type" => 'string', "enum" => ['correct', 'gap', 'incorrect']], "explanation" => ["type" => 'string']]]]]],
         'second_reading' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'decisions'], "properties" => ["summary" => ["type" => 'string'], "decisions" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['suggestion_id', 'verdict', 'reason'], "properties" => ["suggestion_id" => ["type" => 'integer'], "verdict" => ["type" => 'string', "enum" => ['apply', 'drop', 'unsure']], "reason" => ["type" => 'string']]]]]],
-        'consolidate_notation' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'decisions', 'types'], "properties" => ["summary" => ["type" => 'string'], "types" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['entry', 'params'], "properties" => ["entry" => ["type" => 'integer'], "params" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['name', 'type'], "properties" => ["name" => ["type" => 'string'], "type" => ["type" => 'string']]]]]]], "decisions" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'action', 'entry', 'project_symbol', 'meaning', 'note', 'variants', 'params', 'fact', 'reason'], "properties" => ["symbol" => ["type" => 'string'], "params" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['name', 'type'], "properties" => ["name" => ["type" => 'string'], "type" => ["type" => 'string']]]], "action" => ["type" => 'string', "enum" => ['adopt', 'local', 'same', 'reject']], "entry" => ["type" => ['integer', 'null']], "project_symbol" => ["type" => ['string', 'null']], "meaning" => ["type" => ['string', 'null']], "note" => ["type" => ['string', 'null']], "variants" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'meaning', 'where', 'relation'], "properties" => ["symbol" => ["type" => 'string'], "meaning" => ["type" => 'string'], "where" => ["type" => 'string'], "relation" => ["type" => 'string', "enum" => ['instance', 'clash']]]]], "fact" => ["type" => ['integer', 'null']], "reason" => ["type" => 'string']]]]]],
+        'consolidate_notation' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'decisions', 'types'], "properties" => ["summary" => ["type" => 'string'], "types" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['entry', 'params'], "properties" => ["entry" => ["type" => 'integer'], "params" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['name', 'type'], "properties" => ["name" => ["type" => 'string'], "type" => ["type" => 'string']]]]]]], "decisions" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'action', 'entry', 'project_symbol', 'meaning', 'note', 'variants', 'params', 'fact', 'reason', 'classes'], "properties" => ["symbol" => ["type" => 'string'], "classes" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['meanings', 'label', 'entry', 'decided'], "properties" => ["meanings" => ["type" => 'array', "items" => ["type" => 'integer']], "label" => ["type" => 'string'], "entry" => ["type" => ['integer', 'null']], "decided" => ["type" => 'boolean']]]], "params" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['name', 'type'], "properties" => ["name" => ["type" => 'string'], "type" => ["type" => 'string']]]], "action" => ["type" => 'string', "enum" => ['adopt', 'local', 'same', 'reject']], "entry" => ["type" => ['integer', 'null']], "project_symbol" => ["type" => ['string', 'null']], "meaning" => ["type" => ['string', 'null']], "note" => ["type" => ['string', 'null']], "variants" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'meaning', 'where', 'relation'], "properties" => ["symbol" => ["type" => 'string'], "meaning" => ["type" => 'string'], "where" => ["type" => 'string'], "relation" => ["type" => 'string', "enum" => ['instance', 'clash']]]]], "fact" => ["type" => ['integer', 'null']], "reason" => ["type" => 'string']]]]]],
         'source_check' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'verdict', 'where', 'explanation'], "properties" => ["summary" => ["type" => 'string'], "verdict" => ["type" => 'string', "enum" => ['confirmed', 'differs', 'not_found', 'unreadable']], "where" => ["type" => 'string'], "explanation" => ["type" => 'string']]],
     ];
 
@@ -342,6 +350,11 @@ TXT,
     public static function apply(array $t, mixed $answer, ?string $model, mixed $seconds): array
     {
         $v = self::variant($t);
+        // An answer to the recipe of before the groups of wordings, from a task claimed then, has no classes: none are recorded.
+        if ($v === 'consolidate_notation' && is_array($answer) && is_array($answer['decisions'] ?? null)) {
+            foreach ($answer['decisions'] as &$d) if (is_array($d)) $d['classes'] ??= [];
+            unset($d);
+        }
         $why = self::mismatch(self::SCHEMAS[$v], $answer, 'answer');
         if ($why !== null) throw new HttpError(422, "The answer does not follow the procedure's schema: $why.");
         $pid = (int)$t['project_id'];
@@ -408,10 +421,16 @@ TXT,
                 // project allows it, and undone like its other changes; "same" records a spelling of an existing entry.
                 $mine = array_flip(json_decode((string)$t['snapshot_json'], true)['symbols'] ?? []);
                 $items = []; $same = 0; $seen = []; $usedBy = null;
+                $wordings = null;
                 foreach ($answer['decisions'] as $d) {
                     $k = NotationController::notionKey((string)$d['symbol']);
                     if (!isset($mine[$k]) || isset($seen[$k])) continue;
                     $seen[$k] = true;
+                    // Which wordings agree and which differ, over the wordings the sweep was shown, for people to see.
+                    if (!empty($d['classes'])) {
+                        $wordings ??= array_column(array_map(fn($x) => [NotationController::notionKey($x['symbol']), $x['meanings']], NotationController::shared($pid, 2, 1000)), 1, 0);
+                        if (isset($wordings[$k])) NotationController::recordClasses($pid, $k, $wordings[$k], $d['classes'], $d['entry'] ? (int)$d['entry'] : null, (string)$model, (int)$t['id']);
+                    }
                     if ($d['action'] === 'same') { if ($d['entry'] && NotationController::addSpelling($pid, (int)$d['entry'], (string)$d['symbol'], (string)($d['meaning'] ?? ''), (string)$d['reason'])) $same++; continue; }
                     $fact = $d['fact'] ?: ($d['entry'] ? Db::value('SELECT definition_fact_id FROM notations WHERE id = ? AND project_id = ?', [(int)$d['entry'], $pid]) : null);
                     $fact = $fact ?: ($d['entry'] ? (json_decode((string)Db::value('SELECT facts_json FROM notations WHERE id = ? AND project_id = ?', [(int)$d['entry'], $pid]), true) ?: [null])[0] : null);

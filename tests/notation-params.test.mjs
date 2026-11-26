@@ -127,3 +127,18 @@ test('a glossary key with LaTeX thin spaces is one symbol, and the pieces cut be
   assert.ok(!entries.some((x) => x.id === broken), 'the broken entry is gone');
   assert.deepEqual(entries.find((x) => x.id === good).variants.map((v) => v.symbol), ['X\\,\\tilde\\in\\,V']);
 });
+
+test('the wordings of a symbol show in groups of equivalent ones, with the entry each one is', async () => {
+  const { wordingGroups } = await import('../public/assets/js/notation-model.js');
+  const m = (t) => ({ meaning: t, facts: [1] });
+  const meanings = [m('a code'), m('the code, unfolded'), m('an algebraic semigroup'), m('a new wording')];
+  assert.equal(wordingGroups({ meanings }).summary, '4 wordings, not compared yet');
+  assert.equal(wordingGroups({ meanings: [m('x')] }).summary, '');
+  const s = { meanings, entry: null, unclassified: [3], classes: [
+    { label: 'Hirst\'s code', decided: true, meanings: [0, 1], entry: { id: 7, symbol: 'semigroup (\\beta\\mathbb N)', status: 'agreed' } },
+    { label: 'algebraic', decided: false, meanings: [2], entry: null }] };
+  const v = wordingGroups(s);
+  assert.equal(v.summary, '4 wordings, 2 different meanings, 1 not compared yet');
+  assert.deepEqual(v.blocks.map((b) => [b.title, b.items.length, b.entry?.word || null]), [['Meaning 1', 2, 'agreed'], ['Meaning 2', 1, null], ['Not compared yet', 1, null]]);
+  assert.equal(wordingGroups({ meanings: meanings.slice(0, 2), unclassified: [], classes: [{ label: 'one', meanings: [0, 1], entry: null, decided: true }], entry: { id: 3, symbol: 'x', status: 'agreed' } }).summary, '2 wordings, all equivalent');
+});

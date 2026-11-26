@@ -1733,3 +1733,15 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: non
 .ai-pending-pass { display: block; margin-top: 2px; }
 .ai-pending.compact { margin: 4px 0; padding: 4px 8px; font-size: 12px; }
 .ai-pending.compact .ai-pending-pass { display: inline; margin: 0; }
+
+/* The wordings of a symbol, in groups of equivalent ones (the symbols sweep): one color per meaning, grey for those not compared yet. */
+.wording-group.grouped { margin: 6px 0; padding: 4px 0 4px 10px; border-left: 3px solid var(--line-2); }
+.wording-group.grouped.g-0 { border-left-color: #4f46e5; }
+.wording-group.grouped.g-1 { border-left-color: #d97706; }
+.wording-group.grouped.g-2 { border-left-color: #0d9488; }
+.wording-group.grouped.g-3 { border-left-color: #be185d; }
+.wording-group.grouped.g-plain { border-left-style: dashed; }
+.wording-head { font-size: 13px; line-height: 1.45; }
+.wording-entry { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-left: 4px; }
+.wording-group .notation-variants { margin-top: 2px; }
+.wording-head > .muted { margin-left: 4px; }

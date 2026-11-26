@@ -514,6 +514,20 @@ CREATE TABLE IF NOT EXISTS fact_source_checks (
   FOREIGN KEY (fact_id) REFERENCES facts(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- The wordings of a symbol several facts define, grouped by the symbols sweep into equivalent ones: each group is one meaning, with the
+-- entry of the notation it is, if any. Keyed by the normalized wording, so that new wordings show as not compared yet.
+CREATE TABLE IF NOT EXISTS notation_classes (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  project_id INT UNSIGNED NOT NULL,
+  symbol_key VARCHAR(191) NOT NULL,
+  classes_json MEDIUMTEXT NOT NULL,       -- [{label, entry_id, decided, keys: [wording key]}]
+  ai_model VARCHAR(120) NULL,
+  task_id INT UNSIGNED NULL,
+  created_at DATETIME NOT NULL,
+  UNIQUE KEY uq_notation_classes (project_id, symbol_key),
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- Audit keys: an owner lets an auditor read one project's facts, read-only, for a limited time.
 CREATE TABLE IF NOT EXISTS audit_keys (
   id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,

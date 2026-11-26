@@ -258,7 +258,9 @@ final class NotationController
         $symbol = trim(self::bare($symbol));
         if (!$n || $symbol === '') return false;
         $variants = json_decode((string)$n['variants_json'], true) ?: [];
-        foreach ($variants as $v) if (self::notionKey((string)($v['symbol'] ?? '')) === self::notionKey($symbol)) return false;
+        // Recorded once. A clash of the same spelling stays: semigroup (\beta\mathbb N) is how the project writes Towsner's
+        // "semigroup", while Kreuzer's algebraic semigroup is another meaning of the word.
+        foreach ($variants as $v) if (self::notionKey((string)($v['symbol'] ?? '')) === self::notionKey($symbol) && ($v['relation'] ?? '') !== 'clash') return false;
         $variants[] = ['symbol' => $symbol, 'meaning' => mb_substr($meaning ?: $why, 0, 500), 'where' => 'facts of the project', 'relation' => 'instance'];
         Db::update('notations', ['variants_json' => json_encode($variants, JSON_UNESCAPED_UNICODE), 'updated_at' => Db::now()], 'id = :id', ['id' => $id]);
         return true;
@@ -427,10 +429,11 @@ final class NotationController
                 $by[$k]['spellings'][$symbol] = ($by[$k]['spellings'][$symbol] ?? 0) + 1;
                 $by[$k]['facts'][$fid] = true;
                 $mk = mb_strtolower(preg_replace('/[\s.]+/u', '', $meaning) ?? '');
-                $by[$k]['meanings'][$mk] ??= ['meaning' => $meaning, 'facts' => []];
+                $by[$k]['meanings'][$mk] ??= ['meaning' => $meaning, 'key' => $mk, 'facts' => []];
                 $by[$k]['meanings'][$mk]['facts'][] = $fid;
             }
         }
+        $classes = self::classesOf($pid);
         $out = [];
         foreach ($by as $k => $s) {
             if (count($s['facts']) < $min) continue;
@@ -440,10 +443,73 @@ final class NotationController
             $symbol = (string)array_key_first($s['spellings']);
             // An expression in agreed symbols needs no entry: it counts as settled.
             $entry = $entries[$k] ?? (self::derived($symbol, $agreed) ? ['id' => null, 'status' => 'derived', 'clashes' => 0] : null);
-            $out[] = ['symbol' => $symbol, 'spellings' => array_keys($s['spellings']), 'facts' => count($s['facts']), 'meanings' => array_map(fn($m) => ['meaning' => $m['meaning'], 'facts' => array_slice($m['facts'], 0, 50)], array_slice($meanings, 0, 8)), 'entry' => $entry];
+            $meanings = array_slice($meanings, 0, 8);
+            [$groups, $unread] = self::groupsFor($classes[$k] ?? null, $meanings);
+            // Every wording grouped, and every group an entry: the symbol is settled, under the entry of its most common meaning.
+            if ($entry === null && $groups && !$unread && !array_filter($groups, fn($g) => $g['entry'] === null)) $entry = $groups[0]['entry'] + ['clashes' => count($groups) - 1];
+            $out[] = ['symbol' => $symbol, 'spellings' => array_keys($s['spellings']), 'facts' => count($s['facts']),
+                'meanings' => array_map(fn($m) => ['meaning' => $m['meaning'], 'key' => $m['key'], 'facts' => array_slice($m['facts'], 0, 50)], $meanings), 'entry' => $entry,
+                'classes' => $groups, 'unclassified' => $unread];
         }
         usort($out, fn($a, $b) => [$b['entry'] === null, $b['facts']] <=> [$a['entry'] === null, $a['facts']]);
         return array_slice($out, 0, $limit);
+    }
+
+    /** The groups of equivalent wordings the symbols sweep recorded, by notion key. @return array<string, list<array>> */
+    private static function classesOf(int $pid): array
+    {
+        $out = [];
+        foreach (Db::all('SELECT symbol_key, classes_json FROM notation_classes WHERE project_id = ?', [$pid]) as $c) $out[(string)$c['symbol_key']] = json_decode((string)$c['classes_json'], true) ?: [];
+        return $out;
+    }
+
+    /**
+     * The recorded groups of a symbol over the wordings shown: each {label, entry, decided, meanings: [index]}, the most used first, with
+     * the entry it is ({id, symbol, status}) when there is one, and the indexes of the wordings no sweep grouped (new since, or never read).
+     * @return array{0: list<array>, 1: list<int>}
+     */
+    public static function groupsFor(?array $recorded, array $meanings): array
+    {
+        if (!$recorded) return [[], count($meanings) > 1 ? array_keys($meanings) : []];
+        $at = [];
+        foreach ($meanings as $i => $m) $at[$m['key']] = $i;
+        $groups = [];
+        foreach ($recorded as $c) {
+            $idx = array_values(array_filter(array_map(fn($key) => $at[$key] ?? null, $c['keys'] ?? []), fn($i) => $i !== null));
+            if (!$idx) continue;
+            $n = !empty($c['entry_id']) ? Db::one("SELECT id, symbol, status FROM notations WHERE id = ? AND status <> 'rejected'", [(int)$c['entry_id']]) : null;
+            $facts = array_sum(array_map(fn($i) => count($meanings[$i]['facts']), $idx));
+            $groups[] = ['label' => (string)($c['label'] ?? ''), 'decided' => !empty($c['decided']), 'meanings' => $idx, 'facts' => $facts,
+                'entry' => $n ? ['id' => (int)$n['id'], 'symbol' => $n['symbol'], 'status' => $n['status']] : null];
+        }
+        usort($groups, fn($a, $b) => $b['facts'] <=> $a['facts']);
+        $seen = array_merge(...array_map(fn($g) => $g['meanings'], $groups ?: [['meanings' => []]]));
+        $unread = count($meanings) > 1 ? array_values(array_diff(array_keys($meanings), $seen)) : [];
+        return [$groups, $unread];
+    }
+
+    /**
+     * Records the groups of equivalent wordings the symbols sweep gave for a symbol: [{meanings: [number from 1], label, entry, decided}],
+     * over the wordings it was shown. Replaces what an earlier sweep recorded.
+     */
+    public static function recordClasses(int $pid, string $key, array $meanings, array $given, ?int $decidedEntry, string $model, int $task): void
+    {
+        $out = []; $used = [];
+        foreach ($given as $c) {
+            $keys = [];
+            foreach (is_array($c['meanings'] ?? null) ? $c['meanings'] : [] as $no) {
+                $i = (int)$no - 1;
+                if (isset($meanings[$i]) && !isset($used[$i])) { $keys[] = $meanings[$i]['key']; $used[$i] = true; }
+            }
+            if (!$keys) continue;
+            $entry = is_numeric($c['entry'] ?? null) && Db::value('SELECT 1 FROM notations WHERE id = ? AND project_id = ?', [(int)$c['entry'], $pid]) ? (int)$c['entry'] : null;
+            $decided = !empty($c['decided']);
+            $out[] = ['label' => mb_substr(trim((string)($c['label'] ?? '')), 0, 300), 'entry_id' => $entry ?? ($decided ? $decidedEntry : null), 'decided' => $decided, 'keys' => $keys];
+        }
+        if (!$out) return;
+        Db::run('DELETE FROM notation_classes WHERE project_id = ? AND symbol_key = ?', [$pid, $key]);
+        Db::insert('notation_classes', ['project_id' => $pid, 'symbol_key' => mb_substr($key, 0, 191), 'classes_json' => json_encode($out, JSON_UNESCAPED_UNICODE),
+            'ai_model' => $model, 'task_id' => $task, 'created_at' => Db::now()]);
     }
 
     /**

@@ -1,7 +1,7 @@
 {
  "min_version": "1.0.0",
  "client_version": "1.20.0",
- "fingerprint": "0816cf506b3c6161df64b21e1d4d9fd06d5805b138327e34f9cbef309c53e73b",
+ "fingerprint": "a580dd0ce84a3031fa35c7827c1395bd161e62d5436fc42d4dd69a44eafef032",
  "routes": [
   "GET /api/ai/procedures AiTaskController::procedures",
   "GET /api/bib/{id}/pdf BibController::pdf",
@@ -350,9 +350,10 @@
   "NotationController::MAX_VARIANTS": "62638b07def6c368171b06d9bdc8f3f438cffda40be7294ff9055d8f2ffac7e4",
   "NotationController::RELATION": "1bb84c548726a6f30881312a51a5935d55627b9eb64dbe206bf31917118bee2f",
   "NotationController::RELATIONS": "39438912a06f2b9a0b6a92a6faa6fb301d162314d52f28a71592b85acc59a4ce",
-  "NotationController::addSpelling": "aada1ea5f06c8ff2373b14942e752967ea5c0311732391ff348f1117d6cd2e78",
+  "NotationController::addSpelling": "5fbd1f281508d33091ee1ba3e1c6e7e7f32643eb3f6de681f5b21093defdbd7b",
   "NotationController::aiCheck": "9cd69934bbca5da567d8accb2f7f24308fe4f938c8fbc407413e3b54736a3a8f",
   "NotationController::bare": "9447c56f7977e7fe1ceb92fb0841fe2d4a079d9f419ab17e4638ccad2df2dd1a",
+  "NotationController::classesOf": "f268e75316aef245ff65f184d0e344217335c03ba24086817cb0b284c6db9fd1",
   "NotationController::create": "ba30906a39a46b882775d9170dcb77b6b7a0ace3f3a5e4683375c10c71833d64",
   "NotationController::decidedBy": "a004c83cbf552c774996dc06a4e2eb469104a40de60bafdf1b2e4a9980446c71",
   "NotationController::definitions": "c1307c40dec0986747193e900445b63584224c9d981df5ac18fc215b904554f1",
@@ -362,6 +363,7 @@
   "NotationController::fixedOf": "dead88f16621f9f8dfc6f7cb2e687433b24bae201dfb99a5920d1f06d5be5d7b",
   "NotationController::forFact": "65d51bb42828719a499dc4af7dc104fc448d144aaa72e405603194c243d7dee2",
   "NotationController::forTask": "2eff98c10ba336fdfd526f1a3a3690bcaed424dd3b5733d131ccc0e6d24063bd",
+  "NotationController::groupsFor": "f7df308e14281711bc2c33d02d781e5d3a11efaf084942c19003c7a7d6e54bf4",
   "NotationController::hash": "454e66c296c866b45eda4ac13dc5e2308438ae1cbac419e09c2c025675516731",
   "NotationController::inferParams": "5b96b3891db874475cdb1a16e882b103d1706158d4fa73119be1ae35bd02ca47",
   "NotationController::isFixed": "f8e97bb5f92ba3760b6ff3a0ee9d1fbcab354e31b6c8c06322a0644f52c9ef49",
@@ -378,10 +380,11 @@
   "NotationController::present": "f1e122c8e201a76645af94ad49f99ac2cbfb1cb80533225e79bbf301a7f68df9",
   "NotationController::progress": "c3ed90f3e5fac2677406ddc3fb16b8ade8c6abb3cf9800749250854710294c1a",
   "NotationController::propose": "60380f3a722c8d5ca16d1dca6273aa8b99d5fc7d37877dff49274e9b4014a079",
+  "NotationController::recordClasses": "a7fa208388144a9b3d877ef17f134b58dd4ddfb9c40da2e3e152f016e87c9d17",
   "NotationController::rephrase": "cac5dc5b0f6c5450ef736063bc530092cbd84e0518d7578409834a7b988b8d16",
   "NotationController::rephraseFact": "f9bf5a2b42b9f235da52d6258480f915f0f4369e872868f8f259e8d3edcf666d",
   "NotationController::sameText": "026ac8a0ef9a81d2632205062e60bdbe1add138f997862c11506d6673484822a",
-  "NotationController::shared": "8e2432a3a15e03514a4771799b8ce61ed894577020fd2ae57e9899af60f73a6d",
+  "NotationController::shared": "7f093cf543266da0863354a92b239db90fa394b0ade4d5ebd5eea20fddbfd9c4",
   "NotationController::splitDefinitions": "175903950b11c7b1cbc85f6482ce2951c2166f5508ec8e4a567811924bc635a1",
   "NotationController::sql": "2215461a1ac16d3edacf389f8c30b124ce0f4ff29a13d2aa4e6a3636b8cae6a0",
   "NotationController::states": "ddc43b7c84e6ab9e9ff27b155d5896ce4133105216ded3b0f3886058659e67b3",
@@ -392,10 +395,10 @@
   "Notify::mentions": "87e12b1918ae6b9f84992280147d662e5dc4a5fff01d5418c4f370b99106da23",
   "Notify::send": "49a37c414cc94840696f77cfb49f21cc9ee4bfed2c9785504b4ab0825b71d7fe",
   "Procedures::CAPABILITIES": "4dce42bbadf21b695afcf974783a43c20da9c3e58306e6347d7f13d1e61f5e30",
-  "Procedures::INSTRUCTIONS": "98155048cbc90c395f5ee2579781815e6de43cabcfade74a50888a752edd7d85",
+  "Procedures::INSTRUCTIONS": "b5106dd0ed49c197b4d0cd31648c7c34d3ca2cec1f9ae007ee93f632627585d6",
   "Procedures::REQUEST_NOTE": "24b0a276d5999286c5ee3500049fb549cab02c47210fcc847ff3fd0c652e1b6a",
-  "Procedures::SCHEMAS": "979d722eafff711863af5801424e785931f2c219b70b915bd40a65964ac265b2",
-  "Procedures::apply": "ad345f429ec2d8c3ad480b3b4f0dde60d34e19dabfa2c9a52e8641921bf57131",
+  "Procedures::SCHEMAS": "b3c57915d7210b5c4cd4266f7922fac59019e5ca1b8c5ef279e27fc11729629a",
+  "Procedures::apply": "27fa792366af2f6f70ababc4a0d7be891da634e41bb706691b619c79fbe4ff77",
   "Procedures::capabilities": "0cd0fd2bbacd82074d877b676192b2e11c0b127be10e089ebd2c1de62a47729e",
   "Procedures::defs": "c0089c4f2d7fa926a1e8e6e5b3591add612d802cf891aaf4d3df1184a9936c9b",
   "Procedures::has": "203dad6c3384cffbdd266434aa8286ddabbcbbed33b7a514a2bd53f87a93ef5d",
@@ -526,10 +529,10 @@
   "Sweeps::setting": "367cd3fda6ea7563d64307aa088114375d74efe7b4330e53088eb74d33d070d3",
   "Sweeps::sourceCandidates": "6c522bded3eaf090aee12413f06cb13e5e2adabb793548299549d5a907b59bcb",
   "Sweeps::stale": "04575d602277808fe90f6ba8c5f190b0c7179d43bcd1fcd24c18a745ba026769",
-  "Sweeps::symbolCandidates": "37b2b1c8580a9093f3fb5abc9583476989a3765bcb96ed0c87f239c78c3097a8",
+  "Sweeps::symbolCandidates": "2555222139beb041b1d1c807308777ed46a276d47c7ee46dc29e92af31c2a83b",
   "Sweeps::symbolStates": "36cacd34f5aa8107299862778a625d57106abf47c8dd1ce26f2cf77a4d756db8",
-  "Sweeps::take": "7ab83945e2064201da94c46fc88d3b72178523327e7bfe5f56eb8ffc4badfbb7",
-  "Sweeps::tried": "3364b2ae3534bf166f37856c44871536eea256325ff8d9531f2cb3171b95008b",
+  "Sweeps::take": "a82eb0ca22215e8d2f77a2ac7455613addd68ad3b3ffa20157a024835e399817",
+  "Sweeps::tried": "b6abdf2613efb84a49ee4998a1ab796f14067c96a92928da04cd538a0009947c",
   "Sweeps::typeCandidates": "9ab42f8a496524c406252d22c849bda3940d7e47643c796bb0a697434a485e92"
  },
  "history": [
@@ -1374,6 +1377,26 @@
     "NotationController::list",
     "+Sweeps::pendingForFact",
     "+Sweeps::pendingItems"
+   ]
+  },
+  {
+   "date": "2026-11-26",
+   "decision": "compatible",
+   "client_version": "1.20.0",
+   "min_version": "1.0.0",
+   "note": "consolidate_notation answers gain classes (groups of equivalent wordings); a missing classes is filled with [] before validation, so answers to the old recipe still apply. shared gains classes and unclassified.",
+   "changed": [
+    "NotationController::addSpelling",
+    "NotationController::shared",
+    "Procedures::INSTRUCTIONS",
+    "Procedures::SCHEMAS",
+    "Procedures::apply",
+    "Sweeps::symbolCandidates",
+    "Sweeps::take",
+    "Sweeps::tried",
+    "+NotationController::classesOf",
+    "+NotationController::groupsFor",
+    "+NotationController::recordClasses"
    ]
   }
  ]
