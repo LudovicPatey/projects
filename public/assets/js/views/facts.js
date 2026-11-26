@@ -2,6 +2,7 @@ import { api, expandFacts, getIfChanged } from '../api.js';
 import { store, go, link, attempt, toast, refreshMentionables, refreshProject, unreadCount, markRead, markItemUnread } from '../store.js';
 import { timeAgo, fullDate } from '../util.js';
 import { FactGraph, STATUS, PROOF_LABEL } from '../factgraph.js';
+import { factBadges, quietLabels, statementAddsToTitle } from '../fact-badges.js';
 import { factTitle, formatFactHtml, kindCounts, kindLabel, kindOf, parseExternalRefs, texLine } from '../fact-format.js';
 import { PROOF_STATE, proofTally, resultOnlyBody, stance } from '../fact-proofs.js';
 import { asMath, checkedByAi, rephrasingState, shownRephrasing } from '../notation-model.js';
@@ -51,6 +52,16 @@ const BasisTag = {
   template: `<span v-if="basis === 'cited'" class="basis-tag cited" title="A result of another work, stated without its proof. A person who read the source accepts it.">Cited result</span><span v-if="incomplete" class="basis-tag incomplete" title="Its proof uses a result of another work that is not a fact of the database yet">Outside result</span>`,
 };
 
+/**
+ * A fact's state as small icons: where it stands, its proof, a cited or outside result, the AI that wrote it. Each explains itself on
+ * hover; "verbose" adds its word, where there is room (the fact page).
+ */
+const FactBadges = {
+  props: { f: Object, verbose: Boolean, only: Array },
+  computed: { badges() { return factBadges(this.f).filter((b) => !(this.verbose && b.key === 'model') && (!this.only || this.only.includes(b.key))); } },
+  template: `<span class="fbadges" :class="{verbose}"><span v-for="b in badges" :key="b.key" class="fb" :class="'t-' + b.tone" :title="b.title" role="img" :aria-label="b.title"><icon :name="b.icon" :size="13"/><span v-if="verbose" class="fb-label">{{ b.label }}</span></span></span>`,
+};
+
 const StatusTag = {
   props: { status: String },
   computed: { s() { return STATUS[this.status]; } },
@@ -68,7 +79,7 @@ const usedBy = (f) => f.used_by ?? f.dependents?.length ?? 0;
 const notationView = () => { try { return localStorage.getItem('oq-fact-notation') !== 'source'; } catch { return true; } };
 
 export const FactsView = {
-  components: { FactGraph, BasisTag, StatusTag, ByLine, LabelChips, ProofTag, NotationPanel, ConsolidationPanel },
+  components: { FactGraph, BasisTag, StatusTag, FactBadges, ByLine, LabelChips, ProofTag, NotationPanel, ConsolidationPanel },
   props: { pid: Number, id: Number, query: Object },
   data() {
     return {
@@ -287,18 +298,13 @@ export const FactsView = {
     </div>
     <div class="list">
       <a v-for="f in filtered" :key="f.id" class="li fact-li" :class="['o-' + f.origin, {active: f.id === id, 'is-new': !!unreadOf(f.id)}]" :href="factLink(f.id)">
-        <div class="li-top"><code class="key">{{ f.label }}</code><span class="kind-tag" :class="'k-' + kindOf(f)">{{ kindLabel(kindOf(f)) }}</span><span class="grow"></span><button class="star-btn" :class="{on: f.starred}" :aria-pressed="!!f.starred" :title="f.starred ? 'Remove your star' : 'Star this fact: it matters'" :aria-label="(f.starred ? 'Remove your star from ' : 'Star ') + f.label" @click.prevent.stop="toggleStar(f)"><icon name="star" :size="13"/><b v-if="f.stars">{{ f.stars }}</b></button><unread-badge type="fact" :id="f.id"/></div>
-        <div class="li-subject"><math-text :text="texLine(factTitle(f.title, f.statement_text))"/></div>
-        <div class="li-snippet"><math-text :text="f.statement_text"/></div>
-        <div class="li-meta wrap">
-          <label-chips :labels="f.labels"/>
-          <status-tag :status="f.status"/>
-          <basis-tag :basis="f.basis" :incomplete="f.incomplete"/>
-          <proof-tag v-if="f.basis !== 'cited'" :origin="f.proof_origin"/>
-          <span v-for="t in (f.topics || []).slice(0, 3)" :key="t" class="topic-chip sm">{{ t }}</span>
-        </div>
+        <div class="li-top"><span class="li-subject"><math-text :text="texLine(factTitle(f.title, f.statement_text))"/></span><button class="star-btn" :class="{on: f.starred}" :aria-pressed="!!f.starred" :title="f.starred ? 'Remove your star' : 'Star this fact: it matters'" :aria-label="(f.starred ? 'Remove your star from ' : 'Star ') + f.label" @click.prevent.stop="toggleStar(f)"><icon name="star" :size="13"/><b v-if="f.stars">{{ f.stars }}</b></button><unread-badge type="fact" :id="f.id"/></div>
+        <div v-if="search.trim() || statementAddsToTitle(f.title, f.statement_text)" class="li-snippet"><math-text :text="f.statement_text"/></div>
         <div class="li-foot">
-          <ai-meta compact :model="f.ai_model" :user="f.ai_user_name" :ms="f.ai_generation_ms"/>
+          <fact-badges :f="f"/>
+          <span class="kind-word" :class="'k-' + kindOf(f)">{{ kindLabel(kindOf(f)) }}</span>
+          <label-chips v-if="quietLabels(f.labels).length" :labels="quietLabels(f.labels)"/>
+          <span v-for="t in (f.topics || []).slice(0, 2)" :key="t" class="topic-chip sm">{{ t }}</span>
           <span class="grow"></span>
           <span v-if="f.chain === 'broken'" class="chain-warn" :title="chainLabels.broken">⚠</span>
           <span v-if="f.lean !== 'none'" class="lean-tag" :class="f.lean" :title="leanLabels[f.lean]">Lean</span>
@@ -318,9 +324,10 @@ export const FactsView = {
       <div v-else-if="fact.chain !== 'ok'" class="fact-alert" :class="fact.chain === 'broken' ? 'red' : 'amber'">{{ chainLabels[fact.chain] }} in its dependency chain.</div>
       <header class="doc-head">
         <div class="doc-title">
-          <div class="fact-id"><code class="key big">{{ fact.label }}</code><span class="kind-tag" :class="'k-' + kindOf(fact)">{{ kindLabel(kindOf(fact)) }}</span><span>{{ fact.method }}</span><span v-if="fact.tool">{{ fact.tool }}</span><span>revision {{ fact.current_revision }}</span></div>
+          <div class="fact-id"><span class="kind-tag" :class="'k-' + kindOf(fact)">{{ kindLabel(kindOf(fact)) }}</span><span>{{ fact.method }}</span><span v-if="fact.tool">{{ fact.tool }}</span><span>revision {{ fact.current_revision }}</span><span class="grow"></span>
+            <button class="btn xs ghost" :title="'Copies its key, ' + fact.label + ', to cite it in a text or a paper; type @ in any text of the platform to link it'" @click="cite"><icon name="link" :size="12"/> Cite</button></div>
           <h2 :title="fact.title"><math-text :text="headTitle"/></h2>
-          <div class="fact-chips"><label-chips :labels="fact.labels"/><status-tag :status="fact.status"/><basis-tag :basis="fact.basis" :incomplete="fact.incomplete"/><proof-tag v-if="!cited" :origin="fact.proof_origin"/><span class="lean-tag" :class="fact.lean" v-if="fact.lean !== 'none'">{{ leanLabels[fact.lean] }}</span></div>
+          <div class="fact-chips"><fact-badges :f="fact" verbose/><label-chips v-if="quietLabels(fact.labels).length" :labels="quietLabels(fact.labels)"/><span class="lean-tag" :class="fact.lean" v-if="fact.lean !== 'none'">{{ leanLabels[fact.lean] }}</span></div>
           <div class="fact-topics"><icon name="tag" :size="13"/>
             <template v-if="topicDraft === null"><a v-for="t in fact.topics" :key="t" class="topic-chip" :href="link('facts', null, {topic: t})">{{ t }}</a><span v-if="!fact.topics.length" class="muted small">No subject tag</span><button class="link-btn small" @click="topicDraft = fact.topics.join(', ')">{{ fact.topics.length ? 'Edit' : 'Add tags' }}</button></template>
             <template v-else><input v-model="topicDraft" class="topic-input" placeholder="Subjects, separated by commas" aria-label="Subject tags, separated by commas" @keydown.enter="saveTopics" @keydown.esc="topicDraft = null"><button class="btn xs primary" @click="saveTopics">Save</button><button class="btn xs ghost" @click="topicDraft = null">Cancel</button></template></div>
@@ -531,10 +538,10 @@ export const FactsView = {
       <div v-if="tab==='deps'" class="pad scroll">
         <h4>Depends on <span class="count">{{ fact.deps.length }}</span></h4>
         <div v-if="!fact.deps.length" class="muted small pad-b">No dependencies.</div>
-        <a v-for="d in fact.deps" :key="d.id" class="row-link" :href="factLink(d.id)"><code class="key">{{ d.label }}</code><span class="ellipsis">{{ d.title }}</span><span class="grow"></span><status-tag :status="d.status"/></a>
+        <a v-for="d in fact.deps" :key="d.id" class="row-link" :href="factLink(d.id)" :title="d.label"><fact-badges :f="d" :only="['status']"/><span class="ellipsis"><math-text :text="d.title"/></span></a>
         <h4 class="mt">Used by <span class="count">{{ fact.dependents.length }}</span></h4>
         <div v-if="!fact.dependents.length" class="muted small pad-b">Nothing depends on this fact yet.</div>
-        <a v-for="d in fact.dependents" :key="d.id" class="row-link" :href="factLink(d.id)"><code class="key">{{ d.label }}</code><span class="ellipsis">{{ d.title }}</span><span class="grow"></span><status-tag :status="d.status"/></a>
+        <a v-for="d in fact.dependents" :key="d.id" class="row-link" :href="factLink(d.id)" :title="d.label"><fact-badges :f="d" :only="['status']"/><span class="ellipsis"><math-text :text="d.title"/></span></a>
         <h4 class="mt">Mentioned in</h4>
         <div v-if="!backlinks.length" class="muted small">No mention yet.</div>
         <a v-for="(b, i) in backlinks" :key="i" class="backlink" :href="link(b.link.view, b.link.id, b.link.query)">
@@ -639,7 +646,11 @@ export const FactsView = {
     },
     shown(html) { return this.readable ? formatFactHtml(html) : html; },
     setReadable(on) { this.readable = on; this.refreshOutline(); try { localStorage.setItem('oq-fact-view', on ? 'readable' : 'original'); } catch { /* the choice lasts for this page only */ } },
-    timeAgo, fullDate, link, markItemUnread,
+    timeAgo, fullDate, link, markItemUnread, quietLabels, statementAddsToTitle,
+    /** A fact's key is there to cite it: copied, with what it is for. */
+    async cite() {
+      try { await navigator.clipboard.writeText(this.fact.label); toast(`Copied ${this.fact.label}: paste it to cite this fact`, 'success'); } catch { toast(`Its key is ${this.fact.label}`, 'info'); }
+    },
     unreadOf(id) { return unreadCount('fact', id); },
     onActivity() { this.loadList(); if (!this.checkForm && !this.retracting) this.loadFact(); },
     sourceIcon(t) { return { document: 'files', bib: 'book', message: 'mail', comment: 'comment' }[t] || 'link'; },

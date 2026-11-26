@@ -527,7 +527,7 @@ final class FactController
     {
         return [
             'fields' => [
-                'title' => 'required, short name',
+                'title' => 'required, short name; formulas with $...$ as in the statement, such as $\\mathsf{ACA}_0$',
                 'kind' => self::KINDS,
                 'labels' => ['required, one or more' => self::LABELS],
                 'method' => 'required: "extracted" (the result is in a source) or "deduced" (new)',

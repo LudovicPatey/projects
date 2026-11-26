@@ -136,7 +136,10 @@ h1 { font-size: 24px; } h2 { font-size: 16px; } h3 { font-size: 15px; } h4 { fon
   position: absolute; top: 3px; right: 9px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: #ef4444;
   color: #fff; font-size: 10.5px; display: grid; place-items: center; font-weight: 700; border: 2px solid var(--rail);
 }
-.main { flex: 1; min-width: 0; overflow: auto; }
+/* The one scroll area of a page, the full width of the window: its scrollbar is at the right edge. Positioned, so that nothing
+   absolutely placed inside it (KaTeX's hidden copy of each formula) escapes it and makes the window itself scroll. */
+.main { position: relative; flex: 1; min-width: 0; overflow: auto; }
+.katex { position: relative; }
 
 /* ----- 3-column layout (webmail style) ----- */
 .cols3 { display: grid; grid-template-columns: 330px minmax(0, 1fr) 340px; height: var(--app-h); }
@@ -176,8 +179,9 @@ h1 { font-size: 24px; } h2 { font-size: 16px; } h3 { font-size: 15px; } h4 { fon
 .file-icon { width: 34px; height: 34px; border-radius: 8px; display: grid; place-items: center; flex: none; }
 .file-icon.human { background: var(--human-bg); color: var(--human); }
 .file-icon.ai { background: var(--ai-bg); color: var(--ai); }
-.key { background: var(--line-2); padding: 1px 6px; border-radius: 4px; color: #344054; }
-.key.big { font-size: 13.5px; }
+/* A fact's key: there to find it and cite it, never louder than its title. */
+.key { padding: 0; border-radius: 3px; background: none; color: var(--muted); font-size: .86em; }
+.key.big { font-size: 12.5px; }
 .placeholder { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; height: 100%; min-height: 240px; color: var(--muted); text-align: center; padding: 24px; }
 .placeholder.small { font-size: 13px; }
 .placeholder p { margin: 0; max-width: 280px; }
@@ -476,7 +480,7 @@ h4.mt { margin-top: 18px; }
 .dep-menu { border: 1px solid var(--line); border-radius: 6px; max-height: 180px; overflow-y: auto; padding: 3px; }
 .dep-menu .mi { width: 100%; border: 0; background: none; text-align: left; }
 .dep-menu .mi:hover { background: var(--accent-2); }
-.facts-notation { height: var(--app-h); overflow-y: auto; }
+.facts-notation { position: relative; height: var(--app-h); overflow-y: auto; }
 .fg-views { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--line); background: #fff; }
 .fg-views .muted { margin-left: auto; }
 .fg-hint-star { color: #a16207; font-weight: 700; }
@@ -1186,7 +1190,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: non
 
 /* ===== Structured pages ===== */
 .page.wide { max-width: 1320px; padding: 24px 28px 56px; }
-.main > .page { height: 100%; overflow-y: auto; }
+/* A page is centred in .main, which scrolls: never a scroll area of its own, whose scrollbar would sit mid-window. */
 .eyebrow { color: var(--accent); font-size: 11.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
 .pill { display: inline-flex; flex: none; align-items: center; padding: 1px 8px; border-radius: 10px; font-size: 11px; font-weight: 650; white-space: nowrap; }
 .t-neutral { background: var(--line-2); color: #475467; } .t-info { background: var(--info-bg); color: var(--info); } .t-good { background: var(--good-bg); color: var(--good); }
@@ -1712,14 +1716,26 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: non
 .tl-change.undone .tl-body { opacity: .65; }
 
 /* Reading suggestions on the overview: facts the consolidation marked as real progress. */
-.reading-row { display: flex; align-items: flex-start; gap: 8px; padding: 8px 0; border-top: 1px solid var(--line-2); min-width: 0; }
-.reading-main { display: grid; gap: 3px; flex: 1; min-width: 0; color: var(--text); }
-.reading-main:hover { text-decoration: none; }
-.reading-main:hover b { color: var(--accent); }
-.reading-top { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; min-width: 0; overflow-wrap: anywhere; }
-.reading-why { color: var(--muted); overflow-wrap: anywhere; }
+/* A fact worth reading: its title first, why it matters, then one quiet line of details, the cited results to check on hover. */
+.reading-row { display: flex; align-items: flex-start; gap: 8px; padding: 10px 0; border-top: 1px solid var(--line-2); min-width: 0; }
 .reading-row > .btn { flex: none; }
-.reading-body { display: grid; gap: 4px; flex: 1; min-width: 0; }
+.reading-body { position: relative; display: grid; gap: 3px; flex: 1; min-width: 0; }
+/* The list opens under the whole row, not under the count, so that it never runs past the window on the right. */
+.reading-meta .hover-list { position: static; }
+.reading-meta .hover-pop { top: 100%; width: min(440px, 100%); }
+.reading-title { color: var(--text); font-size: 14.5px; font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; }
+.reading-title:hover { color: var(--accent); text-decoration: none; }
+.reading-why { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.45; overflow-wrap: anywhere; }
+.reading-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin: 2px 0 0; font-size: 12px; color: var(--muted); }
+.reading-meta .key { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A list shown on hover or on focus (a tap on a phone), so that a count stays one line until someone wants the details. */
+.hover-list { position: relative; display: inline-flex; align-items: center; gap: 4px; cursor: help; color: var(--text); text-decoration: underline dotted; text-underline-offset: 3px; outline: none; }
+.hover-pop { display: none; position: absolute; left: 0; top: calc(100% + 6px); z-index: 30; width: min(420px, calc(100vw - 48px)); padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); box-shadow: var(--shadow-lg); color: var(--text); font-size: 12.5px; line-height: 1.45; text-decoration: none; cursor: default; }
+.hover-pop::before { content: ''; position: absolute; left: 0; right: 0; top: -8px; height: 8px; }
+.hover-list:hover .hover-pop, .hover-list:focus .hover-pop, .hover-list:focus-within .hover-pop { display: grid; gap: 6px; }
+.hover-pop > b { font-size: 12px; }
+.hover-pop a { display: block; color: var(--accent); }
+.action-kind .key { margin-left: 8px; }
 .reading-cites { color: var(--warn); overflow-wrap: anywhere; }
 /* What the buttons of a group do, beside them: members do not know the interface. */
 .action-help { margin: 4px 0 8px; padding: 6px 9px; border-left: 3px solid var(--accent); background: var(--accent-2); border-radius: 0 6px 6px 0; line-height: 1.45; }
@@ -1765,3 +1781,13 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: non
 .ai-pending-head { display: block; color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; }
 .ai-pending-answer { color: var(--muted); }
 .ai-pending.compact .ai-pending-group, .ai-pending.compact .ai-pending-head { display: inline; }
+
+/* A fact's state as icons (fact-badges.js): each explains itself on hover; on the fact page, with its word. */
+.fbadges { display: inline-flex; align-items: center; gap: 6px; flex: none; }
+.fb { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); cursor: help; }
+.fb.t-good { color: #0f766e; } .fb.t-ai { color: #7c3aed; } .fb.t-warn { color: #b45309; } .fb.t-bad { color: #b42318; } .fb.t-muted { color: #98a2b3; }
+.fbadges.verbose { flex-wrap: wrap; gap: 6px 12px; }
+.fbadges.verbose .fb { font-size: 12.5px; font-weight: 600; cursor: default; }
+.fbadges.verbose .fb-label { color: var(--text); font-weight: 500; }
+.kind-word { flex: none; font-size: 11.5px; color: var(--muted); }
+.li-top .li-subject { flex: 1; min-width: 0; margin: 0; font-size: 13.5px; color: var(--text); }

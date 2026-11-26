@@ -56,6 +56,8 @@ Assume a newcomer who must understand each screen from what it says, without the
 - Works at 1440, 1024, 800 and 375 pixels: run `scripts/visual-audit.js` on each affected view and dialog, then look at a screenshot.
 - `select.sm` beside `btn sm`; never `background:` or a small right padding on a `select`.
 - Status colors always come with a word or an icon, never color alone.
+- A page scrolls in `.main`, the full width of the window, so its scrollbar is at the right edge; the window itself never scrolls.
+  An absolutely placed element (KaTeX's hidden copy of a formula) must sit in a positioned scroll area, or it escapes it.
 - Cards side by side keep their controls on one line at the bottom, at one height across a row: a text whose length varies goes on
   its own line above them, never in the row of buttons.
 - Before committing an interface change: the audit and a screenshot at each width, on realistic data (long names and labels, every
@@ -69,6 +71,13 @@ the actions), the main content, then labelled rows or sections for the rest, eac
 structure: it marks what color alone carries (a parameter's identity, a status with its word), never a block that would otherwise be
 lost among the others. The notation entry is the example: symbol, decision and actions in its header, the meaning, then one panel of
 labelled rows (Applies to, How sources differ, Other forms, Other meanings, Defined in), instead of boxes and colored notes stacked.
+
+Keep every piece of information, but at the weight it deserves. The most important comes first and stands out (a fact's title,
+why it matters); identifiers and provenance (keys, models, dates) are quiet; long lists behind a count are shown on hover or tap
+(`.hover-list` with its `.hover-pop`), never spelled out in the card. A fact's key never comes before or outshines its title.
+States are small icons that explain themselves on hover (`fact-badges.js`: status, proof origin, cited result, the AI that wrote it,
+its exact model on hover), with their word only where there is room. What nearly every item says, such as the label "conclusion",
+is not shown. A fact's key is there to cite it: the fact page's **Cite** copies it.
 
 ## 7. Help follows the interface
 

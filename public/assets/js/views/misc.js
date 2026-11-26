@@ -119,12 +119,15 @@ export const OverviewView = {
         <section v-if="d.reading?.length" class="panel reading-panel"><header><h2><icon name="sparkles" :size="15"/> Worth reading</h2><small class="muted">{{ d.reading.length }}</small></header>
           <p class="muted small">Facts the AI consolidation marked as real progress, that you have not opened since. Most facts are routine: these are worth your time.</p>
           <div v-for="f in d.reading" :key="f.id" class="reading-row">
-            <div class="reading-body"><a class="reading-main" :href="link('facts', f.id)"><span class="reading-top"><code class="key">{{ f.label }}</code><b><math-text :text="f.title"/></b></span>
-              <span class="reading-why small"><math-text :text="f.reason"/> <ai-meta compact :model="f.model"/></span></a>
-              <span v-if="f.citations?.count" class="reading-cites small"><icon name="book" :size="12"/> Relies on {{ f.citations.count === 1 ? 'a cited result' : f.citations.count + ' cited results' }} nobody accepted yet:
-                <template v-for="(c, i) in f.citations.facts" :key="c.id"><a :href="link('facts', c.id)" :title="c.title">{{ c.label }}</a><span v-if="c.status === 'source_confirmed'" class="muted"> (source confirmed by AI)</span>{{ i < f.citations.facts.length - 1 ? ', ' : '' }}</template><template v-if="f.citations.count > f.citations.facts.length"> and {{ f.citations.count - f.citations.facts.length }} more</template>.
-                {{ f.citations.count === 1 ? 'Check its source.' : 'Check their sources.' }}</span></div>
-            <button class="btn xs ghost" title="Remove it from your suggestions" @click="dismiss(f)">Not for me</button>
+            <div class="reading-body">
+              <a class="reading-title" :href="link('facts', f.id)"><math-text :text="f.title"/></a>
+              <p class="reading-why"><math-text :text="f.reason"/></p>
+              <p class="reading-meta"><code class="key">{{ f.label }}</code><ai-meta compact :model="f.model"/>
+                <span v-if="f.citations?.count" class="hover-list" tabindex="0" :aria-label="citesText(f) + ': show them'"><icon name="book" :size="12"/> {{ citesText(f) }}
+                  <span class="hover-pop" role="tooltip"><b>Cited results nobody accepted yet</b> This fact relies on them: read their sources, then review them.
+                    <a v-for="c in f.citations.facts" :key="c.id" :href="link('facts', c.id)"><math-text :text="c.title"/> <small class="muted">{{ c.label }}{{ c.status === 'source_confirmed' ? ' · source confirmed by AI' : '' }}</small></a>
+                    <small v-if="f.citations.count > f.citations.facts.length" class="muted">and {{ f.citations.count - f.citations.facts.length }} more, on the fact's page</small></span></span></p></div>
+            <button class="btn xs ghost" title="Removes it from your suggestions only; the fact and its mark stay for the others" @click="dismiss(f)">Not for me</button>
           </div></section>
         <section class="panel"><header><h2><icon name="target" :size="15"/> Big questions</h2><a :href="link('questions')">All questions ›</a></header>
           <a v-for="q in d.questions.roots" :key="q.id" class="big-q" :href="link('questions', q.id)">
@@ -155,6 +158,7 @@ export const OverviewView = {
   methods: {
     timeAgo, link, computeTime, aiTimeSummary,
     async load() { try { this.d = await api.get(`api/projects/${this.p.id}/dashboard`); } catch (e) { toast(e.message, 'error'); } },
+    citesText(f) { return f.citations.count === 1 ? '1 cited result to check' : `${f.citations.count} cited results to check`; },
     async dismiss(f) {
       const r = await attempt(() => api.post(`api/facts/${f.id}/reading/dismiss`, {}));
       if (r) this.d = { ...this.d, reading: r.reading };

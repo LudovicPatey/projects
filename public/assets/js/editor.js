@@ -9,6 +9,7 @@ import { askAiPrefix, offersAskAi } from './ai-model.js';
 import { notationMarker, trustMarks } from './notation-marks.js';
 import { paramGroups } from './notation-params.js';
 import { asMath } from './notation-model.js';
+import { bareTex } from './bare-tex.js';
 import { linkFactRefs } from './fact-refs.js';
 
 const Embed = Quill.import('blots/embed');
@@ -271,7 +272,8 @@ export const MathText = {
     paint() {
       const el = this.$refs.el;
       if (!el) return;
-      el.textContent = String(this.text || '').replace(/@\{\w+:([^}]+)\}/g, '$1').replace(/\$\$/g, '$');
+      // A formula written without dollars, as many titles are (ACA_0, HT^{=2}_2), is a formula all the same.
+      el.textContent = bareTex(String(this.text || '').replace(/@\{\w+:([^}]+)\}/g, '$1').replace(/\$\$/g, '$'));
       if (el.textContent.includes('$') || el.textContent.includes('\\(')) {
         if (window.renderMathInElement) {
           window.renderMathInElement(el, { delimiters: [{ left: '$', right: '$', display: false }, { left: '\\(', right: '\\)', display: false }], throwOnError: false });

@@ -70,7 +70,7 @@ export const ActionList = {
   methods: { link },
   template: `<div class="actions"><a v-for="a in actions" :key="a.kind + a.ref" class="action" :href="link(a.link.view, a.link.id)">
     <span class="action-icon" :class="'t-' + meta[a.kind].tone"><icon :name="meta[a.kind].icon" :size="15"/></span>
-    <span class="action-text"><span class="action-kind">{{ meta[a.kind].label }} · {{ meta[a.kind].text }}</span><b><code v-if="a.code" class="key">{{ a.code }}</code> <math-text :text="a.title"/></b></span><span class="chev" aria-hidden="true">›</span></a>
+    <span class="action-text"><span class="action-kind">{{ meta[a.kind].label }} · {{ meta[a.kind].text }}<code v-if="a.code" class="key">{{ a.code }}</code></span><b><math-text :text="a.title"/></b></span><span class="chev" aria-hidden="true">›</span></a>
     <div v-if="!actions.length" class="d-empty"><icon name="check-circle" :size="20"/> Nothing is waiting for you.</div></div>`,
 };
 

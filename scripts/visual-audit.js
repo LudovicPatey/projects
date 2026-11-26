@@ -55,11 +55,30 @@
       if (sameRow && Math.abs(q.height - r.height) > 4) problems.push(`uneven row: ${name(s)} is ${Math.round(r.height)}px tall beside ${name(sib)} at ${Math.round(q.height)}px`);
     }
   }
+  // Lists shown on hover (.hover-pop): opened one at a time to measure them, since the audit cannot hover.
+  for (const pop of document.querySelectorAll('.hover-pop')) {
+    if (!visible(pop.parentElement)) continue;
+    const before = pop.style.display; pop.style.display = 'grid';
+    const r = pop.getBoundingClientRect();
+    if (r.right > vw + 1 || r.left < -1) problems.push(`list shown on hover outside the window: ${name(pop.parentElement)} spans ${Math.round(r.left)}–${Math.round(r.right)}px`);
+    pop.style.display = before;
+  }
   // Menus and popovers that open outside the window.
   for (const m of document.querySelectorAll('.mention-menu, .dep-menu, .modal, [role="menu"], [role="listbox"], [role="dialog"]')) {
     if (!visible(m)) continue;
     const r = m.getBoundingClientRect();
     if (r.right > vw + 1 || r.left < -1) problems.push(`menu outside the window: ${name(m)}`);
+  }
+  // The app's frame fills the window and scrolls inside: the window itself never scrolls (a hidden element escaping a scroll area
+  // makes it do so, and scrolling then shows a blank band below the frame), and a centred page is not a scroll area of its own,
+  // whose scrollbar would sit in the middle of a wide window instead of at its right edge.
+  if (document.querySelector('.shell')) {
+    const extra = document.documentElement.scrollHeight - window.innerHeight;
+    if (extra > 1) problems.push(`the window scrolls ${extra}px past the app's frame`);
+    for (const p of document.querySelectorAll('.main .page')) {
+      const o = getComputedStyle(p).overflowY;
+      if ((o === 'auto' || o === 'scroll') && p.scrollHeight > p.clientHeight + 1) problems.push(`a page scrolls on its own, its scrollbar inside the window: ${name(p)}`);
+    }
   }
   // Cards side by side in a grid: the controls of each card's footer on one line, and the footers of one row at one height. A longer
   // text in one card must not push its button onto a line of its own, nor move its footer away from its neighbours'.
