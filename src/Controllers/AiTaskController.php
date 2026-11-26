@@ -54,7 +54,7 @@ final class AiTaskController
      */
     public static function queueConsolidation(int $pid): ?int
     {
-        if (Db::value("SELECT 1 FROM ai_tasks WHERE project_id = ? AND kind IN ('extract', 'consolidate') AND status IN ('pending', 'running')", [$pid])) return null;
+        if (Db::value("SELECT 1 FROM ai_tasks WHERE project_id = ? AND (kind = 'extract' OR (kind = 'consolidate' AND (source_type IS NULL OR source_type <> 'sweep'))) AND status IN ('pending', 'running')", [$pid])) return null;
         $n = (int)Db::value('SELECT COUNT(*) FROM facts WHERE project_id = ? AND deleted_at IS NULL', [$pid]);
         if ($n < 2) return null;
         $last = (int)Db::value('SELECT COALESCE(MAX(id), 0) FROM facts WHERE project_id = ?', [$pid]);
@@ -950,7 +950,19 @@ final class AiTaskController
                 'source' => Db::value("SELECT COALESCE(b.cite_key, d.title) FROM fact_sources s LEFT JOIN bib_entries b ON s.source_type = 'bib' AND b.id = s.source_id LEFT JOIN documents d ON s.source_type = 'document' AND d.id = s.source_id WHERE s.fact_id = ? AND s.revision_no = ? AND s.covers <> 'context' LIMIT 1", [$f['id'], $f['current_revision']])],
                 Db::all('SELECT f.id, f.label, f.kind, f.title, f.current_revision, r.statement_html, r.glossary_json FROM facts f JOIN fact_revisions r ON r.fact_id = f.id AND r.revision_no = f.current_revision WHERE f.project_id = ? AND f.deleted_at IS NULL AND f.retracted_at IS NULL ORDER BY f.id LIMIT 400', [$pid]));
         }
-        if ($t['kind'] === 'consolidate') $ctx += ConsolidationController::context($pid);
+        if ($t['kind'] === 'consolidate' && $type !== 'sweep') $ctx += ConsolidationController::context($pid);
+        if ($t['kind'] === 'consolidate' && $type === 'sweep') {
+            // Symbols several facts define, with no entry yet: each with its spellings, its meanings and the facts that give them.
+            $want = array_flip(json_decode((string)$t['snapshot_json'], true)['symbols'] ?? []);
+            $labels = array_column(Db::all('SELECT id, label FROM facts WHERE project_id = ? AND deleted_at IS NULL', [$pid]), 'label', 'id');
+            $ctx['symbols'] = [];
+            foreach (NotationController::shared($pid, 2, 1000) as $x) {
+                if (!isset($want[NotationController::notionKey($x['symbol'])])) continue;
+                $ctx['symbols'][] = ['symbol' => $x['symbol'], 'spellings' => $x['spellings'], 'facts' => $x['facts'],
+                    'meanings' => array_map(fn($m) => ['meaning' => $m['meaning'], 'facts' => array_map(fn($f) => ['id' => (int)$f, 'label' => $labels[$f] ?? null], array_slice($m['facts'], 0, 8))], $x['meanings'])];
+            }
+            $ctx['notation'] = NotationController::forTask($pid, false);
+        }
         if ($t['kind'] === 'notation' && $type === 'sweep') {
             // A batch of facts to write again in the agreed notation, each with what its source meant by its symbols.
             $ctx['facts_to_rewrite'] = [];
@@ -1186,7 +1198,11 @@ final class AiTaskController
         if ($t['source_type'] === 'sweep' && !($snap['facts'] ?? $snap['items'] ?? [])) {
             // A sweep takes its batch when a client takes it.
             $subject = ['notation' => 'facts not yet in the project notation', 'source_check' => 'cited results not yet checked',
-                'rewrite_check' => 'rewrites not yet compared with their original', 'second_reading' => 'proposals waiting for people'][$t['kind']] ?? null;
+                'rewrite_check' => 'rewrites not yet compared with their original', 'second_reading' => 'proposals waiting for people',
+                'consolidate' => 'symbols several facts define, not yet in the project notation'][$t['kind']] ?? null;
+        } elseif ($t['source_type'] === 'sweep' && isset($snap['symbols'])) {
+            $n = count($snap['symbols']);
+            $subject = "$n symbol" . ($n === 1 ? '' : 's');
         } elseif ($t['source_type'] === 'sweep' && isset($snap['items'])) {
             $n = count($snap['items']);
             $subject = $t['kind'] === 'rewrite_check' ? "$n rewrite" . ($n === 1 ? '' : 's') : "$n proposal" . ($n === 1 ? '' : 's');
@@ -1221,13 +1237,14 @@ final class AiTaskController
 
     /** Lower runs sooner. */
     private const PRIORITY = ['ask' => 10, 'review' => 20, 'source_check' => 30, 'bib' => 30, 'consolidate' => 40, 'notation' => 40, 'lean' => 40,
-        'second_reading' => 45, 'derive' => 50, 'source_sweep' => 55, 'notation_rephrase' => 60, 'rewrite_check' => 65, 'extract' => 70];
+        'second_reading' => 45, 'notation_settle' => 45, 'derive' => 50, 'source_sweep' => 55, 'notation_rephrase' => 60, 'rewrite_check' => 65, 'extract' => 70];
     /** A member's own request goes before the same work queued by the platform. */
     private const ASKED_BOOST = 10;
 
     public static function priority(string $kind, ?string $sourceType = null): int
     {
         if ($sourceType === 'sweep' && $kind === 'source_check') return self::PRIORITY['source_sweep'];
+        if ($sourceType === 'sweep' && $kind === 'consolidate') return self::PRIORITY['notation_settle'];
         return self::PRIORITY[$kind === 'notation' && in_array($sourceType, ['fact', 'sweep'], true) ? 'notation_rephrase' : $kind] ?? 50;
     }
 
@@ -1239,8 +1256,9 @@ final class AiTaskController
     private static function dependencies(int $pid, string $kind, ?string $sourceType): array
     {
         $on = match (true) {
-            $kind === 'consolidate' => ['extract'],
-            $kind === 'notation' && in_array($sourceType, ['fact', 'sweep'], true) => ['consolidate', 'notation'],
+            $kind === 'consolidate' && $sourceType !== 'sweep' => ['extract'],
+            $kind === 'notation' && in_array($sourceType, ['fact', 'sweep'], true) => ['consolidate', 'notation', 'notation_settle'],
+            $kind === 'consolidate' && $sourceType === 'sweep' => ['extract'],
             // A second reading after the consolidation that proposes; rewrites checked once the rewriting of that round is done.
             $kind === 'second_reading' => ['consolidate'],
             $kind === 'rewrite_check' => ['notation_rephrase'],
@@ -1257,6 +1275,7 @@ final class AiTaskController
     /** The group a task is shown in: its kind, a rewrite in the project notation apart from a review of the notation. */
     public static function group(array $t): string
     {
+        if ($t['kind'] === 'consolidate' && $t['source_type'] === 'sweep') return 'notation_settle';
         return $t['kind'] === 'notation' && in_array($t['source_type'], ['fact', 'sweep'], true) ? 'notation_rephrase' : (string)$t['kind'];
     }
 

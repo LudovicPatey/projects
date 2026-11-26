@@ -15,6 +15,7 @@ export const AI_KINDS = {
 /** Upkeep only the platform queues, as sweeps: shown in the queue, never offered in the request form. */
 export const SWEEP_KINDS = {
   rewrite_check: { label: 'Check rewrites in the project notation', short: 'Rewrite check', icon: 'eye', hint: 'A second AI compares each rewrite with its original. One that changes the meaning is not shown. People can overrule it.' },
+  notation_settle: { label: 'Settle the project notation', short: 'Notation sweep', icon: 'book', hint: 'Decides the symbols several facts define and the project notation does not have yet: global, local to their paper, or another spelling of an entry.' },
   second_reading: { label: 'Second reading of proposals', short: 'Second reading', icon: 'eye', hint: 'Another AI reads again the consolidation proposals it was not sure of, applies those it agrees with and drops the others.' },
 };
 
@@ -93,7 +94,8 @@ export function queueGroups(groups, tasks, filter = 'all') {
 }
 
 export function taskTitle(t) {
-  const k = t.kind === 'notation' && ['fact', 'sweep'].includes(t.source_type) ? 'Rewrite in the project notation' : (kindInfo(t.kind)?.label || 'AI task');
+  const k = t.kind === 'notation' && ['fact', 'sweep'].includes(t.source_type) ? 'Rewrite in the project notation'
+    : t.kind === 'consolidate' && t.source_type === 'sweep' ? SWEEP_KINDS.notation_settle.label : (kindInfo(t.kind)?.label || 'AI task');
   if (t.subject) return `${k}: ${t.subject}`;
   if (t.source_type === 'message') return 'Question in a conversation';
   if (t.source_type === 'comment') return 'Question in a comment';

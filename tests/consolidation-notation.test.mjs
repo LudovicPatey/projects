@@ -57,7 +57,8 @@ test('an unsure one waits; an entry already proposed is adopted or kept local by
   assert.equal(low.applied.length, 0);
   assert.equal((await app.call(bob, 'POST', `/api/fact-suggestions/${low.created[0]}/accept`, {})).status, 200, 'any member decides notation');
   assert.equal((await entry('\\mathbb{N}')).status, 'local');
-  assert.equal((await propose({ action: 'reject', entry: null, symbol: null, meaning: null, note: null, variants: [] })).skipped[0].reason, 'Name in "entry" the notation entry to keep local or to reject.');
+  assert.equal((await propose({ action: 'reject', entry: null, symbol: null, meaning: null, note: null, variants: [] })).skipped[0].reason, 'Name in "entry" the notation entry to reject.');
+  assert.equal((await propose({ action: 'local', entry: null, symbol: null, meaning: null, note: null, variants: [] })).skipped[0].reason, 'A new notation entry needs a "symbol" and a "meaning".', 'a new local entry needs its symbol and meaning');
   assert.equal((await propose({ action: 'adopt', entry: 99999, symbol: null, meaning: null, note: null, variants: [] })).skipped[0].reason, 'Unknown notation entry: 99999');
 });
 

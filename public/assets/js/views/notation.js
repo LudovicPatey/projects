@@ -47,6 +47,13 @@ export const NotationPanel = {
   },
   unmounted() { clearInterval(this.timer); },
   methods: {
+    /** A figure opens its section: it scrolls there. Nothing to show: not a link. */
+    jumpTo(section) {
+      if (!section) return {};
+      return { role: 'button', tabindex: 0, class: 'kpi-link', title: 'Show them',
+        onClick: () => document.querySelector(`[data-nt="${section}"]`)?.scrollIntoView({ block: 'start' }),
+        onKeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.currentTarget.click(); } } };
+    },
     clipMath,
     timeAgo, link, asMath, splitVariants,
     async load() {
@@ -101,23 +108,23 @@ export const NotationPanel = {
     <div v-if="!d" class="d-empty">Loading…</div>
     <template v-else>
       <div class="kpi-grid notation-kpis">
-        <kpi icon="check-circle" :value="d.progress.agreed" label="agreed symbols" tone="good"/>
-        <kpi icon="lightbulb" :value="d.progress.proposed" label="proposals to decide" :tone="d.progress.proposed ? 'warn' : 'neutral'"/>
-        <kpi icon="graph" :value="(d.progress.current + d.progress.unchanged) + ' / ' + d.progress.facts" label="facts in project notation" tone="accent"/>
-        <kpi icon="clock" :value="d.progress.queued" label="being rewritten" tone="neutral"/>
+        <kpi icon="check-circle" :value="d.progress.agreed" label="agreed symbols" tone="good" v-bind="jumpTo('agreed')"/>
+        <kpi icon="lightbulb" :value="d.progress.proposed" label="proposals to decide" :tone="d.progress.proposed ? 'warn' : 'neutral'" v-bind="jumpTo('proposed')"/>
+        <kpi icon="graph" :value="(d.progress.current + d.progress.unchanged) + ' / ' + d.progress.facts" label="facts in project notation" tone="accent" v-bind="jumpTo('facts')"/>
+        <kpi icon="clock" :value="d.progress.queued" label="being rewritten" tone="neutral" v-bind="jumpTo(d.progress.queued && 'facts')"/>
       </div>
       <div class="notation-grid">
         <div class="notation-main">
-          <section class="panel">
+          <section class="panel" data-nt="facts">
             <header class="ai-head"><h2><icon name="graph" :size="15"/> Facts and the agreed notation</h2></header>
             <stack-bar :counts="d.progress" :segments="segments" label="Facts by notation"/>
             <p class="muted small">Rewriting never changes a fact's reviewed text. Each fact shows its version in the project's notation, and a person can confirm that it says the same.</p>
             <div class="row-gap"><button class="btn primary sm" :disabled="!agreed.length || !remaining" @click="rewriteAll"><icon name="sparkles" :size="14"/> Rewrite {{ remaining }} fact{{ remaining === 1 ? '' : 's' }}</button>
               <span v-if="!agreed.length" class="muted small">Agree on at least one symbol first.</span></div>
           </section>
-          <section v-if="d.shared.length" class="panel">
+          <section v-if="d.shared.length" class="panel" data-nt="shared">
             <header class="ai-head"><h2><icon name="layers" :size="15"/> Defined in several facts</h2><small>{{ candidates.length }} without a project entry</small></header>
-            <p class="muted small">Each fact defines the symbols that are not project symbols, so that it reads alone. These symbols are defined in several facts: making them global saves repeating them.</p>
+            <p class="muted small">Each fact defines the symbols that are not project symbols, so that it reads alone. These symbols are defined in several facts. An AI settles them on its own, thirty at a time, once the project is quiet: it makes a symbol global, keeps it local to its paper, or records it as another spelling of an entry. Its choices appear among the agreed and local entries, and under Consolidate, where any member undoes them.</p>
             <article v-for="s in d.shared.slice(0, 30)" :key="s.symbol" class="notation-shared">
               <div class="notation-symbol"><math-text :text="asMath(s.symbol)"/></div>
               <div class="notation-body"><small v-if="s.spellings?.length > 1" class="muted">Written {{ s.spellings.length }} ways: <template v-for="(w, i) in s.spellings.slice(0, 5)" :key="w"><math-text :text="asMath(w)"/>{{ i < Math.min(s.spellings.length, 5) - 1 ? ', ' : '' }}</template></small><small class="muted">In {{ s.facts }} facts<template v-if="s.meanings.length > 1"> · defined in {{ s.meanings.length }} wordings<template v-if="!s.entry">, not compared yet</template></template><template v-if="s.entry?.clashes"> · <b class="warn-text">{{ s.entry.clashes }} other meaning{{ s.entry.clashes > 1 ? 's' : '' }} in sources</b></template></small>
@@ -125,7 +132,7 @@ export const NotationPanel = {
               <div class="notation-actions"><span v-if="s.entry" class="pill t-neutral">{{ s.entry.status }}</span><button v-else class="btn sm" @click="fromShared(s)">Propose as global</button></div>
             </article>
           </section>
-          <section class="panel">
+          <section class="panel" data-nt="agreed">
             <header class="ai-head"><h2><icon name="check-circle" :size="15"/> Agreed</h2><small>{{ agreed.length }}</small></header>
             <div v-if="!agreed.length" class="d-empty">Nothing agreed yet. Agree on a proposal below.</div>
             <article v-for="e in agreed" :key="e.id" class="notation-entry" :data-notation="e.id" :class="{flash: focus === e.id}">
@@ -133,7 +140,7 @@ export const NotationPanel = {
               <template v-else>${entryView('<template v-if="e.decided_by_kind === \'consolidation\'"><span class="pill t-neutral"><icon name="sparkles" :size="11"/> Adopted by the consolidation</span> {{ timeAgo(e.decided_at) }}</template><template v-else>Agreed by {{ e.decided_by_name }} {{ timeAgo(e.decided_at) }}</template>', '<button v-if="e.decided_by_kind === \'consolidation\'" class="btn sm endorse" title="Make it the team\'s decision: the consolidation no longer changes it" @click="decide(e, \'agreed\')"><icon name="check" :size="13"/> Confirm</button><button class="btn sm" @click="edit(e)">Edit</button><button class="btn sm" @click="decide(e, \'proposed\')">Reopen</button>')}</template>
             </article>
           </section>
-          <section class="panel">
+          <section class="panel" data-nt="proposed">
             <header class="ai-head"><h2><icon name="lightbulb" :size="15"/> Proposed</h2><small>Agree on one meaning per symbol</small></header>
             <div v-if="!proposed.length" class="d-empty">No proposal. Ask the AI to compare the facts' notations, or propose one yourself.</div>
             <article v-for="e in proposed" :key="e.id" class="notation-entry" :data-notation="e.id" :class="{flash: focus === e.id}">

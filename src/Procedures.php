@@ -146,6 +146,22 @@ mathematics you cannot settle from the text. Every applied change can be undone,
 or dependency misleads the provers, so check those carefully. In "reason", say why in one or two sentences, for the members.
 Answer in "decisions", one entry per proposal with its "suggestion_id".
 TXT,
+        'consolidate_notation' => <<<'TXT'
+TASK: settle the project's notation for "symbols" in task.json: symbols that several facts define for themselves and that the project
+notation, listed in "notation", has no entry for yet. Each gives its spellings, the facts that use it, and its "meanings": the facts' own
+wordings, compared as text, with the facts that give each one. Decide every symbol yourself, so that people need not:
+- "adopt": the notion is shared or standard, and the project should write it one way. Give "project_symbol" (LaTeX without dollars, usually
+  the most common spelling), "meaning" as one precise definition with $...$, "note" saying how sources differ or an empty string, and
+  "variants": the other spellings ("relation": "instance") and the mathematically different meanings found ("relation": "clash"), each
+  with "where". Equivalent wordings are one meaning. When facts give one symbol mathematically different meanings, adopt the most common
+  convention and give the other meaning another symbol in "note", or keep it "local".
+- "local": keep it out of the project notation: too specific, or a name a paper uses in its own way, or the standard symbol of one field
+  whose meaning clashes with an entry of the project (such as Feferman's $(\mu)$ beside the project's $\mu(n)$). Give its "meaning" in
+  those facts; the facts of that paper then read it with that meaning.
+- "same": it is another spelling of the entry "entry" (an id of "notation"), with the same meaning. A different meaning is never "same".
+Give "fact": the id of a fact that defines it, from its meanings. Fields that do not apply are null or empty. In "reason", one sentence for
+the members. Answer in "decisions", one entry per symbol, with its "symbol" as listed. Every choice can be undone.
+TXT,
         'consolidate' => <<<'TXT'
 TASK: consolidate the facts database of this project. Facts were extracted one source at a time, so no extraction
 saw the others. "fact_texts" in task.json lists every fact in short: its id, label, kind, title, statement, whether it has a proof, its source,
@@ -211,6 +227,7 @@ TXT,
         'source_check_batch' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'checks'], "properties" => ["summary" => ["type" => 'string'], "checks" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['fact_id', 'verdict', 'where', 'explanation'], "properties" => ["fact_id" => ["type" => 'integer'], "verdict" => ["type" => 'string', "enum" => ['confirmed', 'differs', 'not_found']], "where" => ["type" => 'string'], "explanation" => ["type" => 'string']]]]]],
         'rewrite_check' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'checks'], "properties" => ["summary" => ["type" => 'string'], "checks" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['rewrite_id', 'verdict', 'note'], "properties" => ["rewrite_id" => ["type" => 'integer'], "verdict" => ["type" => 'string', "enum" => ['faithful', 'unfaithful']], "note" => ["type" => 'string']]]]]],
         'second_reading' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'decisions'], "properties" => ["summary" => ["type" => 'string'], "decisions" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['suggestion_id', 'verdict', 'reason'], "properties" => ["suggestion_id" => ["type" => 'integer'], "verdict" => ["type" => 'string', "enum" => ['apply', 'drop', 'unsure']], "reason" => ["type" => 'string']]]]]],
+        'consolidate_notation' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'decisions'], "properties" => ["summary" => ["type" => 'string'], "decisions" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'action', 'entry', 'project_symbol', 'meaning', 'note', 'variants', 'fact', 'reason'], "properties" => ["symbol" => ["type" => 'string'], "action" => ["type" => 'string', "enum" => ['adopt', 'local', 'same']], "entry" => ["type" => ['integer', 'null']], "project_symbol" => ["type" => ['string', 'null']], "meaning" => ["type" => ['string', 'null']], "note" => ["type" => ['string', 'null']], "variants" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'meaning', 'where', 'relation'], "properties" => ["symbol" => ["type" => 'string'], "meaning" => ["type" => 'string'], "where" => ["type" => 'string'], "relation" => ["type" => 'string', "enum" => ['instance', 'clash']]]]], "fact" => ["type" => ['integer', 'null']], "reason" => ["type" => 'string']]]]]],
         'source_check' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'verdict', 'where', 'explanation'], "properties" => ["summary" => ["type" => 'string'], "verdict" => ["type" => 'string', "enum" => ['confirmed', 'differs', 'not_found']], "where" => ["type" => 'string'], "explanation" => ["type" => 'string']]],
     ];
 
@@ -256,6 +273,7 @@ TXT,
     {
         if ($t['kind'] === 'notation') return ['fact' => 'notation_rephrase', 'sweep' => 'notation_rephrase_batch'][$t['source_type']] ?? 'notation_propose';
         if ($t['kind'] === 'source_check' && in_array($t['source_type'], [null, 'sweep'], true)) return 'source_check_batch';
+        if ($t['kind'] === 'consolidate' && $t['source_type'] === 'sweep') return 'consolidate_notation';
         return (string)$t['kind'];
     }
 
@@ -340,6 +358,24 @@ TXT,
                 $n = count($ids);
                 $facts = $ids ? array_map('intval', array_column(Db::all('SELECT DISTINCT fact_id FROM fact_rephrasings WHERE id IN ' . Db::in($ids)[0], Db::in($ids)[1]), 'fact_id')) : [];
                 return ['summary' => trim("$n rewrite" . ($n === 1 ? '' : 's') . ' checked' . ($bad ? ", $bad found unfaithful" : ($n ? ', all faithful' : '')) . ". $said"), 'fact_ids' => $facts];
+            case 'consolidate_notation':
+                // Only the symbols of this batch, once each. Adopt and local go through the consolidation, applied on their own when the
+                // project allows it, and undone like its other changes; "same" records a spelling of an existing entry.
+                $mine = array_flip(json_decode((string)$t['snapshot_json'], true)['symbols'] ?? []);
+                $items = []; $same = 0; $seen = [];
+                foreach ($answer['decisions'] as $d) {
+                    $k = NotationController::notionKey((string)$d['symbol']);
+                    if (!isset($mine[$k]) || isset($seen[$k])) continue;
+                    $seen[$k] = true;
+                    if ($d['action'] === 'same') { if ($d['entry'] && NotationController::addSpelling($pid, (int)$d['entry'], (string)$d['symbol'], (string)($d['meaning'] ?? ''), (string)$d['reason'])) $same++; continue; }
+                    if (!$d['fact'] || trim((string)$d['meaning']) === '') continue;
+                    $items[] = ['kind' => 'notation', 'fact' => (string)$d['fact'], 'reason' => $d['reason'] ?: 'Settles a symbol several facts define.', 'confidence' => 'medium',
+                        'notation' => ['action' => $d['action'], 'entry' => null, 'symbol' => trim((string)($d['project_symbol'] ?: $d['symbol'])), 'meaning' => $d['meaning'], 'note' => (string)($d['note'] ?? ''), 'variants' => $d['variants']]];
+                }
+                $r = ConsolidationController::store($pid, $items, $model, Provenance::stamp($model, $seconds), (int)$t['id']);
+                $a = count($r['applied']); $c = count($r['created']) - $a;
+                $done = implode(', ', array_filter([$a ? "$a settled" : '', $c ? "$c proposed to people" : '', $same ? "$same recorded as spellings of an entry" : '']));
+                return ['summary' => trim(count($seen) . ' symbol' . (count($seen) === 1 ? '' : 's') . ' read' . ($done ? " ($done)" : '') . ". $said"), 'suggestion_ids' => $r['created']];
             case 'second_reading':
                 $mine = array_flip(AiTaskController::batchItems($t)); $ids = []; $by = ['applied' => 0, 'dropped' => 0, 'unsure' => 0, 'failed' => 0];
                 foreach ($answer['decisions'] as $d) {

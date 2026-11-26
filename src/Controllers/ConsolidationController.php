@@ -51,7 +51,7 @@ final class ConsolidationController
         }
         $counts = array_fill_keys(self::KINDS, 0);
         foreach ($rows as $s) if ($s['status'] === 'proposed') $counts[$s['kind']]++;
-        $task = Db::one("SELECT id, status, created_at FROM ai_tasks WHERE project_id = ? AND kind = 'consolidate' AND status IN ('pending', 'running') ORDER BY id DESC LIMIT 1", [$pid]);
+        $task = Db::one("SELECT id, status, created_at FROM ai_tasks WHERE project_id = ? AND kind = 'consolidate' AND (source_type IS NULL OR source_type <> 'sweep') AND status IN ('pending', 'running') ORDER BY id DESC LIMIT 1", [$pid]);
         Response::json(['suggestions' => array_map([self::class, 'present'], $rows), 'facts' => (object)$facts, 'counts' => $counts,
             'auto' => (bool)Db::value('SELECT consolidation_auto FROM projects WHERE id = ?', [$pid]),
             'topics' => self::topics($pid), 'waiting' => $task ? ['id' => (int)$task['id'], 'status' => $task['status'], 'created_at' => $task['created_at']] : null]);
@@ -728,13 +728,15 @@ final class ConsolidationController
             foreach (Db::all("SELECT * FROM notations WHERE project_id = ? AND status <> 'rejected' ORDER BY status = 'agreed' DESC, id", [$pid]) as $e) {
                 if (NotationController::notionKey($e['symbol']) === NotationController::notionKey($symbol)) { $entry = $e; break; }
             }
+            // A paper's own use of a symbol the project adopted for something else is a new local entry, never a demotion of the adopted one.
+            if ($entry && $action === 'local' && $entry['status'] === 'agreed') $entry = null;
         }
         if ($entry) {
             if (self::personDecided($entry)) throw new HttpError(422, "A person decided {$entry['symbol']}: the consolidation leaves it.");
             if ($entry['status'] === ['adopt' => 'agreed', 'local' => 'local', 'reject' => 'rejected'][$action]) throw new HttpError(422, "{$entry['symbol']} is already " . $entry['status'] . '.');
             return ['action' => $action, 'entry' => (int)$entry['id'], 'symbol' => $entry['symbol'], 'meaning' => mb_substr(Sanitizer::toText((string)$entry['meaning_html']), 0, 1000)];
         }
-        if ($action !== 'adopt') throw new HttpError(422, 'Name in "entry" the notation entry to keep local or to reject.');
+        if ($action === 'reject') throw new HttpError(422, 'Name in "entry" the notation entry to reject.');
         $meaning = $str('meaning', 4000);
         if ($symbol === '' || $meaning === '') throw new HttpError(422, 'A new notation entry needs a "symbol" and a "meaning".');
         $variants = [];
@@ -744,7 +746,7 @@ final class ConsolidationController
             if ($vs('symbol', 160) === '' || $vs('meaning', 1000) === '') continue;
             $variants[] = ['symbol' => $vs('symbol', 160), 'meaning' => $vs('meaning', 1000), 'where' => $vs('where', 300), 'relation' => ($v['relation'] ?? '') === 'instance' ? 'instance' : 'clash'];
         }
-        return ['action' => 'adopt', 'entry' => null, 'symbol' => $symbol, 'meaning' => $meaning, 'note' => $str('note', 2000), 'variants' => $variants];
+        return ['action' => $action, 'entry' => null, 'symbol' => $symbol, 'meaning' => $meaning, 'note' => $str('note', 2000), 'variants' => $variants];
     }
 
     /** A fact named by its id or its label. */

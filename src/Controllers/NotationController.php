@@ -210,6 +210,19 @@ final class NotationController
             Db::all("SELECT * FROM notations WHERE project_id = ? AND status " . ($agreedOnly ? ($withLocal ? "IN ('agreed', 'local')" : "= 'agreed'") : "<> 'rejected'") . ' ORDER BY symbol_key LIMIT 300', [$pid]));
     }
 
+    /** Records another spelling of an entry, with the same meaning, as an "instance" variant. @return bool recorded */
+    public static function addSpelling(int $pid, int $id, string $symbol, string $meaning, string $why): bool
+    {
+        $n = Db::one("SELECT id, variants_json FROM notations WHERE id = ? AND project_id = ? AND status <> 'rejected'", [$id, $pid]);
+        $symbol = trim(self::bare($symbol));
+        if (!$n || $symbol === '') return false;
+        $variants = json_decode((string)$n['variants_json'], true) ?: [];
+        foreach ($variants as $v) if (self::notionKey((string)($v['symbol'] ?? '')) === self::notionKey($symbol)) return false;
+        $variants[] = ['symbol' => $symbol, 'meaning' => mb_substr($meaning ?: $why, 0, 500), 'where' => 'facts of the project', 'relation' => 'instance'];
+        Db::update('notations', ['variants_json' => json_encode($variants, JSON_UNESCAPED_UNICODE), 'updated_at' => Db::now()], 'id = :id', ['id' => $id]);
+        return true;
+    }
+
     /**
      * The local entries that apply to a fact: kept out of the project notation, they still say what a symbol means in the facts
      * that use it, those of the paper that defines it. One applies to its defining fact, to the facts it lists, and to the facts
@@ -353,13 +366,16 @@ final class NotationController
         }
         $entries = [];
         // An entry says, once an AI or a person judged them, how many meanings found in sources really differ ("clash").
-        foreach (Db::all("SELECT id, symbol, status, variants_json FROM notations WHERE project_id = ? AND status <> 'rejected'", [$pid]) as $n) {
-            $entries[self::notionKey($n['symbol'])] ??= ['id' => (int)$n['id'], 'status' => $n['status'],
-                'clashes' => count(array_filter(json_decode((string)$n['variants_json'], true) ?: [], fn($v) => ($v['relation'] ?? '') === 'clash'))];
+        // Its other spellings of the same notion ("instance" variants) are that entry too.
+        foreach (Db::all("SELECT id, symbol, status, variants_json FROM notations WHERE project_id = ? AND status <> 'rejected' ORDER BY status = 'agreed' DESC, id", [$pid]) as $n) {
+            $variants = json_decode((string)$n['variants_json'], true) ?: [];
+            $e = ['id' => (int)$n['id'], 'status' => $n['status'], 'clashes' => count(array_filter($variants, fn($v) => ($v['relation'] ?? '') === 'clash'))];
+            $entries[self::notionKey($n['symbol'])] ??= $e;
+            foreach ($variants as $v) if (($v['relation'] ?? '') === 'instance' && is_string($v['symbol'] ?? null)) $entries[self::notionKey($v['symbol'])] ??= $e;
         }
         $by = [];
         foreach ($local as $fid => $defs) {
-            foreach ($defs as $symbol => $meaning) {
+            foreach (self::splitDefinitions($defs) as [$symbol, $meaning]) {
                 $symbol = self::bare((string)$symbol); // $FS(H)$ and FS(H) are one spelling
                 if (self::isProofVariable($symbol)) continue; // A_i, f, q: names of one argument, not notation
                 $k = self::notionKey($symbol);
@@ -381,6 +397,31 @@ final class NotationController
         }
         usort($out, fn($a, $b) => [$b['entry'] === null, $b['facts']] <=> [$a['entry'] === null, $a['facts']]);
         return array_slice($out, 0, $limit);
+    }
+
+    /**
+     * A glossary key that defines several symbols at once, "\\lambda(n),\\mu(n)", is one definition per symbol, each with the
+     * shared meaning. Commas inside braces, brackets or parentheses, as in [1,r], are part of a symbol.
+     * @return list<array{0: string, 1: string}>
+     */
+    public static function splitDefinitions(array $defs): array
+    {
+        $out = [];
+        foreach ($defs as $symbol => $meaning) {
+            $parts = []; $depth = 0; $cur = '';
+            foreach (preg_split('//u', self::bare((string)$symbol), -1, PREG_SPLIT_NO_EMPTY) as $c) {
+                if (in_array($c, ['{', '(', '['], true)) $depth++;
+                if (in_array($c, ['}', ')', ']'], true)) $depth = max(0, $depth - 1);
+                if ($c === ',' && $depth === 0) { $parts[] = $cur; $cur = ''; continue; }
+                $cur .= $c;
+            }
+            $parts[] = $cur;
+            $parts = array_values(array_filter(array_map(fn($x) => trim(self::bare(trim($x, " \t\n$"))), $parts), fn($x) => $x !== ''));
+            // Only symbols are split: "red, blue or green" is one term.
+            if (count($parts) > 1 && array_filter($parts, fn($x) => !preg_match('/[\\(_^]/', $x))) $parts = [self::bare((string)$symbol)];
+            foreach ($parts as $x) $out[] = [$x, (string)$meaning];
+        }
+        return $out;
     }
 
     /**
