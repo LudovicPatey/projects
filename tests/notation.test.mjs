@@ -311,4 +311,13 @@ test('one notion written in several ways is offered once, and proof variables ar
 test('a symbol written with its own formulas shows no dollar', () => {
   assert.equal(asMath('P-condition, $\\le$'), 'P-condition, $\\le$');
   assert.equal(asMath('P-branch $(F,X)'), 'P-branch $(F,X)$', 'a dollar left open is closed');
+  // Words stay text and formulas are formulas, whatever lost its dollars.
+  assert.equal(asMath('F$ full-matches $X'), '$F$ full-matches $X$', 'outer dollars stripped: not inverted');
+  assert.equal(asMath('(F,X)$ satisfies $\\mathcal R^C_e'), '$(F,X)$ satisfies $\\mathcal R^C_e$');
+  assert.equal(asMath('C large for \\mathcal D'), '$C$ large for $\\mathcal D$', 'not one formula in italics');
+  assert.equal(asMath('countable coded \\beta\\text{-model}'), 'countable coded $\\beta\\text{-model}$');
+  assert.equal(asMath('\\mathsf{HT}\\text{ for a countable semigroup}'), '$\\mathsf{HT}\\text{ for a countable semigroup}$', 'words inside \\text stay in the formula');
+  assert.equal(asMath('P-branch (F,X)'), 'P-branch $(F,X)$', '(F,X) is a formula, not a setting');
+  assert.equal(asMath('homogeneous for c'), 'homogeneous for $c$');
+  assert.equal(asMath('generates an IP set'), 'generates an IP set');
 });

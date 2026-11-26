@@ -8,7 +8,49 @@ export const NOTATION_SEGMENTS = [['current', 'In project notation', '#0d9488'],
 export const toRewrite = (p) => Math.max(0, (p?.stale || 0) + (p?.unfaithful || 0) + (p?.none || 0) - (p?.queued || 0));
 
 const looksMath = (s) => /[\\^_{}]/.test(s) || !/[A-Za-z]{3,}/.test(s);
-const piece = (s) => (looksMath(s) ? `$${s}$` : s);
+/** A word of a sentence, such as "large," or "full-matches": letters and hyphens, never a command or a single letter. */
+const isWord = (t) => /^[A-Za-z][A-Za-z'-]*[A-Za-z][,;:.]?$/.test(t) && !/^[A-Z]{2,}[,;:.]?$/.test(t);
+
+/** The pieces of a text cut at its spaces, except the spaces inside braces: \text{ for a semigroup} stays one piece. */
+function spaced(s) {
+  const out = [];
+  let cur = ''; let depth = 0;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (c === '\\') { cur += c + (s[i + 1] ?? ''); i++; continue; }
+    if (c === '{') depth++;
+    if (c === '}') depth = Math.max(0, depth - 1);
+    if (/\s/.test(c) && !depth) { if (cur) out.push(cur); cur = ''; continue; }
+    cur += c;
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+
+/** Words as text and the rest as formulas: "C large for \mathcal D" is $C$ large for $\mathcal D$, not one formula in italics. */
+function piece(s) {
+  // A sentence keeps its words as text, and its one-letter variables become formulas: "homogeneous for $c$". Not the article a or I.
+  // So does a piece of single letters and signs, such as (F,X) in "P-branch (F,X)".
+  const variable = (t) => /[A-Za-z]/.test(t) && !/[A-Za-z]{2}/.test(t) && !/^[aAI][,;:.]?$/.test(t) && !/^[A-Za-z]-/.test(t);
+  if (!looksMath(s)) return s.split(/(\s+)/).map((t) => (variable(t) ? `$${t.replace(/[,;:.]$/, '')}$${t.match(/[,;:.]$/)?.[0] ?? ''}` : t)).join('');
+  const parts = spaced(s);
+  if (!parts.some(isWord) || parts.every(isWord)) return `$${s}$`;
+  const out = [];
+  let math = [];
+  const flush = () => { if (math.length) out.push(`$${math.join(' ')}$`); math = []; };
+  for (const t of parts) { if (isWord(t)) { flush(); out.push(t); } else math.push(t); }
+  flush();
+  return out.join(' ');
+}
+
+/** Text and formulas cut at their dollars, whichever comes first: "F$ full-matches $X" lost its outer dollars, and is $F$ full-matches $X$. */
+function dollars(s) {
+  const seg = s.split('$');
+  const firstIsMath = looksMath(seg[0]) && !spaced(seg[0]).some(isWord);
+  return seg.map((x, i) => ((i % 2 === 0) === firstIsMath ? (x.trim() ? `$${x.trim()}$` : '') : x)).join('').replace(/\s+/g, ' ').trim()
+    // a formula glued to the next word gets its space back
+    .replace(/\$(?=[A-Za-z])/g, (m, at, all) => ((all.slice(0, at).match(/\$/g) || []).length % 2 ? '$ ' : m));
+}
 
 /**
  * A notation name for display: LaTeX for symbols, plain text for words such as "full-match",
@@ -17,9 +59,10 @@ const piece = (s) => (looksMath(s) ? `$${s}$` : s);
 export function asMath(symbol) {
   const raw = String(symbol || '').trim();
   const s = raw.replace(/^\$+|\$+$/g, '');
-  // Text with its own formulas, "P-condition, $\le$": kept as written, a dollar left open closed, so that none shows.
-  if (s.includes('$')) return (raw.match(/\$/g) || []).length % 2 ? `${raw}$` : raw;
-  const m = s.match(/^(.*\S)\s+\(([^()]*[A-Za-z][^()]*)\)$/);
+  // Text with its own formulas, "P-condition, $\le$" or "F$ full-matches $X": each part as what it is, and no dollar shows.
+  if (s.includes('$')) return dollars(s);
+  // A setting has a name of two letters or more, (HT) or (pairs); (F,X) is a formula.
+  const m = s.match(/^(.*\S)\s+\(([^()]*[A-Za-z]{2,}[^()]*)\)$/);
   if (m && !/[\\^_{}]/.test(m[2])) return `${piece(m[1])} (${m[2]})`;
   return piece(s);
 }
