@@ -1,6 +1,8 @@
 // Notation in the text of a fact: each use, in a formula, of a symbol of the project or of one the fact defines for itself
 // is marked, so that a reader sees its meaning by pointing at it. Without dependency, so that it can be unit tested.
 
+import { paramsOf, relationPattern } from './notation-params.js';
+
 const FONT = '(?:mathrm|mathsf|mathbf|mathit|mathcal|mathbb|mathfrak|operatorname|textrm|text)';
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -19,16 +21,20 @@ export function notationKey(symbol) {
 /**
  * What to look for in LaTeX: a name of two letters or more in any font (\mathrm{FIN}, \operatorname{FIN} or FIN),
  * one letter only in its font (\mathbb{N}, never a bare N, which is a variable), or else the exact spelling.
+ * A relation written with parameters, "Y \leq X", is found between objects written with its letters only (see relationPattern).
  * Null when it is too short to be found safely.
  */
-export function symbolPattern(symbol) {
+export function symbolPattern(symbol, params = null) {
   const h = head(symbol);
   const wrapped = h.match(new RegExp(`^\\\\${FONT}\\s*\\{\\s*([A-Za-z][A-Za-z0-9]*)\\s*\\}$`));
   const bare = h.match(/^([A-Za-z][A-Za-z0-9]*)$/);
   const word = (wrapped || bare)?.[1];
   if (word && word.length >= 2) return `\\\\${FONT}\\s*\\{\\s*${esc(word)}\\s*\\}|(?<![\\\\A-Za-z])${esc(word)}(?![A-Za-z])`;
   if (wrapped) return `${esc(h).replace(/\\\{\s*/, '\\{\\s*').replace(/\s*\\\}$/, '\\s*\\}')}`;
-  if (word || h.length < 3) return null;
+  if (word) return null;
+  const rel = relationPattern(h, params || paramsOf({ symbol: h }));
+  if (rel) return rel;
+  if (h.length < 3) return null;
   return esc(h) + (/[A-Za-z]$/.test(h) ? '(?![A-Za-z])' : '');
 }
 
@@ -50,7 +56,7 @@ function textRanges(math) {
  * each use becomes \htmlClass{oq-nt oq-nt-<i>}{…}, where i is the index of its entry in `entries`.
  */
 export function notationMarker(entries) {
-  const list = (entries || []).map((e, i) => ({ i, re: symbolPattern(e.symbol), size: head(e.symbol).length })).filter((e) => e.re);
+  const list = (entries || []).map((e, i) => ({ i, re: symbolPattern(e.symbol, e.params ? paramsOf(e) : null), size: head(e.symbol).length })).filter((e) => e.re);
   // The longest names first: FUT is not found as FU.
   list.sort((a, b) => b.size - a.size);
   if (!list.length) return { preProcess: (math) => math, count: 0 };
@@ -82,7 +88,7 @@ export const trustMarks = (ctx) => ctx.command === '\\htmlClass' && /^oq-nt oq-n
 export function factNotation(local, project, paper = []) {
   const own = (local || []).map(([symbol, meaning]) => ({ symbol, meaning: String(meaning ?? ''), source: 'fact' }));
   const mine = new Set(own.map((x) => notationKey(x.symbol)));
-  const theirs = (paper || []).filter((e) => !mine.has(notationKey(e.symbol))).map((e) => ({ symbol: e.symbol, meaning_html: e.meaning_html, source: 'paper', id: e.id }));
+  const theirs = (paper || []).filter((e) => !mine.has(notationKey(e.symbol))).map((e) => ({ symbol: e.symbol, meaning_html: e.meaning_html, source: 'paper', id: e.id, params: e.params || [] }));
   theirs.forEach((e) => mine.add(notationKey(e.symbol)));
-  return [...own, ...theirs, ...(project || []).filter((e) => !mine.has(notationKey(e.symbol))).map((e) => ({ symbol: e.symbol, meaning_html: e.meaning_html, source: 'project', id: e.id }))];
+  return [...own, ...theirs, ...(project || []).filter((e) => !mine.has(notationKey(e.symbol))).map((e) => ({ symbol: e.symbol, meaning_html: e.meaning_html, source: 'project', id: e.id, params: e.params || [] }))];
 }

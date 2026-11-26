@@ -302,8 +302,8 @@ final class FactController
                 $strategies[] = ['id' => (int)$x['id'], 'title' => $x['title'], 'status' => $x['status'], 'revision' => (int)$x['current_revision'], 'body' => Sanitizer::toText((string)$x['body_html']), 'ai_model' => $x['ai_model']];
             }
         }
-        $agreed = array_map(fn($e) => ['symbol' => $e['symbol'], 'meaning' => Sanitizer::toText((string)$e['meaning_html']), 'note' => Sanitizer::toText((string)$e['note_html']) ?: null],
-            Db::all("SELECT symbol, meaning_html, note_html FROM notations WHERE project_id = ? AND status = 'agreed' ORDER BY id", [$pid]));
+        $agreed = array_map(fn($e) => ['symbol' => $e['symbol'], 'meaning' => Sanitizer::toText((string)$e['meaning_html']), 'note' => Sanitizer::toText((string)$e['note_html']) ?: null, 'params' => NotationController::paramsOf($e)],
+            Db::all("SELECT symbol, meaning_html, note_html, params_json FROM notations WHERE project_id = ? AND status = 'agreed' ORDER BY id", [$pid]));
         Response::json(['project_id' => $pid, 'question_id' => $qid ?: null, 'facts' => $facts, 'strategies' => $strategies, 'notation' => $agreed]);
     }
 
@@ -1512,8 +1512,9 @@ final class FactController
                     WHERE (s.fact_id = ? OR s.other_fact_id = ?) AND s.status IN ('accepted', 'undone') ORDER BY s.decided_at DESC, s.id DESC LIMIT 100", [$id, $id]));
         $out['worth_reading'] = $f['highlight_at'] ? ['reason' => $f['highlight_reason'], 'at' => $f['highlight_at'], 'model' => $f['highlight_model']] : null;
         // The agreed notation, so that a reader sees the meaning of each symbol the fact uses.
-        $out['notation'] = array_map(fn($n) => ['id' => (int)$n['id'], 'symbol' => $n['symbol'], 'meaning_html' => $n['meaning_html']],
-            Db::all("SELECT id, symbol, meaning_html FROM notations WHERE project_id = ? AND status = 'agreed' ORDER BY id", [$pid]));
+        // Each with its parameters and their types: an entry applies to those objects only.
+        $out['notation'] = array_map(fn($n) => ['id' => (int)$n['id'], 'symbol' => $n['symbol'], 'meaning_html' => $n['meaning_html'], 'params' => NotationController::paramsOf($n)],
+            Db::all("SELECT id, symbol, meaning_html, params_json FROM notations WHERE project_id = ? AND status = 'agreed' ORDER BY id", [$pid]));
         // The local entries of its paper, which say what a symbol means here when the project gives it another meaning.
         $out['local_entries'] = NotationController::localFor($pid, $id);
         $out['starred_by'] = Db::all('SELECT u.id, u.name FROM fact_stars s JOIN users u ON u.id = s.user_id WHERE s.fact_id = ? ORDER BY s.created_at', [$id]);

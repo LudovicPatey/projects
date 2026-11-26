@@ -103,7 +103,7 @@ export const AdminView = {
           <div v-for="k in keys" :key="k.id" class="audit-key" :class="{off: !k.active}">
             <div class="audit-key-main"><b>{{ k.label }}</b> <code>{{ k.prefix }}…</code>
               <small class="muted">by {{ k.created_by }} · {{ k.revoked_at ? 'revoked ' + when(k.revoked_at) : (k.active ? 'expires ' + when(k.expires_at) : 'expired') }} · {{ k.uses ? k.uses + ' request' + (k.uses > 1 ? 's' : '') + ', last ' + when(k.last_used_at) : 'never used' }}</small></div>
-            <button v-if="k.active" class="btn sm danger" @click="revokeKey(k)">Revoke</button>
+            <button v-if="k.active" class="btn sm danger" :title="explain('audit.revoke')" @click="revokeKey(k)">Revoke</button>
           </div>
           <div v-if="!keys.length" class="d-empty">No audit key yet.</div>
         </section>

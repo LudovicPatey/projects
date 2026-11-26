@@ -213,6 +213,8 @@ final class Db
         $migrations[] = "ALTER TABLE prover_campaigns ADD COLUMN lead_mode VARCHAR(12) NOT NULL DEFAULT 'periodic'";
         // MySQL cut kinds longer than 10 characters, such as "consolidate": room for procedure names, and the cut rows repaired.
         if (!self::isSqlite()) $migrations[] = 'ALTER TABLE ai_tasks MODIFY kind VARCHAR(40) NOT NULL';
+        // The objects a notation entry is written with, X and Y in "Y \\leq X", and their type: it applies to those only.
+        $migrations[] = 'ALTER TABLE notations ADD COLUMN params_json TEXT NULL';
         foreach ($migrations as $m) {
             try { self::pdo()->exec($m); } catch (\PDOException) { /* already applied */ }
         }
@@ -240,6 +242,8 @@ final class Db
                 self::update('bib_entries', ['title' => $c['title'], 'authors' => $c['authors'], 'venue' => $c['venue']], 'id = :id', ['id' => $b['id']]);
             }
         }
+        // Pieces of symbols cut at a LaTeX thin space, X\\ out of X\\,\\tilde\\in\\,U, before the cut was fixed.
+        \App\Controllers\NotationController::repairCut();
         // Existing AI content is attributed to the owner who issued the agent's token, or to its author.
         foreach (['messages' => 'author_id', 'comments' => 'author_id', 'bib_entries' => 'created_by', 'document_versions' => 'uploaded_by',
                   'fact_revisions' => 'author_id', 'fact_reviews' => 'reviewer_id', 'fact_lean' => 'created_by'] as $t => $col) {

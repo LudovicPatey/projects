@@ -1,4 +1,5 @@
 // The project's notation: labels and rules of the interface, without dependency, so that they can be unit tested.
+import { paramGroups, paramsOf, untyped } from './notation-params.js';
 
 /** Where the facts stand against the agreed notation. */
 export const NOTATION_SEGMENTS = [['current', 'In project notation', '#0d9488'], ['unchanged', 'Already in it', '#5eead4'], ['stale', 'Notation changed since', '#d97706'], ['unfaithful', 'Meaning changed', '#b42318'], ['none', 'Not yet', '#98a2b3']];
@@ -36,7 +37,71 @@ export function entryError(d) {
   return null;
 }
 
-export const entryBody = (d) => ({ symbol: String(d.symbol).trim(), meaning_text: String(d.meaning).trim(), note_text: String(d.note || '').trim(), definition_fact_id: d.fact ? +d.fact : null, ...(d.facts?.length ? { facts: d.facts } : {}) });
+export const entryBody = (d) => ({ symbol: String(d.symbol).trim(), meaning_text: String(d.meaning).trim(), note_text: String(d.note || '').trim(), definition_fact_id: d.fact ? +d.fact : null, ...(d.facts?.length ? { facts: d.facts } : {}),
+  ...(d.params !== undefined ? { params: parseParams(d.params) } : {}) });
+
+/** "X, Y: infinite block sequence", one line per type, as the form writes the parameters. */
+export function paramsText(params) {
+  return paramGroups(params).map((g) => `${g.params.map((p) => p.name).join(', ')}: ${g.type}`).join('\n');
+}
+
+/** The lines of the form back to [{name, type}]. A line without a colon gives names without a type. */
+export function parseParams(text) {
+  const out = [];
+  for (const line of String(text || '').split('\n')) {
+    const at = line.indexOf(':');
+    const names = (at < 0 ? line : line.slice(0, at)).split(',').map((n) => n.trim().replace(/^\$+|\$+$/g, '')).filter(Boolean);
+    const type = at < 0 ? '' : line.slice(at + 1).trim();
+    for (const name of names) out.push({ name, type });
+  }
+  return out;
+}
+
+const and = (xs) => (xs.length > 1 ? `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}` : xs[0] || '');
+const math = (names) => and(names.map((n) => `$${n}$`));
+
+/**
+ * What the entry applies to, in one sentence: its symbol between the objects its parameters stand for. `typed` is false when nobody said
+ * what some of them are: then only the meaning tells.
+ */
+export function entryScope(e) {
+  const params = paramsOf(e);
+  if (!params.length) return { params, typed: true, text: 'Wherever the symbol is written.' };
+  const groups = paramGroups(params).filter((g) => g.type);
+  const parts = groups.map((g) => `${math(g.params.map((p) => p.name))} ${g.params.length > 1 ? 'are' : 'is'} ${g.type}`);
+  const missing = params.filter((p) => !p.type.trim()).map((p) => p.name);
+  const text = parts.length
+    ? `Only where ${and(parts)}${missing.length ? `. The type of ${math(missing)} is not stated` : ''}.`
+    : `The type of ${math(missing)} is not stated: only the meaning says what the entry applies to.`;
+  return { params, typed: !untyped(params), text };
+}
+
+/**
+ * What each choice on an entry changes, and what it leaves as it is, so that nobody fears that agreeing on "Y \leq X" for block sequences
+ * changes \leq everywhere. One row per button the entry shows.
+ */
+export function actionEffects(e) {
+  const scope = entryScope(e);
+  const has = scope.params.length > 0;
+  const where = has ? (scope.typed ? 'between these objects only' : 'for the objects its meaning describes') : 'wherever it is written';
+  const clashes = splitVariants(e.variants).clashes.length;
+  const keep = 'The reviewed text of every fact stays as it is: a rewrite is shown beside it.';
+  const rows = [];
+  if (e.status === 'proposed') {
+    rows.push({ action: 'Agree', changes: `It becomes project notation ${where}: facts show this meaning when a reader points at it, and AI rewrites write this notion this way.`,
+      keeps: [has ? 'The same symbol between other objects, such as numbers or another order, keeps its own meaning.' : '',
+        clashes ? `The ${clashes > 1 ? `${clashes} other meanings` : 'other meaning'} in sources ${clashes > 1 ? 'keep their' : 'keeps its'} symbol, renamed only in a fact that uses both.` : '', keep].filter(Boolean).join(' ') });
+    rows.push({ action: 'Local', changes: 'Only the facts that define it, and the other facts of their paper, read the symbol with this meaning.', keeps: 'It is not project notation: other facts, and the symbol anywhere else, are not affected. A rewrite defines it inside the fact, or unfolds it.' });
+    rows.push({ action: 'Reject', changes: 'It is set aside, and the AI does not propose it again.', keeps: 'Nothing changes in the facts: each keeps its own definition of the symbol.' });
+    rows.push({ action: 'Edit', changes: 'Change the symbol, its meaning, or the types of its parameters, which decide what it applies to.', keeps: 'It stays a proposal: nothing applies until someone agrees.' });
+  } else if (e.status === 'agreed') {
+    if (e.decided_by_kind === 'consolidation') rows.push({ action: 'Confirm', changes: 'It becomes the team\'s decision: the consolidation no longer changes it.', keeps: 'Nothing changes in the facts.' });
+    rows.push({ action: 'Edit', changes: 'Change the symbol, its meaning, or the types of its parameters.', keeps: 'A change to any of them makes it a proposal again, until someone agrees.' });
+    rows.push({ action: 'Reopen', changes: 'It goes back to the proposals and stops being project notation: the facts rewritten in it are rewritten again.', keeps: keep });
+  }
+  return rows;
+}
+
 
 /** A symbol that several facts define for themselves: worth making global when they agree on its meaning. */
 export const sharedDraft = (s) => ({ symbol: s.symbol, meaning: s.meanings[0]?.meaning || '', note: s.meanings.length > 1 ? `Facts define it in ${s.meanings.length} ways: the others need another symbol.` : `Defined locally in ${s.facts} facts.`, fact: '', facts: s.meanings[0]?.facts || [] });

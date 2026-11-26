@@ -161,7 +161,7 @@ test('a fact is rewritten in the agreed notation without touching its reviewed t
 test('the client proposes entries, rewrites a fact, and extraction keeps definitions in each fact', async () => {
   await clear();
   await app.call(ann, 'POST', `/api/projects/${pid}/ai/tasks`, { kind: 'notation' });
-  fakeClaude(`{"summary": "Compared.", "entries": [{"symbol": "\\\\mathrm{IP}(X)", "meaning": "The IP set of $X$.", "note": None, "variants": [], "definition_fact_id": None, "facts": []}, {"symbol": "\\\\mathrm{NS}(X)", "meaning": "$\\\\mathrm{FS}(X) \\\\setminus \\\\{0\\\\}$.", "note": None, "variants": [], "definition_fact_id": None, "facts": []}]} if "review the notation of the whole project" in prompt else None`);
+  fakeClaude(`{"summary": "Compared.", "entries": [{"symbol": "\\\\mathrm{IP}(X)", "meaning": "The IP set of $X$.", "note": None, "variants": [], "params": [], "definition_fact_id": None, "facts": []}, {"symbol": "\\\\mathrm{NS}(X)", "meaning": "$\\\\mathrm{FS}(X) \\\\setminus \\\\{0\\\\}$.", "note": None, "variants": [], "params": [], "definition_fact_id": None, "facts": []}]} if "review the notation of the whole project" in prompt else None`);
   let r = runClient('notation');
   assert.equal(r.status, 0, r.stderr);
   const ip = (await notation()).entries.find((x) => x.symbol === '\\mathrm{IP}(X)');

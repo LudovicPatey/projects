@@ -372,6 +372,7 @@ CREATE TABLE IF NOT EXISTS notations (
   note_html MEDIUMTEXT NULL,              -- how sources differ, e.g. which papers include 0
   variants_json TEXT NULL,                -- [{symbol, meaning, where, relation}] the same notion written otherwise
   facts_json TEXT NULL,                   -- ids of the facts that define it locally, when proposed to make it global
+  params_json TEXT NULL,                  -- [{name, type}] the objects it is written with, X and Y in "Y \leq X": it applies to those types only
   definition_fact_id INT UNSIGNED NULL,
   status VARCHAR(10) NOT NULL DEFAULT 'proposed', -- proposed, agreed, local, rejected
   auto_suggestion_id INT UNSIGNED NULL,   -- the consolidation decided it on its own (fact_suggestions.id); null: a person did

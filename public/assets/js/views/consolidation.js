@@ -1,4 +1,5 @@
 import { api } from '../api.js';
+import { ACTIONS, acceptAction, explain } from '../action-help.js';
 import { link, attempt, toast, store } from '../store.js';
 import { timeAgo } from '../util.js';
 import { Kpi } from '../dashboard.js';
@@ -68,7 +69,7 @@ export const ConsolidationPanel = {
     async bulk(g, accept) {
       const items = g.items.filter((s) => !this.ownerOnly(s));
       if (!items.length) return;
-      if (!confirm(`${accept ? 'Accept' : 'Reject'} the ${items.length} proposal${items.length > 1 ? 's' : ''} of “${g.title}”?`)) return;
+      if (!confirm(`${accept ? 'Accept' : 'Reject'} the ${items.length} proposal${items.length > 1 ? 's' : ''} of “${g.title}”? For each one: ${explain(accept ? acceptAction(g.kind) : 'cons.reject')}`)) return;
       this.busy = true;
       const r = await attempt(() => api.post(`api/projects/${this.pid}/consolidation/bulk`, { decision: accept ? 'accept' : 'reject', ids: items.map((s) => s.id) }));
       this.busy = false;
@@ -92,7 +93,8 @@ export const ConsolidationPanel = {
           <section v-for="g in groups" :key="g.kind" class="panel" :data-cons="g.kind">
             <header class="ai-head"><h2>{{ g.title }}</h2><small>{{ g.items.length }}</small></header>
             <p class="muted small">{{ g.help }}<template v-if="(g.kind === 'same' || g.kind === 'question') && !owner"> Only an owner applies these.</template></p>
-            <div v-if="g.items.length > 1" class="row-gap"><button class="btn sm" :disabled="busy || g.items.every(ownerOnly)" @click="bulk(g, true)"><icon name="check" :size="13"/> Accept all</button><button class="btn sm" :disabled="busy" @click="bulk(g, false)">Reject all</button></div>
+            <p class="action-help small"><b>Accept:</b> {{ ACTIONS[acceptAction(g.kind)].changes }} <b>Reject:</b> {{ ACTIONS['cons.reject'].changes }} <span class="muted">An accepted change can be undone.</span></p>
+            <div v-if="g.items.length > 1" class="row-gap"><button class="btn sm" :disabled="busy || g.items.every(ownerOnly)" :title="'For each proposal below: ' + explain(acceptAction(g.kind))" @click="bulk(g, true)"><icon name="check" :size="13"/> Accept all</button><button class="btn sm" :disabled="busy" :title="'For each proposal below: ' + explain('cons.reject')" @click="bulk(g, false)">Reject all</button></div>
             <article v-for="s in g.items.slice(0, open[g.kind] ? 1000 : 40)" :key="s.id" class="cons-item">
               <div class="cons-main">
                 <b class="cons-what"><math-text :text="suggestionText(s, d.facts)"/></b><span v-if="confidence(s)" class="pill cons-conf" :class="'c-' + s.confidence">{{ confidence(s) }}</span>
@@ -106,8 +108,8 @@ export const ConsolidationPanel = {
                 <p v-else-if="s.second_verdict === 'kept'" class="muted small">Brought back by a member after the second reading dropped it.</p>
               </div>
               <div class="notation-actions">
-                <button class="btn sm endorse" :disabled="busy || ownerOnly(s)" :title="ownerOnly(s) ? 'Only an owner applies this' : ''" @click="decide(s, true)"><icon name="check" :size="13"/> Accept</button>
-                <button class="btn sm" :disabled="busy" @click="decide(s, false)">Reject</button>
+                <button class="btn sm endorse" :disabled="busy || ownerOnly(s)" :title="ownerOnly(s) ? 'Only an owner applies this' : explain(acceptAction(s.kind))" @click="decide(s, true)"><icon name="check" :size="13"/> Accept</button>
+                <button class="btn sm" :disabled="busy" :title="explain('cons.reject')" @click="decide(s, false)">Reject</button>
               </div>
             </article>
             <button v-if="g.items.length > 40 && !open[g.kind]" class="link-btn small" @click="open[g.kind] = true">Show the {{ g.items.length - 40 }} others</button>
@@ -119,14 +121,14 @@ export const ConsolidationPanel = {
               <div class="cons-main"><b class="cons-what"><math-text :text="suggestionText(s, d.facts)"/></b>
                 <p class="cons-reason small"><icon name="sparkles" :size="12"/> <math-text :text="s.reason_text"/> <ai-meta compact :model="s.ai_model" :user="s.ai_user_name" :ms="s.ai_generation_ms"/> <span class="muted">{{ timeAgo(s.decided_at) }}</span></p>
                 <p v-if="s.second_verdict === 'apply'" class="cons-reason cons-second small"><icon name="eye" :size="12"/> <b>Applied after a second reading:</b> <math-text :text="s.second_reason || ''"/> <ai-meta compact :model="s.second_ai_model"/></p></div>
-              <div class="notation-actions"><button class="btn sm" :disabled="busy" @click="undo(s)"><icon name="restore" :size="13"/> {{ undoLabel(s) }}</button></div>
+              <div class="notation-actions"><button class="btn sm" :disabled="busy" :title="explain(s.kind === 'same' ? 'cons.undo.same' : 'cons.undo')" @click="undo(s)"><icon name="restore" :size="13"/> {{ undoLabel(s) }}</button></div>
             </article>
             <button v-if="applied.length > 30 && !open.applied" class="link-btn small" @click="open.applied = true">Show the {{ applied.length - 30 }} others</button>
           </section>
           <details v-if="decided.length" class="panel ai-decided"><summary>Decided ({{ decided.length }})</summary>
             <div v-for="s in decided" :key="s.id" class="d-row"><span class="pill" :class="s.status === 'accepted' ? 't-good' : 't-off'">{{ dropped(s) ? 'dropped' : s.status }}</span><span class="d-title"><math-text :text="suggestionText(s, d.facts)"/></span><small class="muted">{{ s.status === 'undone' ? 'undone by ' + (s.undone_by_name || '') + ' ' + timeAgo(s.undone_at) : dropped(s) ? 'by the second reading ' + timeAgo(s.second_at) : (s.decided_by_name || '') + ' ' + (s.decided_at ? timeAgo(s.decided_at) : '') }}</small>
-              <button v-if="s.can_undo && !ownerOnly(s)" class="btn xs" :disabled="busy" @click="undo(s)">{{ undoLabel(s) }}</button>
-              <button v-if="dropped(s)" class="btn xs" :disabled="busy" @click="restore(s)" title="Put it back with the proposals waiting for people">Bring back</button>
+              <button v-if="s.can_undo && !ownerOnly(s)" class="btn xs" :disabled="busy" :title="explain(s.kind === 'same' ? 'cons.undo.same' : 'cons.undo')" @click="undo(s)">{{ undoLabel(s) }}</button>
+              <button v-if="dropped(s)" class="btn xs" :disabled="busy" @click="restore(s)" :title="explain('cons.restore')">Bring back</button>
               <small v-if="dropped(s)" class="d-why"><icon name="eye" :size="11"/> Second reading: <math-text :text="s.second_reason || ''"/></small></div>
           </details>
         </div>

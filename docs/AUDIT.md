@@ -76,6 +76,9 @@ The interface lets people understand the state of the project and act on it.
 - Figures that are links open what they count. Long lists are grouped, paged or summarized. Text in mathematics is typeset and
   never cut inside a formula.
 - Wording: short, exact, no jargon from the code. The help center and the first-use tour describe what the page shows today.
+- Actions: members do not know the interface. For each button, could a newcomer tell, before clicking, what it changes and what
+  it leaves as it is, and what a choice applies to? A button whose name could mean several things, or whose effect reaches
+  further than it looks (a whole project, other facts, people), says so beside it or on hover, and in its confirmation.
 - Phones: the overview, a fact and a discussion must be usable at 375 pixels.
 
 ### 5. Features that are missing

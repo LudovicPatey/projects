@@ -1,4 +1,5 @@
 import { api, setCsrf } from './api.js';
+import { ACTIONS, acceptAction, explain } from './action-help.js';
 import { store, go, loadProject, refreshCounters, link } from './store.js';
 import { registerCommon } from './components.js';
 import { RichEditor, RichContent, MathText } from './editor.js';
@@ -162,6 +163,10 @@ const App = {
 };
 
 const app = Vue.createApp(App);
+// What each action changes and leaves, for the tooltips and confirmations of every view.
+app.config.globalProperties.explain = explain;
+app.config.globalProperties.ACTIONS = ACTIONS;
+app.config.globalProperties.acceptAction = acceptAction;
 registerCommon(app);
 app.component('rich-editor', RichEditor);
 app.component('rich-content', RichContent);

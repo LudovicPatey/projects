@@ -1,4 +1,5 @@
 import { api } from '../api.js';
+import { explain } from '../action-help.js';
 import { store, go, link, attempt, toast, refreshProject, refreshMentionables, refreshCounters, markRead, markAllRead } from '../store.js';
 import { timeAgo, fullDate } from '../util.js';
 import { aiTimeSummary, computeTime } from '../ai-model.js';
@@ -202,7 +203,7 @@ export const MembersView = {
         <footer><select v-if="isOwner" class="sm" :value="m.role" :aria-label="'Role of ' + m.name" @change="setRole(m, $event.target.value)"><option value="member">Member</option><option value="owner">Owner</option></select>
           <span v-else class="pill" :class="m.role === 'owner' ? 't-info' : 't-neutral'">{{ m.role === 'owner' ? 'Owner' : 'Member' }}</span>
           <span class="muted small">{{ m.has_logged_in ? 'joined ' + timeAgo(m.joined_at) : 'has not signed in yet' }}</span><span class="grow"></span>
-          <button v-if="isOwner && m.id !== me" class="btn sm" @click="removeM(m)">Remove</button><button v-if="m.id === me" class="btn sm" @click="removeM(m)">Leave</button></footer>
+          <button v-if="isOwner && m.id !== me" class="btn sm" :title="explain('member.remove')" @click="removeM(m)">Remove</button><button v-if="m.id === me" class="btn sm" :title="explain('member.leave')" @click="removeM(m)">Leave</button></footer>
       </article>
     </div>
 
@@ -215,7 +216,7 @@ export const MembersView = {
           <code v-if="a.token">{{ a.token.token_prefix }}…</code><span v-else-if="isOwner" class="muted small">token revoked</span></div></header>
         <dl class="contrib"><div><dd>{{ a.messages }}</dd><dt>Messages</dt></div><div><dd>{{ a.documents }}</dd><dt>Files</dt></div><div><dd>{{ c(a).facts }}</dd><dt>Facts</dt></div><div><dd>{{ c(a).reviews }}</dd><dt>Reviews</dt></div></dl>
         <footer><span class="muted small">{{ a.last_used_at ? 'active ' + timeAgo(a.last_used_at) : 'never active' }}</span><span class="grow"></span>
-          <template v-if="isOwner"><button class="btn xs" @click="rotate(a)" title="Revoke the current token and create a new one"><icon name="key" :size="12"/> New token</button><button class="btn xs" @click="removeAgent(a)">Remove</button></template></footer>
+          <template v-if="isOwner"><button class="btn xs" @click="rotate(a)" title="Revoke the current token and create a new one"><icon name="key" :size="12"/> New token</button><button class="btn xs" :title="explain('agent.remove')" @click="removeAgent(a)">Remove</button></template></footer>
       </article>
       <form v-if="isOwner" class="person new-agent" @submit.prevent="createAgent">
         <h3><icon name="plus" :size="15"/> New AI agent</h3>
@@ -283,7 +284,7 @@ export const MembersView = {
     },
     async removeM(m) {
       const self = m.id === this.me;
-      if (!confirm(self ? 'Leave this project?' : `Remove ${m.name} from the project?`)) return;
+      if (!confirm(self ? `Leave this project? ${explain('member.leave')}` : `Remove ${m.name} from the project? ${explain('member.remove')}`)) return;
       const r = await attempt(() => api.del(`api/projects/${this.p.id}/members/${m.id}`));
       if (!r) return;
       if (self) go('/projects'); else { this.p.members = r.members; refreshMentionables(); }
@@ -351,7 +352,7 @@ Do not mark anything as verified on my behalf. Humans and other models review th
           <p class="muted small">A key lets your AI client read everything you can read, and submit facts, reviews, Lean proofs, questions, strategies and proposed answers. What it writes is labelled with its AI model. It cannot send messages, change files, manage the project or ratify an answer. Treat a key like a password.</p>
           <div v-for="k in keys" :key="k.id" class="key-row"><span class="action-icon t-info"><icon name="key" :size="14"/></span><span class="key-main"><b class="ellipsis">{{ k.name }}</b><code>{{ k.token_prefix }}…</code></span>
             <span class="muted small">{{ k.last_used_at ? 'used ' + timeAgo(k.last_used_at) : 'never used' }}</span>
-            <button class="btn xs" @click="revokeKey(k)">Revoke</button></div>
+            <button class="btn xs" :title="explain('key.revoke')" @click="revokeKey(k)">Revoke</button></div>
           <div v-if="!keys.length" class="d-empty">No key yet. Create one to connect your AI client.</div>
           <form class="row-gap agent-form" @submit.prevent="createKey">
             <input v-model="keyName" class="grow" required maxlength="120" placeholder="Key name, e.g. Claude Code on my laptop" aria-label="Key name">
@@ -430,7 +431,7 @@ export const NotificationsDrawer = {
   async mounted() { await this.load(); },
   template: `<div class="drawer-back" @mousedown.self="$emit('close')"><aside class="drawer">
     <header class="col-head"><h2>Notifications</h2>
-      <div class="row-gap"><button class="link-btn" @click="readAll">Mark all read</button>
+      <div class="row-gap"><button class="link-btn" :title="explain('notifications.readAll')" @click="readAll">Mark all read</button>
         <button class="icon-btn" @click="$emit('close')"><icon name="x"/></button></div></header>
     <div class="list">
       <div v-if="loaded && !items.length" class="empty">Nothing yet. You will be notified when someone @mentions you or replies to your comments.</div>

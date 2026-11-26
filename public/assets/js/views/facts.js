@@ -338,27 +338,27 @@ export const FactsView = {
         </div>
         <div class="doc-actions">
           <button class="btn sm star-toggle" :class="{on: fact.starred}" :aria-pressed="!!fact.starred" :title="fact.starred_by?.length ? 'Starred by ' + fact.starred_by.map((u) => u.name).join(', ') : 'Star this fact: it matters, and stands out in the graph'" @click="toggleStar(fact)"><icon name="star" :size="14"/> {{ fact.starred ? 'Starred' : 'Star' }}<b v-if="fact.stars" class="seg-n">{{ fact.stars }}</b></button>
-          <button v-if="!fact.retracted_at && cited" class="btn sm endorse" :class="{on: endorsed}" :aria-pressed="endorsed" :title="endorsed ? 'Withdraw your acceptance' : 'Accept this citation: you read the source, and it states this result'" @click="toggleEndorse">
+          <button v-if="!fact.retracted_at && cited" class="btn sm endorse" :class="{on: endorsed}" :aria-pressed="endorsed" :title="endorsed ? 'Withdraw your acceptance' : explain('fact.accept')" @click="toggleEndorse">
             <icon name="check" :size="14"/> {{ endorsed ? 'Accepted' : 'Accept' }}</button>
-          <button v-else-if="!fact.retracted_at" class="btn sm endorse" :class="{on: endorsed}" :aria-pressed="endorsed" :title="endorsed ? 'Withdraw your endorsement' : 'Endorse this revision: you checked it and consider it correct'" @click="toggleEndorse">
+          <button v-else-if="!fact.retracted_at" class="btn sm endorse" :class="{on: endorsed}" :aria-pressed="endorsed" :title="endorsed ? 'Withdraw your endorsement' : explain('fact.endorse')" @click="toggleEndorse">
             <icon name="check" :size="14"/> {{ endorsed ? 'Endorsed' : 'Endorse' }}</button>
-          <button v-if="!fact.retracted_at && !cited" class="btn sm result-only" :class="{on: resultOnlyOn}" :aria-pressed="resultOnlyOn" :title="resultOnlyOn ? 'Withdraw: you no longer say this' : 'You believe the result, but the proof has a gap or an error'" @click="toggleResultOnly"><icon name="check" :size="14"/> {{ resultOnlyOn ? 'Result only' : 'Result, not proof' }}</button>
-          <button v-if="!fact.retracted_at" class="btn sm deny" :class="{on: denied}" :aria-pressed="denied" :title="denied ? 'Withdraw your denial' : 'Deny this revision: you found an error'" @click="toggleDeny"><icon name="x" :size="14"/> {{ denied ? 'Denied' : 'Deny' }}</button>
+          <button v-if="!fact.retracted_at && !cited" class="btn sm result-only" :class="{on: resultOnlyOn}" :aria-pressed="resultOnlyOn" :title="resultOnlyOn ? 'Withdraw: you no longer say this' : explain('fact.resultOnly')" @click="toggleResultOnly"><icon name="check" :size="14"/> {{ resultOnlyOn ? 'Result only' : 'Result, not proof' }}</button>
+          <button v-if="!fact.retracted_at" class="btn sm deny" :class="{on: denied}" :aria-pressed="denied" :title="denied ? 'Withdraw your denial' : explain('fact.deny')" @click="toggleDeny"><icon name="x" :size="14"/> {{ denied ? 'Denied' : 'Deny' }}</button>
           <ai-action v-if="!fact.retracted_at && !cited" kind="review" source-type="fact" :source-id="fact.id" label="AI review"/>
           <ai-action v-if="!fact.retracted_at && cited" kind="source_check" source-type="fact" :source-id="fact.id" label="Check the source"/>
           <ai-action v-if="!fact.retracted_at" kind="lean" source-type="fact" :source-id="fact.id" label="Lean proof"/>
           <ai-action v-if="!fact.retracted_at" kind="ask" source-type="fact" :source-id="fact.id" label="Ask AI"/>
           <ai-action v-if="!fact.retracted_at && !currentRephrasing && !notationState" kind="notation" source-type="fact" :source-id="fact.id" label="Project notation" title="Write this fact again in the notation agreed by the project"/>
           <ai-action v-if="!fact.retracted_at" kind="derive" source-type="fact" :source-id="fact.id" label="Prove from this"/>
-          <button v-if="!fact.retracted_at" class="btn sm warn" @click="retracting = {reason: ''}">Retract</button>
-          <button v-else class="btn sm" @click="reinstate">Reinstate</button>
+          <button v-if="!fact.retracted_at" class="btn sm warn" :title="explain('fact.retract')" @click="retracting = {reason: ''}">Retract</button>
+          <button v-else class="btn sm" :title="explain('fact.reinstate')" @click="reinstate">Reinstate</button>
           <button class="icon-btn" title="Mark as unread" @click="markItemUnread('fact', fact.id)"><icon name="mail-unread"/></button>
-          <button v-if="canDelete" class="icon-btn" title="Delete fact" @click="remove"><icon name="trash"/></button>
+          <button v-if="canDelete" class="icon-btn" :title="'Delete fact. ' + explain('fact.delete')" aria-label="Delete fact" @click="remove"><icon name="trash"/></button>
           <button v-if="mode === 'graph'" class="icon-btn" title="Close" @click="closeFact"><icon name="x"/></button>
         </div>
       </header>
       <modal v-if="denying" title="Deny this fact" @close="denying = null">
-        <p class="muted small">Deny means that the result itself is false. If you believe the result but not its proof, use <b>Result, not proof</b> instead.</p>
+        <p class="muted small">Deny means that the result itself is false. If you believe the result but not its proof, use <b>Result, not proof</b> instead. Denying records your verdict: the fact stays in the database for everyone, unlike <b>Retract</b>.</p>
         <label class="field"><span>What is wrong? Point to the exact step, or give a counterexample.</span><textarea v-model="denying.reason" rows="4" autofocus></textarea></label>
         <template #footer><button class="btn ghost" @click="denying = null">Cancel</button><button class="btn danger" :disabled="!denying.reason.trim()" @click="submitDeny">Deny fact</button></template>
       </modal>
@@ -395,8 +395,8 @@ export const FactsView = {
         <div class="fact-view-switch"><div class="seg small" role="group" aria-label="How the text is shown"><button :class="{on: readable}" :aria-pressed="readable" title="Same content, with headings, lists and formulas typeset in LaTeX" @click="setReadable(true)">Readable</button><button :class="{on: !readable}" :aria-pressed="!readable" title="The text exactly as stored" @click="setReadable(false)">Original</button></div>
           <div v-if="currentRephrasing && !shownRevision" class="seg small" role="group" aria-label="Notation"><button :class="{on: projectNotation}" :aria-pressed="projectNotation" title="Written again in the notation agreed by the project" @click="setNotation(true)">Project notation</button><button :class="{on: !projectNotation}" :aria-pressed="!projectNotation" title="The notation of its source, as it was reviewed" @click="setNotation(false)">As written</button></div></div>
         <div v-if="notationState && !shownRevision" class="notation-banner" :class="'t-' + notationState.tone"><icon name="book" :size="14"/><span><math-text :text="notationState.text"/><template v-if="currentRephrasing?.check_verdict && !checkedByAi(currentRephrasing)"> {{ currentRephrasing.check_verdict === 'faithful' ? 'Confirmed' : 'Reported' }} by {{ currentRephrasing.checked_by_name }}.</template><ai-meta v-else-if="currentRephrasing?.check_verdict" compact :model="currentRephrasing.check_ai_model" :user="currentRephrasing.check_ai_user_name" :ms="currentRephrasing.check_ai_generation_ms"/></span>
-          <template v-if="currentRephrasing && (!currentRephrasing.check_verdict || checkedByAi(currentRephrasing))"><button class="btn xs endorse" @click="checkRephrasing('faithful')"><icon name="check" :size="12"/> Same meaning</button><button class="btn xs deny" @click="unfaithful = {note: ''}">Not the same</button></template>
-          <button v-else-if="currentRephrasing" class="btn xs" @click="checkRephrasing('')">Undo</button>
+          <template v-if="currentRephrasing && (!currentRephrasing.check_verdict || checkedByAi(currentRephrasing))"><button class="btn xs endorse" :title="explain('fact.sameMeaning')" @click="checkRephrasing('faithful')"><icon name="check" :size="12"/> Same meaning</button><button class="btn xs deny" :title="explain('fact.notSame')" @click="unfaithful = {note: ''}">Not the same</button></template>
+          <button v-else-if="currentRephrasing" class="btn xs" :title="explain('fact.undoCheck')" @click="checkRephrasing('')">Undo</button>
           <ai-action v-if="notationState.tone === 'warn' || notationState.tone === 'bad'" kind="notation" source-type="fact" :source-id="fact.id" label="Rewrite again"/></div>
         <div v-if="rephrasing?.uses?.length" class="notation-uses"><span class="muted small">In its source:</span><span v-for="(u, i) in rephrasing.uses" :key="i" class="notation-use"><math-text :text="asMath(u.symbol)"/> <small><math-text :text="u.meaning_here"/></small><template v-if="u.project_symbol && u.project_symbol !== u.symbol"> → <math-text :text="asMath(u.project_symbol)"/></template></span></div>
         <div v-if="cited && !shownRevision" class="notation-banner t-info"><icon name="book" :size="14"/><span>Proofs that use this result rely on its source. <template v-if="fact.status === 'accepted'">A member who read the source accepted it.</template><template v-else>Nobody has accepted it yet: read the source, then click <b>Accept</b>. You can also propose a proof below.</template></span></div>
@@ -406,12 +406,12 @@ export const FactsView = {
           <p class="muted small">A proof relies only on facts of the database, so that it can be checked against them. Link each result the proof takes from another work to the fact that states it, usually a cited result. A consolidation proposes these links, and writes the cited results that are missing.</p>
           <div v-for="r in fact.outside_refs" :key="r.key" class="outside-ref" :class="{open: !r.resolved}">
             <div class="outside-ref-top"><icon :name="r.resolved ? 'check-circle' : 'link'" :size="14"/><math-text class="outside-ref-label" :text="r.label"/></div>
-            <div v-if="r.fact" class="row-gap small"><span class="muted">Stated by</span><a :href="factLink(r.fact.id)"><code class="key">{{ r.fact.label }}</code></a><status-tag :status="r.fact.status"/><button class="link-btn small" @click="clearRef(r)">Unlink</button></div>
+            <div v-if="r.fact" class="row-gap small"><span class="muted">Stated by</span><a :href="factLink(r.fact.id)"><code class="key">{{ r.fact.label }}</code></a><status-tag :status="r.fact.status"/><button class="link-btn small" :title="explain('fact.unlink')" @click="clearRef(r)">Unlink</button></div>
             <div v-else-if="r.not_used" class="row-gap small"><span class="muted">Not used as a result: background only.</span><button class="link-btn small" @click="clearRef(r)">Undo</button></div>
             <div v-else class="outside-ref-act">
               <select v-model="refPick[r.key]" class="sm" :aria-label="'Fact that states ' + r.label"><option :value="undefined" disabled>Fact that states it…</option><option v-for="f in linkOptions" :key="f.id" :value="f.id">{{ f.basis === 'cited' ? 'Cited · ' : '' }}{{ f.label }}: {{ f.title }}</option></select>
-              <button class="btn sm" :disabled="!refPick[r.key]" @click="linkRef(r)">Link</button>
-              <button class="btn sm ghost" title="The proof only mentions this work, and uses no result from it" @click="linkRef(r, true)">Not used</button>
+              <button class="btn sm" :disabled="!refPick[r.key]" :title="explain('fact.link')" @click="linkRef(r)">Link</button>
+              <button class="btn sm ghost" :title="explain('fact.notUsed')" @click="linkRef(r, true)">Not used</button>
             </div>
           </div>
         </section>
@@ -438,9 +438,9 @@ export const FactsView = {
             <footer class="alt-proof-foot">
               <span class="muted small">{{ tallyText(p) }}</span><span class="grow"></span>
               <template v-if="!(p.author_id === me && p.author_kind === 'human')">
-                <button class="btn sm endorse" :class="{on: myProofVerdict(p) === 'correct'}" :aria-pressed="myProofVerdict(p) === 'correct'" @click="checkProof(p, 'correct')"><icon name="check" :size="13"/> Correct</button>
-                <button class="btn sm" :class="{on: myProofVerdict(p) === 'gap'}" :aria-pressed="myProofVerdict(p) === 'gap'" @click="checkProof(p, 'gap')">Gap</button>
-                <button class="btn sm deny" :class="{on: myProofVerdict(p) === 'incorrect'}" :aria-pressed="myProofVerdict(p) === 'incorrect'" @click="checkProof(p, 'incorrect')">Error</button>
+                <button class="btn sm endorse" :class="{on: myProofVerdict(p) === 'correct'}" :aria-pressed="myProofVerdict(p) === 'correct'" :title="explain('proof.correct')" @click="checkProof(p, 'correct')"><icon name="check" :size="13"/> Correct</button>
+                <button class="btn sm" :class="{on: myProofVerdict(p) === 'gap'}" :aria-pressed="myProofVerdict(p) === 'gap'" :title="explain('proof.gap')" @click="checkProof(p, 'gap')">Gap</button>
+                <button class="btn sm deny" :class="{on: myProofVerdict(p) === 'incorrect'}" :aria-pressed="myProofVerdict(p) === 'incorrect'" :title="explain('proof.error')" @click="checkProof(p, 'incorrect')">Error</button>
               </template>
             </footer>
             <div v-for="v in p.reviews.filter((x) => x.body_html)" :key="v.id" class="alt-proof-review"><span class="tag" :class="verdicts[v.verdict].cls">{{ verdicts[v.verdict].label }}</span> <b>{{ v.reviewer_name }}</b><rich-content :html="v.body_html"/></div>
@@ -480,7 +480,7 @@ export const FactsView = {
           <div class="field"><span>{{ cited ? 'The citation' : 'The proof' }}</span><div class="seg" role="group" :aria-label="cited ? 'The citation' : 'The proof'"><button v-for="(v, k) in verdicts" :key="k" :class="{on: reviewVerdict === k}" :aria-pressed="reviewVerdict === k" @click="reviewVerdict = k">{{ cited ? citedVerdicts[k] : v.label }}</button></div></div>
           <div v-if="reviewVerdict !== 'correct'" class="field"><span>The result itself</span><div class="seg" role="group" aria-label="The result itself"><button v-for="(l, k) in {true: 'Is true', unsure: 'Not sure', false: 'Is false'}" :key="k" :class="{on: reviewStatement === k}" :aria-pressed="reviewStatement === k" :disabled="k === 'false' && reviewVerdict === 'gap'" @click="reviewStatement = k">{{ l }}</button></div></div>
           <rich-editor ref="reviewEd" compact :key="fact.id + '-' + fact.current_revision" :initial-html="myReview?.body_html || ''" :placeholder="reviewVerdict === 'correct' ? 'What did you check? (optional)' : 'Point to the exact step…'"/>
-          <div class="row-end"><button class="btn primary sm" @click="submitReview">Submit review</button></div>
+          <div class="row-end"><button class="btn primary sm" :title="explain('review.submit')" @click="submitReview">Submit review</button></div>
         </div>
         
         <div v-if="!currentReviews.length" class="empty">No review of this revision yet.</div>
@@ -584,7 +584,7 @@ export const FactsView = {
               <template v-else>Accepted by <b>{{ x.change.decided_by_name }}</b>, proposed by <ai-meta compact :model="x.change.ai_model"/></template>
               <template v-if="x.change.status === 'undone'"> · undone by {{ x.change.undone_by_name }}, {{ timeAgo(x.change.undone_at) }}</template></div>
             <div class="tl-notes"><math-text :text="x.change.reason_text"/></div>
-            <div v-if="x.change.can_undo && (x.change.auto_applied || isOwner || !['same', 'question'].includes(x.change.kind))" class="tl-actions"><button class="btn xs" @click="undoChange(x.change)"><icon name="restore" :size="13"/> {{ undoLabel(x.change) }}</button></div>
+            <div v-if="x.change.can_undo && (x.change.auto_applied || isOwner || !['same', 'question'].includes(x.change.kind))" class="tl-actions"><button class="btn xs" :title="explain(x.change.kind === 'same' ? 'cons.undo.same' : 'fact.undoChange')" @click="undoChange(x.change)"><icon name="restore" :size="13"/> {{ undoLabel(x.change) }}</button></div>
           </div></div>
         <div v-else class="tl-item" :class="{current: x.rev.revision_no === fact.current_revision}"><template v-for="r in [x.rev]" :key="r.id">
           <div class="tl-dot"></div><div class="tl-body">
@@ -621,6 +621,7 @@ export const FactsView = {
 
   <modal v-if="retracting" :title="'Retract ' + fact.label" @close="retracting = null">
     <form @submit.prevent="submitRetract">
+      <p class="muted small">Retracting withdraws the fact for every member, not only for you: to say that you think it is false, use <b>Deny</b>. Reinstate undoes it.</p>
       <p class="warn-box" v-if="fact.dependents.length">Everything that depends on this fact will be flagged. The authors of those facts are notified.</p>
       <label class="field"><span>Reason</span><textarea v-model="retracting.reason" rows="4" required placeholder="What is wrong?"></textarea></label>
       <div class="row-end"><button type="button" class="btn ghost" @click="retracting = null">Cancel</button><button class="btn warn">Retract</button></div>

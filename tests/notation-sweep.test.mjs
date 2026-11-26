@@ -44,11 +44,11 @@ test('a symbols sweep settles every symbol without an entry: adopt, local, or an
   assert.ok(t.context.notation.some((n) => n.id === mu), 'with the entries, to attach a spelling to');
   assert.ok(!t.context.fact_texts, 'not the whole database');
   const r = await answer(t, { summary: '', decisions: [
-    { symbol: '\\mathsf{RT}^1', action: 'adopt', entry: null, project_symbol: '\\mathsf{RT}^1', meaning: 'Every finite coloring of $\\mathbb{N}$ has an infinite homogeneous set.', note: '', variants: [], fact: ids.a, reason: 'Equivalent wordings of one principle.' },
-    { symbol: '\\mathrm{Subt}', action: 'local', entry: null, project_symbol: null, meaning: 'Closed under differences, in this paper.', note: null, variants: [], fact: ids.a, reason: 'One paper\'s name.' },
-    { symbol: '\\lambda(n)', action: 'adopt', entry: null, project_symbol: '\\lambda(n)', meaning: 'The least binary exponent of $n$.', note: '', variants: [], fact: ids.a, reason: 'Used beside mu.' },
-    { symbol: '\\mathsf{RT}^1_{<\\infty}', action: 'same', entry: mu, project_symbol: null, meaning: 'should not matter', note: null, variants: [], fact: null, reason: 'A wrong attachment the server records as asked.' },
-    { symbol: 'not in the batch', action: 'adopt', entry: null, project_symbol: 'X', meaning: 'x', note: '', variants: [], fact: ids.a, reason: 'Ignored.' },
+    { symbol: '\\mathsf{RT}^1', action: 'adopt', entry: null, project_symbol: '\\mathsf{RT}^1', meaning: 'Every finite coloring of $\\mathbb{N}$ has an infinite homogeneous set.', note: '', variants: [], params: [], fact: ids.a, reason: 'Equivalent wordings of one principle.' },
+    { symbol: '\\mathrm{Subt}', action: 'local', entry: null, project_symbol: null, meaning: 'Closed under differences, in this paper.', note: null, variants: [], params: [], fact: ids.a, reason: 'One paper\'s name.' },
+    { symbol: '\\lambda(n)', action: 'adopt', entry: null, project_symbol: '\\lambda(n)', meaning: 'The least binary exponent of $n$.', note: '', variants: [], params: [], fact: ids.a, reason: 'Used beside mu.' },
+    { symbol: '\\mathsf{RT}^1_{<\\infty}', action: 'same', entry: mu, project_symbol: null, meaning: 'should not matter', note: null, variants: [], params: [], fact: null, reason: 'A wrong attachment the server records as asked.' },
+    { symbol: 'not in the batch', action: 'adopt', entry: null, project_symbol: 'X', meaning: 'x', note: '', variants: [], params: [], fact: ids.a, reason: 'Ignored.' },
   ] });
   assert.equal(r.status, 200, JSON.stringify(r.data));
   assert.match(r.data.summary_text, /^4 symbols read \(3 settled, 1 recorded as spellings of an entry\)/);
@@ -88,8 +88,8 @@ test('the sweep also settles proposed entries by their id, keeps the facts\' spe
   assert.ok(['P-branch', 'P-condition'].every((x) => syms.includes(x)) && !syms.some((x) => x.includes(',') || x.includes('$')), `one-word names are split: ${syms}`);
   assert.equal(t.context.symbols.find((x) => x.symbol === 'fip').entry.id, prop, 'a proposed entry comes with its symbol');
   const r = await app.call(key, 'POST', `/api/ai/tasks/${t.id}/answer`, { lease: t.lease, ai_model: 'claude-opus-5-5', answer: { summary: '', decisions: [
-    { symbol: 'fip', action: 'adopt', entry: prop, project_symbol: null, meaning: null, note: null, variants: [], fact: null, reason: 'Standard.' },
-    { symbol: 'semigroup', action: 'adopt', entry: null, project_symbol: 'semigroup (\\beta\\mathbb N)', meaning: 'Hirst\'s code for a closed subsemigroup of $\\beta\\mathbb N$.', note: '', variants: [], fact: f.a, reason: 'One notion.' },
+    { symbol: 'fip', action: 'adopt', entry: prop, project_symbol: null, meaning: null, note: null, variants: [], params: [], fact: null, reason: 'Standard.' },
+    { symbol: 'semigroup', action: 'adopt', entry: null, project_symbol: 'semigroup (\\beta\\mathbb N)', meaning: 'Hirst\'s code for a closed subsemigroup of $\\beta\\mathbb N$.', note: '', variants: [], params: [], fact: f.a, reason: 'One notion.' },
   ] } });
   assert.equal(r.status, 200, JSON.stringify(r.data));
   const n = (await app.call(ann, 'GET', `/api/projects/${p}/notation`)).data;
@@ -119,8 +119,8 @@ test('an expression in agreed symbols needs no entry, an indexed one does, and t
   assert.ok(!syms.includes('\\mathrm{FIN}\\cup\\{\\emptyset\\}') && syms.includes('\\mathrm{FIN}_k'), `${syms}`);
   assert.match(t.recipe.instructions, /never adopt or keep local a mere combination/);
   const r = await app.call(key, 'POST', `/api/ai/tasks/${t.id}/answer`, { lease: t.lease, ai_model: 'claude-opus-5-5', answer: { summary: '', decisions: [
-    { symbol: '\\mathcal P_{fin}(\\mathbb N)', action: 'reject', entry: prop, project_symbol: null, meaning: null, note: null, variants: [], fact: f.a, reason: 'FIN together with the empty set.' },
-    { symbol: '\\mathrm{FIN}_k', action: 'reject', entry: null, project_symbol: null, meaning: null, note: null, variants: [], fact: f.a, reason: 'Ignored: no entry to reject.' },
+    { symbol: '\\mathcal P_{fin}(\\mathbb N)', action: 'reject', entry: prop, project_symbol: null, meaning: null, note: null, variants: [], params: [], fact: f.a, reason: 'FIN together with the empty set.' },
+    { symbol: '\\mathrm{FIN}_k', action: 'reject', entry: null, project_symbol: null, meaning: null, note: null, variants: [], params: [], fact: f.a, reason: 'Ignored: no entry to reject.' },
   ] } });
   assert.equal(r.status, 200, JSON.stringify(r.data));
   assert.equal((await app.call(ann, 'GET', `/api/projects/${p}/notation`)).data.entries.find((e) => e.id === prop).status, 'rejected');

@@ -7,6 +7,7 @@ import { escapeHtml, markTerms } from './util.js';
 import { mentionMatches, mentionQuery } from './questions-model.js';
 import { askAiPrefix, offersAskAi } from './ai-model.js';
 import { notationMarker, trustMarks } from './notation-marks.js';
+import { paramGroups } from './notation-params.js';
 import { linkFactRefs } from './fact-refs.js';
 
 const Embed = Quill.import('blots/embed');
@@ -240,6 +241,13 @@ function showNotation(target, entry) {
   if (entry.meaning_html) body.innerHTML = entry.meaning_html; // sanitized by the server, like every rich text shown
   else body.textContent = entry.meaning || '';
   p.append(head, body);
+  // What the entry applies to: "Y \leq X" for block sequences says nothing of \leq between numbers.
+  const typed = (entry.params || []).filter((x) => x.type);
+  if (typed.length) {
+    const where = document.createElement('div'); where.className = 'nt-pop-where';
+    where.textContent = 'For ' + paramGroups(typed).map((g) => g.params.map((x) => '$' + x.name + '$').join(', ') + ': ' + g.type).join('; ');
+    p.append(where);
+  }
   p.hidden = false;
   if (window.renderMathInElement) window.renderMathInElement(p, { delimiters: MATH_DELIMITERS, throwOnError: false });
   const r = target.getBoundingClientRect(); const w = Math.min(340, window.innerWidth - 16);

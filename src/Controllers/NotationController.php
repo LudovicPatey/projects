@@ -45,7 +45,14 @@ final class NotationController
         if ($same && Auth::isAi()) {
             // An AI met a symbol the project already has: if a source gives it another meaning, that is a clash to record, not a new entry.
             $meaning = Sanitizer::toText((string)$data['meaning_html']);
-            if (self::sameText($meaning, Sanitizer::toText((string)$same['meaning_html']))) throw new HttpError(409, 'This symbol already has this meaning.');
+            if (self::sameText($meaning, Sanitizer::toText((string)$same['meaning_html']))) {
+                // The same entry again, with the types of its parameters that nobody gave: they say what it applies to, and change nothing else.
+                if (!empty($data['params_json']) && !self::typed((string)$same['params_json'])) {
+                    Db::update('notations', ['params_json' => $data['params_json'], 'updated_at' => Db::now()], 'id = :id', ['id' => $same['id']]);
+                    return [self::one((int)$same['id']) + ['merged' => true, 'params_added' => true], 200];
+                }
+                throw new HttpError(409, 'This symbol already has this meaning.');
+            }
             $variants = json_decode((string)$same['variants_json'], true) ?: [];
             foreach ($variants as $v) if (self::sameText((string)$v['meaning'], $meaning)) throw new HttpError(409, 'This meaning is already recorded for this symbol.');
             if (count($variants) >= self::MAX_VARIANTS) throw new HttpError(409, 'This symbol already lists many meanings.');
@@ -68,7 +75,8 @@ final class NotationController
         self::humanOnly();
         $n = self::row($r->int('nid'));
         $data = self::fields($r, (int)$n['project_id'], $n);
-        $reset = $n['status'] === 'agreed' && ($data['symbol_key'] !== $n['symbol_key'] || $data['meaning_html'] !== $n['meaning_html']);
+        // What the entry applies to changes with its symbol, its meaning or the types of its parameters.
+        $reset = $n['status'] === 'agreed' && ($data['symbol_key'] !== $n['symbol_key'] || (isset($data['meaning_html']) && $data['meaning_html'] !== $n['meaning_html']) || (isset($data['params_json']) && $data['params_json'] !== (string)$n['params_json']));
         Db::update('notations', $data + ['updated_at' => Db::now()] + ($reset ? ['status' => 'proposed', 'decided_by' => null, 'decided_at' => null, 'auto_suggestion_id' => null] : []), 'id = :id', ['id' => $n['id']]);
         Response::json(self::one((int)$n['id']));
     }
@@ -204,7 +212,7 @@ final class NotationController
             $talk[(int)$c['target_id']][] = ['author' => $c['name'], 'resolved' => (bool)$c['resolved'], 'text' => mb_substr(Sanitizer::toText((string)$c['body_html']), 0, 2000)];
         }
         return array_map(fn($n) => ['id' => (int)$n['id'], 'symbol' => $n['symbol'], 'meaning' => Sanitizer::toText((string)$n['meaning_html']), 'status' => $n['status'],
-            'decided_by' => self::decidedBy($n),
+            'decided_by' => self::decidedBy($n), 'params' => self::paramsOf($n),
             'note' => $n['note_html'] ? Sanitizer::toText((string)$n['note_html']) : null, 'variants' => json_decode((string)$n['variants_json'], true) ?: [],
             'comments' => array_slice($talk[(int)$n['id']] ?? [], -20)],
             Db::all("SELECT * FROM notations WHERE project_id = ? AND status " . ($agreedOnly ? ($withLocal ? "IN ('agreed', 'local')" : "= 'agreed'") : "<> 'rejected'") . ' ORDER BY symbol_key LIMIT 300', [$pid]));
@@ -264,14 +272,14 @@ final class NotationController
         $sourcesOf = fn(int $id) => array_map(fn($x) => $x['source_type'] . ':' . $x['source_id'], Db::all("SELECT s.source_type, s.source_id FROM fact_sources s
             JOIN facts f ON f.id = s.fact_id AND s.revision_no = f.current_revision WHERE s.fact_id = ? AND s.covers <> 'context' AND s.source_type IN ('bib', 'document')", [$id]));
         $mine = null;
-        foreach (Db::all("SELECT id, symbol, meaning_html, facts_json, definition_fact_id FROM notations WHERE project_id = ? AND status = 'local' ORDER BY id", [$pid]) as $n) {
+        foreach (Db::all("SELECT id, symbol, meaning_html, facts_json, definition_fact_id, params_json FROM notations WHERE project_id = ? AND status = 'local' ORDER BY id", [$pid]) as $n) {
             $def = (int)$n['definition_fact_id'];
             $applies = $def === $fid || in_array($fid, array_map('intval', json_decode((string)$n['facts_json'], true) ?: []), true);
             if (!$applies && $def) {
                 $mine ??= $sourcesOf($fid);
                 $applies = $mine && array_intersect($mine, $sourcesOf($def));
             }
-            if ($applies) $out[] = ['id' => (int)$n['id'], 'symbol' => $n['symbol'], 'meaning_html' => $n['meaning_html']];
+            if ($applies) $out[] = ['id' => (int)$n['id'], 'symbol' => $n['symbol'], 'meaning_html' => $n['meaning_html'], 'params' => self::paramsOf($n)];
         }
         return $out;
     }
@@ -345,6 +353,7 @@ final class NotationController
         $fact = $r->has('definition_fact_id') ? ((int)$r->input('definition_fact_id') ?: null) : ($old['definition_fact_id'] ?? null);
         if ($fact && (int)Db::value('SELECT project_id FROM facts WHERE id = ? AND deleted_at IS NULL', [$fact]) !== $pid) throw new HttpError(422, 'The definition must be a fact of this project.');
         $variants = $r->has('variants') ? self::variants($r->input('variants')) : null;
+        $params = $r->has('params') ? self::params($r->input('params')) : null;
         $facts = null;
         if ($r->has('facts')) {
             $want = array_values(array_unique(array_filter(array_map('intval', array_filter((array)$r->input('facts'), 'is_numeric')))));
@@ -357,6 +366,7 @@ final class NotationController
             'note_html' => $note !== null ? ($note === '' ? '' : Sanitizer::clean(Sanitizer::textToHtml($note, $pid))['html']) : null,
             'variants_json' => $variants !== null ? ($variants ? json_encode($variants, JSON_UNESCAPED_UNICODE) : '') : null,
             'facts_json' => $facts !== null ? ($facts ? json_encode($facts) : '') : null,
+            'params_json' => $params !== null ? ($params ? json_encode($params, JSON_UNESCAPED_UNICODE) : '') : null,
             'definition_fact_id' => $fact,
         ], fn($v) => $v !== null) + ($r->has('definition_fact_id') ? ['definition_fact_id' => $fact] : []);
     }
@@ -441,7 +451,11 @@ final class NotationController
         $out = [];
         foreach ($defs as $symbol => $meaning) {
             $parts = []; $depth = 0; $cur = '';
+            $prev = '';
             foreach (preg_split('//u', self::bare((string)$symbol), -1, PREG_SPLIT_NO_EMPTY) as $c) {
+                $escaped = $prev === '\\';
+                $prev = $escaped ? '' : $c; // after \\\\ (a line break), a comma separates again
+                if ($escaped) { $cur .= $c; continue; } // \, \{ \( are LaTeX, such as the thin space of X\,\tilde\in\,U
                 if (in_array($c, ['{', '(', '['], true)) $depth++;
                 if (in_array($c, ['}', ')', ']'], true)) $depth = max(0, $depth - 1);
                 if ($c === ',' && $depth === 0) { $parts[] = $cur; $cur = ''; continue; }
@@ -522,6 +536,93 @@ final class NotationController
             'relation' => in_array($s($x, 'relation', 10), self::RELATIONS, true) ? $s($x, 'relation', 10) : 'clash'], $list), fn($v) => $v['symbol'] !== '' && $v['meaning'] !== ''));
     }
 
+    /** [{name, type}]: the objects an entry is written with, each with the type of object it stands for. */
+    public static function params(mixed $list): array
+    {
+        if (!is_array($list) || !array_is_list($list)) throw new HttpError(422, 'params must be a list of {name, type}.');
+        $out = [];
+        foreach (array_slice($list, 0, 8) as $p) {
+            $name = trim(self::bare(is_array($p) && is_scalar($p['name'] ?? null) ? (string)$p['name'] : ''));
+            $type = trim(is_array($p) && is_scalar($p['type'] ?? null) ? (string)$p['type'] : '');
+            if ($name === '' || mb_strlen($name) > 40) continue;
+            $out[] = ['name' => $name, 'type' => mb_substr($type, 0, 200)];
+        }
+        return $out;
+    }
+
+    /**
+     * The parameters of an entry: the letters its symbol is written with, X and Y in "Y \leq X" or X in FS(X), with the types given
+     * for them, or an empty type when nobody said. The same reading as paramsOf in notation-params.js.
+     * @return list<array{name: string, type: string}>
+     */
+    public static function paramsOf(array $n): array
+    {
+        $given = json_decode((string)($n['params_json'] ?? ''), true) ?: [];
+        $type = [];
+        foreach ($given as $p) if (is_array($p) && isset($p['name'])) $type[self::paramKey((string)$p['name'])] = (string)($p['type'] ?? '');
+        $out = [];
+        foreach (self::inferParams((string)$n['symbol']) as $name) $out[self::paramKey($name)] = ['name' => $name, 'type' => $type[self::paramKey($name)] ?? ''];
+        foreach ($given as $p) if (is_array($p) && isset($p['name'])) $out[self::paramKey((string)$p['name'])] ??= ['name' => (string)$p['name'], 'type' => (string)($p['type'] ?? '')];
+        return array_values($out);
+    }
+
+    /** The letters a symbol is written with: one Latin letter alone, or one letter in a font such as \mathcal{D}. Names such as FS are not. */
+    public static function inferParams(string $symbol): array
+    {
+        $s = self::bare($symbol);
+        preg_match_all('/\\\\(?:mathcal|mathscr|mathfrak|mathbf|boldsymbol)\s*\{\s*[A-Za-z]\s*\}|\\\\(?:mathrm|mathsf|mathit|operatorname|textrm|text|mathbb)\s*\{[^{}]*\}|\\\\[A-Za-z]+|\\\\.|[A-Za-z]+|\s+|./su', $s, $m);
+        $toks = $m[0];
+        // A term in words, such as P-condition or full-match (HT), has no parameter.
+        if (preg_match('/(?<!\\\\)\b[A-Za-z]+-[A-Za-z]/', $s) || array_filter($toks, fn($t) => preg_match('/^[A-Za-z]{4,}$/', $t))) return [];
+        $out = [];
+        foreach ($toks as $t) {
+            $letter = preg_match('/^[A-Za-z]$/', $t) || preg_match('/^\\\\(?:mathcal|mathscr|mathfrak|mathbf|boldsymbol)\s*\{/', $t);
+            if ($letter) $out[self::paramKey($t)] ??= preg_replace('/\s+/', '', $t);
+        }
+        // A symbol that is one letter only, such as \mathcal{U}, is a name, not a parameter.
+        return count(array_filter($toks, fn($t) => trim($t) !== '')) === 1 ? [] : array_values($out);
+    }
+
+    private static function paramKey(string $name): string
+    {
+        return preg_replace('/\s+/', '', self::bare($name)) ?? $name;
+    }
+
+    private static function typed(string $json): bool
+    {
+        foreach (json_decode($json, true) ?: [] as $p) if (trim((string)($p['type'] ?? '')) !== '') return true;
+        return false;
+    }
+
+    /** A piece of a symbol cut at a LaTeX thin space, such as X\ out of X\,\tilde\in\,U, or two symbols kept as one, X[b]$, $X[Y]. */
+    public static function brokenSymbol(string $symbol): bool
+    {
+        $s = self::bare($symbol);
+        return (bool)preg_match('/(?<!\\\\)(?:\\\\\\\\)*\\\\$/', $s) || str_contains($s, '$');
+    }
+
+    /**
+     * Repairs the entries written before glossary keys were cut correctly: a broken spelling goes from the variants, and a broken entry that
+     * no person decided goes, or is rejected when members discussed it. The sweep then reads the symbol again, whole.
+     */
+    public static function repairCut(): void
+    {
+        foreach (Db::all('SELECT id, symbol, status, variants_json, decided_by, auto_suggestion_id FROM notations') as $n) {
+            if (self::brokenSymbol((string)$n['symbol'])) {
+                if ($n['decided_by'] && !$n['auto_suggestion_id']) continue; // a person's decision stays
+                if (Db::value("SELECT 1 FROM comments WHERE target_type = 'notation' AND target_id = ?", [$n['id']])) {
+                    if ($n['status'] !== 'rejected') Db::update('notations', ['status' => 'rejected', 'auto_suggestion_id' => null, 'updated_at' => Db::now()], 'id = :id', ['id' => $n['id']]);
+                } else {
+                    Db::run('DELETE FROM notations WHERE id = ?', [$n['id']]);
+                }
+                continue;
+            }
+            $variants = json_decode((string)$n['variants_json'], true) ?: [];
+            $kept = array_values(array_filter($variants, fn($v) => !self::brokenSymbol((string)($v['symbol'] ?? ''))));
+            if (count($kept) !== count($variants)) Db::update('notations', ['variants_json' => $kept ? json_encode($kept, JSON_UNESCAPED_UNICODE) : null], 'id = :id', ['id' => $n['id']]);
+        }
+    }
+
     private static function uses(mixed $list): array
     {
         if (!is_array($list) || !array_is_list($list)) return [];
@@ -552,10 +653,11 @@ final class NotationController
         foreach (['id', 'project_id', 'author_id', 'decided_by', 'definition_fact_id', 'ai_user_id', 'ai_generation_ms', 'comment_count', 'open_threads', 'auto_suggestion_id'] as $k) $n[$k] = $n[$k] === null ? null : (int)$n[$k];
         $n['variants'] = json_decode((string)$n['variants_json'], true) ?: [];
         $n['facts'] = json_decode((string)$n['facts_json'], true) ?: [];
+        $n['params'] = self::paramsOf($n);
         $n['meaning_text'] = Sanitizer::toText((string)$n['meaning_html']);
         $n['decided_by_kind'] = self::decidedBy($n); // null, consolidation or person
         $n['note_text'] = $n['note_html'] ? Sanitizer::toText((string)$n['note_html']) : '';
-        unset($n['variants_json'], $n['facts_json']);
+        unset($n['variants_json'], $n['facts_json'], $n['params_json']);
         return $n;
     }
 

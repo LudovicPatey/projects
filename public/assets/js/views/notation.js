@@ -3,30 +3,64 @@ import { link, attempt, toast } from '../store.js';
 import { timeAgo } from '../util.js';
 import { Kpi, StackBar } from '../dashboard.js';
 import { clipMath } from '../fact-format.js';
-import { NOTATION_SEGMENTS, asMath, entryBody, entryError, sharedDraft, splitVariants, toRewrite } from '../notation-model.js';
+import { NOTATION_SEGMENTS, actionEffects, asMath, entryBody, entryError, entryScope, paramsText, sharedDraft, splitVariants, toRewrite } from '../notation-model.js';
+import { colorParams, inferParams, paramGroups, trustParams } from '../notation-params.js';
+
+/** A symbol with its parameters in color: pointing at one says what type of object it stands for. */
+const NotationSymbol = {
+  props: { symbol: String, params: Array },
+  template: `<span class="nt-sym" ref="el"></span>`,
+  mounted() { this.paint(); },
+  beforeUnmount() { clearTimeout(this.retry); },
+  watch: { symbol() { this.paint(); }, params() { this.paint(); } },
+  methods: {
+    paint() {
+      const el = this.$refs.el;
+      if (!el) return;
+      const params = this.params || [];
+      const text = params.length ? `$${colorParams(this.symbol, params)}$` : asMath(this.symbol);
+      el.textContent = text;
+      if (!window.renderMathInElement) { this.retry = setTimeout(() => this.paint(), 400); return; } // KaTeX is loaded with defer
+      window.renderMathInElement(el, { delimiters: [{ left: '$', right: '$', display: false }], throwOnError: false, trust: trustParams });
+      el.querySelectorAll('.oq-pm').forEach((n) => {
+        const i = [...n.classList].map((c) => c.match(/^oq-pm-(\d+)$/)).find(Boolean);
+        const q = i && params[+i[1]];
+        if (q) n.title = `${q.name.replace(/\\math[a-z]+\{(\w)\}/, '$1')}: ${q.type || 'type not stated'}`;
+      });
+    },
+  },
+};
 
 const entryEditor = `<div class="notation-edit">
   <label class="field"><span>Symbol (LaTeX)</span><input v-model="editing.symbol"></label>
   <label class="field"><span>Meaning</span><textarea v-model="editing.meaning" rows="3"></textarea></label>
+  <label v-if="editing.params || inferParams(editing.symbol).length" class="field"><span>Parameters and their types</span><textarea v-model="editing.params" rows="2" placeholder="X, Y: infinite block sequences"></textarea></label>
+  <p v-if="editing.params !== undefined && inferParams(editing.symbol).length" class="muted small">One line per type. The entry then applies to these objects only: the same symbol between other objects keeps its own meaning.</p>
   <label class="field"><span>How sources differ</span><textarea v-model="editing.note" rows="2"></textarea></label>
-  <p v-if="editing.agreed" class="muted small">Changing the symbol or its meaning makes it a proposal again.</p>
+  <p v-if="editing.agreed" class="muted small">Changing the symbol, its meaning or the types makes it a proposal again.</p>
   <div class="row-end"><button class="btn ghost sm" @click="editing = null">Cancel</button><button class="btn primary sm" @click="save">Save</button></div></div>`;
 
-const entryView = (by, actions) => `<div class="notation-symbol"><math-text :text="asMath(e.symbol)"/></div>
+const entryView = (by, actions) => `<div class="notation-symbol"><notation-symbol :symbol="e.symbol" :params="e.params"/></div>
   <div class="notation-body"><rich-content :html="e.meaning_html"/>
+    <div v-if="e.params?.length" class="notation-scope" :class="{untyped: !scopeOf(e).typed}"><span class="scope-label">Applies to</span>
+      <span v-for="g in paramGroups(e.params)" :key="g.type" class="pm-group"><template v-for="(p, j) in g.params" :key="p.name"><span class="pm-name" :class="'pm-' + (p.i % 4)"><math-text :text="'$' + p.name + '$'"/></span>{{ j < g.params.length - 1 ? ', ' : '' }}</template>: <span :class="{'muted': !g.type}">{{ g.type || 'type not stated' }}</span></span>
+      <small v-if="!scopeOf(e).typed" class="scope-hint">Say what they are with Edit: the entry then applies to those objects only, and the same symbol between other objects keeps its meaning.</small>
+      <small v-else class="scope-hint">The same symbol between other objects keeps its own meaning.</small></div>
     <p v-if="e.note_text" class="notation-note"><icon name="lightbulb" :size="13"/> <math-text :text="e.note_text"/></p>
     <template v-for="g in [['instances', 'In particular settings'], ['clashes', 'Other meanings in sources']]" :key="g[0]"><div v-if="splitVariants(e.variants)[g[0]].length" class="notation-variants-group" :class="'g-' + g[0]"><small>{{ g[1] }}</small>
       <ul class="notation-variants"><li v-for="(v, i) in splitVariants(e.variants)[g[0]]" :key="i"><math-text :text="asMath(v.symbol)"/> <span><math-text :text="v.meaning"/></span><small v-if="v.where">{{ v.where }}</small></li></ul></div></template>
     <small v-if="e.facts?.length" class="muted">Defined locally in {{ e.facts.length }} fact{{ e.facts.length > 1 ? 's' : '' }}: <template v-for="(id, i) in e.facts.slice(0, 6)" :key="id"><a :href="link('facts', id)">{{ labels.get(id) || '#' + id }}</a>{{ i < Math.min(e.facts.length, 6) - 1 ? ', ' : '' }}</template><template v-if="e.facts.length > 6">…</template></small>
-    <small class="muted">${by}<template v-if="e.definition_label"> · defined in <a :href="link('facts', e.definition_fact_id)">{{ e.definition_label }}</a></template></small></div>
+    <small class="muted">${by}<template v-if="e.definition_label"> · defined in <a :href="link('facts', e.definition_fact_id)">{{ e.definition_label }}</a></template></small>
+  <details v-if="actionEffects(e).length" class="notation-effects"><summary>What each choice changes</summary>
+    <dl><template v-for="r in actionEffects(e)" :key="r.action"><dt>{{ r.action }}</dt><dd><span class="eff-changes"><math-text :text="r.changes"/></span> <span class="eff-keeps"><b>Unchanged:</b> <math-text :text="r.keeps"/></span></dd></template></dl></details></div>
   <div class="notation-actions"><button class="btn sm" :class="{on: talk === e.id}" :aria-pressed="talk === e.id" :title="e.comment_count ? e.comment_count + ' comment(s)' : 'Discuss this entry'" @click="openTalk(e)"><icon name="comment" :size="13"/> {{ e.comment_count ? e.comment_count : 'Discuss' }}<b v-if="e.open_threads" class="seg-n" title="Open threads">{{ e.open_threads }}</b></button>${actions}</div>`;
 
 /** The project's notation, inside Facts: agreed meanings, proposals, and how far facts follow them. */
 export const NotationPanel = {
-  components: { Kpi, StackBar },
+  components: { Kpi, StackBar, NotationSymbol },
   props: { pid: Number, focus: Number, comment: Number },
   emits: ['mode'],
-  data() { return { d: null, facts: [], draft: { symbol: '', meaning: '', note: '', fact: '' }, editing: null, busy: false, talk: this.comment ? this.focus : null }; },
+  data() { return { d: null, facts: [], draft: { symbol: '', meaning: '', note: '', fact: '', params: '' }, editing: null, busy: false, talk: this.comment ? this.focus : null }; },
   computed: {
     agreed() { return (this.d?.entries || []).filter((e) => e.status === 'agreed'); },
     proposed() { return (this.d?.entries || []).filter((e) => e.status === 'proposed'); },
@@ -55,7 +89,10 @@ export const NotationPanel = {
         onKeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.currentTarget.click(); } } };
     },
     clipMath,
-    timeAgo, link, asMath, splitVariants,
+    timeAgo, link, asMath, splitVariants, actionEffects, paramGroups, inferParams,
+    scopeOf(e) { return entryScope(e); },
+    /** A button's tooltip: what it changes, and what it leaves as it is. */
+    effect(e, action) { const r = actionEffects(e).find((x) => x.action === action); return r ? `${r.changes} Unchanged: ${r.keeps}`.replace(/\$/g, '') : ''; },
     async load() {
       const r = await attempt(() => api.get(`api/projects/${this.pid}/notation`));
       if (!r) return;
@@ -67,9 +104,9 @@ export const NotationPanel = {
       this.busy = true;
       const r = await attempt(() => api.post(`api/projects/${this.pid}/notation`, entryBody(this.draft)), 'Entry proposed');
       this.busy = false;
-      if (r) { this.draft = { symbol: '', meaning: '', note: '', fact: '' }; await this.load(); }
+      if (r) { this.draft = { symbol: '', meaning: '', note: '', fact: '', params: '' }; await this.load(); }
     },
-    edit(e) { this.editing = { id: e.id, symbol: e.symbol, meaning: e.meaning_text, note: e.note_text, fact: e.definition_fact_id || '', agreed: e.status === 'agreed' }; },
+    edit(e) { this.editing = { id: e.id, symbol: e.symbol, meaning: e.meaning_text, note: e.note_text, fact: e.definition_fact_id || '', params: paramsText(e.params || []), agreed: e.status === 'agreed' }; },
     async save() {
       const problem = entryError(this.editing);
       if (problem) return toast(problem, 'error');
@@ -77,7 +114,7 @@ export const NotationPanel = {
       if (r) { this.editing = null; await this.load(); }
     },
     async decide(e, status) {
-      if (status === 'agreed' && e.decided_by_kind !== 'consolidation' && !confirm(`Agree that ${e.symbol} has this meaning in the whole project? Facts are rewritten in this notation when a member asks.`)) return;
+      if (status === 'agreed' && e.decided_by_kind !== 'consolidation' && !confirm(`Agree that ${e.symbol} has this meaning in the project? ${entryScope(e).text.replace(/\$/g, '')} Facts show and are rewritten in this notation; their reviewed text stays as it is.`)) return;
       if (await attempt(() => api.post(`api/notation/${e.id}/status`, { status }), { agreed: 'Agreed', rejected: 'Rejected', proposed: 'Reopened', local: 'Kept local: rewrites unfold it or define it in the fact' }[status])) await this.load();
     },
     openTalk(e) {
@@ -85,11 +122,11 @@ export const NotationPanel = {
       if (this.talk) this.$nextTick(() => this.$el.querySelector?.('.notation-talk')?.scrollIntoView({ block: 'nearest' }));
     },
     fromShared(s) {
-      this.draft = sharedDraft(s);
+      this.draft = { ...sharedDraft(s), params: '' };
       this.$nextTick(() => { const box = this.$el.querySelector('#notation-propose'); box?.scrollIntoView({ block: 'center' }); });
     },
     fromDefinition(x) {
-      this.draft = { symbol: '', meaning: x.statement_text, note: '', fact: x.id };
+      this.draft = { symbol: '', meaning: x.statement_text, note: '', fact: x.id, params: '' };
       this.$nextTick(() => { const box = this.$el.querySelector('#notation-propose'); box?.scrollIntoView({ block: 'center' }); box?.querySelector('input')?.focus(); });
     },
     async remove(e) {
@@ -137,7 +174,7 @@ export const NotationPanel = {
             <div v-if="!agreed.length" class="d-empty">Nothing agreed yet. Agree on a proposal below.</div>
             <article v-for="e in agreed" :key="e.id" class="notation-entry" :data-notation="e.id" :class="{flash: focus === e.id}">
               <template v-if="editing?.id === e.id">${entryEditor}</template>
-              <template v-else>${entryView('<template v-if="e.decided_by_kind === \'consolidation\'"><span class="pill t-neutral"><icon name="sparkles" :size="11"/> Adopted by the consolidation</span> {{ timeAgo(e.decided_at) }}</template><template v-else>Agreed by {{ e.decided_by_name }} {{ timeAgo(e.decided_at) }}</template>', '<button v-if="e.decided_by_kind === \'consolidation\'" class="btn sm endorse" title="Make it the team\'s decision: the consolidation no longer changes it" @click="decide(e, \'agreed\')"><icon name="check" :size="13"/> Confirm</button><button class="btn sm" @click="edit(e)">Edit</button><button class="btn sm" @click="decide(e, \'proposed\')">Reopen</button>')}</template>
+              <template v-else>${entryView('<template v-if="e.decided_by_kind === \'consolidation\'"><span class="pill t-neutral"><icon name="sparkles" :size="11"/> Adopted by the consolidation</span> {{ timeAgo(e.decided_at) }}</template><template v-else>Agreed by {{ e.decided_by_name }} {{ timeAgo(e.decided_at) }}</template>', '<button v-if="e.decided_by_kind === \'consolidation\'" class="btn sm endorse" :title="effect(e, \'Confirm\')" @click="decide(e, \'agreed\')"><icon name="check" :size="13"/> Confirm</button><button class="btn sm" :title="effect(e, \'Edit\')" @click="edit(e)">Edit</button><button class="btn sm" :title="effect(e, \'Reopen\')" @click="decide(e, \'proposed\')">Reopen</button>')}</template>
             </article>
           </section>
           <section class="panel" data-nt="proposed">
@@ -145,7 +182,7 @@ export const NotationPanel = {
             <div v-if="!proposed.length" class="d-empty">No proposal. Ask the AI to compare the facts' notations, or propose one yourself.</div>
             <article v-for="e in proposed" :key="e.id" class="notation-entry" :data-notation="e.id" :class="{flash: focus === e.id}">
               <template v-if="editing?.id === e.id">${entryEditor}</template>
-              <template v-else>${entryView('Proposed by {{ e.author_name }}<template v-if="e.author_kind === \'agent\'"> · {{ e.ai_model }}</template> {{ timeAgo(e.created_at) }}', '<button class="btn sm endorse" @click="decide(e, \'agreed\')"><icon name="check" :size="13"/> Agree</button><button class="btn sm" title="Too specific to be a project symbol: rewrites unfold it or define it within the fact" @click="decide(e, \'local\')">Local</button><button class="btn sm" @click="edit(e)">Edit</button><button class="btn sm" title="Set it aside: not project notation, for example a combination of agreed symbols. Facts keep their own definition, and the AI does not propose it again." @click="decide(e, \'rejected\')">Reject</button>')}</template>
+              <template v-else>${entryView('Proposed by {{ e.author_name }}<template v-if="e.author_kind === \'agent\'"> · {{ e.ai_model }}</template> {{ timeAgo(e.created_at) }}', '<button class="btn sm endorse" :title="effect(e, \'Agree\')" @click="decide(e, \'agreed\')"><icon name="check" :size="13"/> Agree</button><button class="btn sm" :title="effect(e, \'Local\')" @click="decide(e, \'local\')">Local</button><button class="btn sm" :title="effect(e, \'Edit\')" @click="edit(e)">Edit</button><button class="btn sm" :title="effect(e, \'Reject\')" @click="decide(e, \'rejected\')">Reject</button>')}</template>
             </article>
             <details v-if="local.length" class="ai-decided"><summary>Local, defined within facts ({{ local.length }})</summary>
               <p class="muted small">Too specific to be project symbols. A rewrite unfolds them, or defines them within the fact that uses them.</p>
@@ -181,6 +218,8 @@ export const NotationPanel = {
             <label class="field"><span>Symbol (LaTeX)</span><input v-model="draft.symbol" placeholder="\\mathrm{FS}(X)"></label>
             <p v-if="draft.symbol.trim()" class="notation-preview"><math-text :text="asMath(draft.symbol)"/></p>
             <label class="field"><span>Meaning</span><textarea v-model="draft.meaning" rows="3" placeholder="The sums of finitely many elements of $X$, including the empty sum $0$."></textarea></label>
+            <label v-if="inferParams(draft.symbol).length" class="field"><span>What {{ inferParams(draft.symbol).join(', ') }} stand{{ inferParams(draft.symbol).length > 1 ? '' : 's' }} for</span><textarea v-model="draft.params" rows="2" :placeholder="inferParams(draft.symbol).join(', ') + ': infinite block sequences'"></textarea>
+              <small class="muted">The entry applies to these objects only: the same symbol between other objects keeps its own meaning.</small></label>
             <label class="field"><span>How sources differ (optional)</span><textarea v-model="draft.note" rows="2" placeholder="Some papers exclude 0. Here that set is written $\\mathrm{NS}(X)$."></textarea></label>
             <label class="field"><span>Definition fact (optional)</span><select v-model="draft.fact"><option value="">None</option><option v-for="f in definitions" :key="f.id" :value="f.id">{{ f.label }}: {{ f.title }}</option></select></label>
             <button class="btn primary block" :disabled="!!error || busy" @click="propose">Propose</button>

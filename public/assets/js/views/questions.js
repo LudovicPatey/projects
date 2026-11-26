@@ -135,7 +135,7 @@ export const QuestionsView = {
       <button class="link-btn" @click="openLink(0)"><icon name="link" :size="13"/> Link a fact, file or reference</button>
 
       <section class="q-section">
-        <header><h2>Answer <span v-if="pendingAnswers" class="count">{{ pendingAnswers }} to ratify</span></h2><button v-if="!ratifiedAnswer" class="btn sm" @click="newAnswer"><icon name="plus" :size="14"/> Propose an answer</button></header>
+        <header><h2>Answer <span v-if="pendingAnswers" class="count">{{ pendingAnswers }} to ratify</span></h2><button v-if="!ratifiedAnswer" class="btn sm" :title="explain('answer.propose')" @click="newAnswer"><icon name="plus" :size="14"/> Propose an answer</button></header>
         <p v-if="!question.answers.length" class="muted small">No answer proposed. A human or an AI client can propose a positive or negative answer backed by a fact, and a human must ratify it.</p>
         <article v-for="a in shownAnswers" :key="a.id" :data-answer="a.id" class="q-answer" :class="['a-' + a.state, {risk: actions(a).atRisk}]">
           <div class="q-a-head"><span class="q-verdict" :class="a.answer">{{ answerKind[a.answer].short }}</span><b>{{ answerKind[a.answer].label }}</b><state-tag :status="a.state" :map="answerState"/>
@@ -152,9 +152,9 @@ export const QuestionsView = {
             <template v-if="actions(a).review"><button class="btn sm endorse" :class="{on: a.fact.my_review?.verdict === 'correct'}" :aria-pressed="a.fact.my_review?.verdict === 'correct'" @click="toggleEndorse(a)"><icon name="check" :size="14"/> {{ a.fact.my_review?.verdict === 'correct' ? 'Fact endorsed' : 'Endorse fact' }}</button>
             <button class="btn sm deny" :class="{on: a.fact.my_review?.verdict === 'incorrect'}" :aria-pressed="a.fact.my_review?.verdict === 'incorrect'" @click="toggleDeny(a)"><icon name="x" :size="14"/> {{ a.fact.my_review?.verdict === 'incorrect' ? 'Fact denied' : 'Deny fact' }}</button></template>
             <span class="grow"></span>
-            <button v-if="actions(a).withdraw" class="btn ghost sm" @click="withdrawAnswer(a)">Withdraw</button>
-            <button v-if="actions(a).reject" class="btn ghost sm" @click="noteForm = {mode: 'reject', answer: a, text: ''}">Reject</button>
-            <button v-if="actions(a).revoke" class="btn sm" @click="noteForm = {mode: 'revoke', answer: a, text: ''}">Revoke ratification</button>
+            <button v-if="actions(a).withdraw" class="btn ghost sm" :title="explain('answer.withdraw')" @click="withdrawAnswer(a)">Withdraw</button>
+            <button v-if="actions(a).reject" class="btn ghost sm" :title="explain('answer.reject')" @click="noteForm = {mode: 'reject', answer: a, text: ''}">Reject</button>
+            <button v-if="actions(a).revoke" class="btn sm" :title="explain('answer.revoke')" @click="noteForm = {mode: 'revoke', answer: a, text: ''}">Revoke ratification</button>
             <button v-if="a.state === 'proposed'" class="btn primary sm" :disabled="!actions(a).ratify" :title="actions(a).ratify ? 'Accept this answer and close the question' : support[a.support].text" @click="ratify(a)"><icon name="check-circle" :size="14"/> Ratify</button>
           </div>
         </article>
@@ -197,7 +197,7 @@ export const QuestionsView = {
               <li v-for="v in s.revisions" :key="v.id" :class="{now: v.revision_no === s.current_revision, viewing: v.revision_no === viewedRevision}">
                 <div><b>v{{ v.revision_no }}</b> <state-tag :status="v.status" :map="sStatus"/> <span>{{ v.change_note }}</span></div>
                 <div class="muted small">{{ v.author_name }} <ai-meta :model="v.ai_model" :user="v.ai_user_name" :ms="v.ai_generation_ms" compact/> · <span :title="fullDate(v.created_at)">{{ timeAgo(v.created_at) }}</span>
-                  <template v-if="v.revision_no !== s.current_revision"> · <button class="link-btn" @click="viewedRevision = v.revision_no">View</button> · <button class="link-btn" @click="restore(s, v)">Restore</button></template></div>
+                  <template v-if="v.revision_no !== s.current_revision"> · <button class="link-btn" @click="viewedRevision = v.revision_no">View</button> · <button class="link-btn" :title="explain('strategy.restore')" @click="restore(s, v)">Restore</button></template></div>
               </li>
             </ol>
           </div>

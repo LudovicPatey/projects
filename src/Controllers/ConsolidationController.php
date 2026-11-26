@@ -438,7 +438,11 @@ final class ConsolidationController
             throw new HttpError(409, 'This symbol already has an agreed meaning.');
         }
         if ($entry) {
-            $undo = ['entry' => (int)$entry['id'], 'before' => array_intersect_key($entry, array_flip(['status', 'decided_by', 'decided_at', 'auto_suggestion_id']))];
+            $undo = ['entry' => (int)$entry['id'], 'before' => array_intersect_key($entry, array_flip(['status', 'decided_by', 'decided_at', 'auto_suggestion_id', 'params_json']))];
+            // The types of its parameters, when the entry did not say what it applies to.
+            if (($data['params'] ?? []) && !array_filter(json_decode((string)$entry['params_json'], true) ?: [], fn($p) => trim((string)($p['type'] ?? '')) !== '')) {
+                $stamp['params_json'] = json_encode(NotationController::params($data['params']), JSON_UNESCAPED_UNICODE);
+            }
             Db::update('notations', $stamp, 'id = :id', ['id' => $entry['id']]);
             return [['notation_id' => (int)$entry['id']], $undo];
         }
@@ -446,6 +450,7 @@ final class ConsolidationController
         $id = Db::insert('notations', $stamp + [
             'project_id' => $pid, 'symbol' => $data['symbol'], 'symbol_key' => $key, 'meaning_html' => $html($data['meaning']),
             'note_html' => ($data['note'] ?? '') !== '' ? $html($data['note']) : null, 'variants_json' => ($data['variants'] ?? []) ? json_encode($data['variants'], JSON_UNESCAPED_UNICODE) : null,
+            'params_json' => ($data['params'] ?? []) ? json_encode(NotationController::params($data['params']), JSON_UNESCAPED_UNICODE) : null,
             // A local entry applies to the paper of the fact named with it, where it takes precedence over the project's meaning.
             'definition_fact_id' => $status === 'local' ? (int)$s['fact_id'] : null,
             'author_id' => (int)($s['ai_user_id'] ?: $me), 'author_kind' => 'agent', 'ai_model' => $s['ai_model'], 'ai_user_id' => $s['ai_user_id'], 'ai_generation_ms' => $s['ai_generation_ms'], 'created_at' => $now,
@@ -721,6 +726,7 @@ final class ConsolidationController
         $str = fn($k, $max) => mb_substr(trim(is_scalar($n[$k] ?? null) ? (string)$n[$k] : ''), 0, $max);
         $symbol = trim(preg_replace('/^\$+|\$+$/', '', $str('symbol', 160)) ?? '');
         $entry = null;
+        $params = isset($n['params']) && is_array($n['params']) && array_is_list($n['params']) ? NotationController::params($n['params']) : [];
         if (is_numeric($n['entry'] ?? null)) {
             $entry = Db::one('SELECT * FROM notations WHERE id = ? AND project_id = ?', [(int)$n['entry'], $pid]);
             if (!$entry) throw new HttpError(422, 'Unknown notation entry: ' . (int)$n['entry']);
@@ -734,7 +740,7 @@ final class ConsolidationController
         if ($entry) {
             if (self::personDecided($entry)) throw new HttpError(422, "A person decided {$entry['symbol']}: the consolidation leaves it.");
             if ($entry['status'] === ['adopt' => 'agreed', 'local' => 'local', 'reject' => 'rejected'][$action]) throw new HttpError(422, "{$entry['symbol']} is already " . $entry['status'] . '.');
-            return ['action' => $action, 'entry' => (int)$entry['id'], 'symbol' => $entry['symbol'], 'meaning' => mb_substr(Sanitizer::toText((string)$entry['meaning_html']), 0, 1000)];
+            return ['action' => $action, 'entry' => (int)$entry['id'], 'symbol' => $entry['symbol'], 'meaning' => mb_substr(Sanitizer::toText((string)$entry['meaning_html']), 0, 1000), 'params' => $params];
         }
         if ($action === 'reject') throw new HttpError(422, 'Name in "entry" the notation entry to reject.');
         $meaning = $str('meaning', 4000);
@@ -746,7 +752,7 @@ final class ConsolidationController
             if ($vs('symbol', 160) === '' || $vs('meaning', 1000) === '') continue;
             $variants[] = ['symbol' => $vs('symbol', 160), 'meaning' => $vs('meaning', 1000), 'where' => $vs('where', 300), 'relation' => ($v['relation'] ?? '') === 'instance' ? 'instance' : 'clash'];
         }
-        return ['action' => $action, 'entry' => null, 'symbol' => $symbol, 'meaning' => $meaning, 'note' => $str('note', 2000), 'variants' => $variants];
+        return ['action' => $action, 'entry' => null, 'symbol' => $symbol, 'meaning' => $meaning, 'note' => $str('note', 2000), 'variants' => $variants, 'params' => $params];
     }
 
     /** A fact named by its id or its label. */

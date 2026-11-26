@@ -132,7 +132,7 @@ export const AiView = {
                 <p>{{ s.reason_text }}</p>
                 <div class="ai-sugg-meta"><a v-if="suggestionLink(s)" :href="suggestionLink(s).href" target="_blank" rel="noopener noreferrer">{{ suggestionLink(s).label }} ↗</a><span class="badge ai">{{ s.ai_model }}</span><span v-if="s.ai_user_name">via {{ s.ai_user_name }}</span></div>
               </div>
-              <div class="ai-sugg-actions"><button class="btn sm primary" @click="decide(s, 'accept')"><icon name="check" :size="13"/> Accept</button><button class="btn sm" @click="decide(s, 'reject')">Reject</button></div>
+              <div class="ai-sugg-actions"><button class="btn sm primary" :title="explain('suggestion.accept')" @click="decide(s, 'accept')"><icon name="check" :size="13"/> Accept</button><button class="btn sm" :title="explain('suggestion.reject')" @click="decide(s, 'reject')">Reject</button></div>
             </article>
             <div v-if="!proposed.length" class="d-empty">Nothing to validate.</div>
             <details v-if="autoAdded.length" class="ai-decided" open><summary>Added automatically ({{ autoAdded.length }})</summary>
@@ -185,7 +185,7 @@ export const AiView = {
               <div v-if="task.ai_generation_ms"><dt>Time</dt><dd>{{ (task.ai_generation_ms / 1000).toFixed(0) }} s</dd></div>
               <div v-if="task.attempts"><dt>Attempts</dt><dd>{{ task.attempts }}</dd></div>
             </dl>
-            <div class="row-gap"><button v-if="actions.retry" class="btn sm" @click="act('retry')">Try again</button><button v-if="actions.cancel" class="btn sm danger" @click="act('cancel')">Cancel</button></div>
+            <div class="row-gap"><button v-if="actions.retry" class="btn sm" :title="explain('task.retry')" @click="act('retry')">Try again</button><button v-if="actions.cancel" class="btn sm danger" :title="explain('task.cancel')" @click="act('cancel')">Cancel</button></div>
           </section>
           <section class="panel ai-form">
             <header class="ai-head"><h2><icon name="plus" :size="15"/> New request</h2></header>
@@ -194,11 +194,11 @@ export const AiView = {
             </div>
             <p class="ai-hint">{{ kinds[draft.kind].hint }}</p>
             <label v-if="draft.kind === 'extract'" class="field"><span>File, reference or conversation</span><select v-model="draft.document"><option value="">Choose…</option><optgroup v-if="documents.length" label="Files"><option v-for="f in documents" :key="f.id" :value="f.id">{{ f.title }}</option></optgroup><optgroup v-if="references.length" label="References with a PDF"><option v-for="b in references" :key="b.id" :value="'bib:' + b.id">{{ b.title }}</option></optgroup><optgroup v-if="conversations.length" label="Your conversations"><option v-for="c in conversations" :key="c.id" :value="'conv:' + c.id">{{ c.subject }}{{ c.private ? ' (private)' : '' }}</option></optgroup></select></label>
-            <button v-if="draft.kind === 'extract' && bib.toQueue" class="btn block" @click="extractAll"><icon name="sparkles" :size="14"/> Extract all {{ bib.toQueue }} remaining reference PDFs</button>
+            <button v-if="draft.kind === 'extract' && bib.toQueue" class="btn block" :title="explain('bib.extract')" @click="extractAll"><icon name="sparkles" :size="14"/> Extract all {{ bib.toQueue }} remaining reference PDFs</button>
             <label v-if="kinds[draft.kind].needs === 'fact'" class="field"><span>Fact</span><select v-model="draft.fact"><option value="">Choose…</option><option v-for="f in facts" :key="f.id" :value="f.id">{{ f.label }}: {{ f.title }}</option></select></label>
             <label v-if="draft.kind === 'derive'" class="field"><span>Toward a question (optional)</span><select v-model="draft.question"><option value="">The whole project</option><option v-for="q in questions" :key="q.id" :value="q.id">{{ q.title }}</option></select></label>
             <label class="field"><span>{{ draft.kind === 'ask' ? 'Your question' : 'Instructions (optional)' }}</span><textarea v-model="draft.prompt" rows="3" maxlength="4000" :placeholder="draft.kind === 'bib' ? 'For example: work on sunflower bounds since 2019' : ''"></textarea></label>
-            <button class="btn primary block" :disabled="!!error || busy" @click="send">Add to the queue</button>
+            <button class="btn primary block" :disabled="!!error || busy" :title="explain('task.send')" @click="send">Add to the queue</button>
             <p class="ai-note">The next member's AI client to run will process it, with the model that member chose for this work.</p>
           </section>
         </aside>

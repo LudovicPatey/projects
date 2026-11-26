@@ -52,7 +52,7 @@ export const BibView = {
       <div class="bib-progress-row"><span>Facts extracted</span><b>{{ progress.extracted }} / {{ progress.with_pdf }}</b></div>
       <div class="progress" role="progressbar" :aria-valuenow="progress.extractedPercent" aria-valuemin="0" aria-valuemax="100" aria-label="PDFs with extracted facts"><div :style="{width: progress.extractedPercent + '%'}"></div></div>
       <div class="bib-progress-foot"><small><template v-if="progress.queued">{{ progress.queued }} queued</template><template v-if="progress.queued && progress.failed"> · </template><template v-if="progress.failed">{{ progress.failed }} failed</template><template v-if="progress.new_comments"><template v-if="progress.queued || progress.failed"> · </template>{{ progress.new_comments }} with new comments</template></small>
-        <button v-if="progress.toQueue" class="btn sm" :disabled="extractingAll" @click="extractAll"><icon name="sparkles" :size="13"/> Extract {{ progress.toQueue }} remaining</button></div>
+        <button v-if="progress.toQueue" class="btn sm" :disabled="extractingAll" :title="explain('bib.extract')" @click="extractAll"><icon name="sparkles" :size="13"/> Extract {{ progress.toQueue }} remaining</button></div>
     </section>
     <div class="col-tools">
       <div class="search"><icon name="search" :size="15"/><input v-model="search" placeholder="Search key, title, author…"></div>
@@ -122,8 +122,8 @@ export const BibView = {
       </template>
       <div v-if="tab==='bibtex'" class="pad scroll">
         <textarea class="bibtex-edit" v-model="editBib" spellcheck="false"></textarea>
-        <div class="row-end"><button class="btn ghost" @click="editBib = entry.bibtex">Reset</button>
-          <button class="btn primary" @click="saveBibtex">Save BibTeX</button></div>
+        <div class="row-end"><button class="btn ghost" :title="explain('bib.reset')" @click="editBib = entry.bibtex">Reset</button>
+          <button class="btn primary" :title="explain('bib.saveBibtex')" @click="saveBibtex">Save BibTeX</button></div>
       </div>
       <div v-if="tab==='links'" class="pad scroll">
         <div v-if="!backlinks.length" class="empty">This reference has not been @mentioned yet.</div>
