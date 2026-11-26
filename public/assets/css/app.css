@@ -320,6 +320,9 @@ h1 { font-size: 24px; } h2 { font-size: 16px; } h3 { font-size: 15px; } h4 { fon
 .mention { display: inline-flex; padding: 0 5px; border-radius: 4px; font-weight: 600; font-size: .95em; background: var(--accent-2); color: var(--accent); cursor: pointer; line-height: 1.4; }
 .mention.me { background: #fde68a; color: #78350f; }
 .rich .mention:hover { filter: brightness(.95); }
+/* A fact a text names the way its paper does ("Lemma 2.4"): a quiet link, with its preview card on hover. */
+.rich a.fact-ref { color: var(--accent); text-decoration: underline dotted; text-underline-offset: 3px; font-weight: 550; }
+.rich a.fact-ref:hover, .rich a.fact-ref:focus-visible { text-decoration-style: solid; }
 
 /* ----- Quill editor ----- */
 .rte { position: relative; background: #fff; border-radius: 7px; }

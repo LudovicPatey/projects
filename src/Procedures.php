@@ -71,8 +71,11 @@ TXT,
         'notation_rephrase' => <<<'TXT'
 TASK: write the fact in "fact" in task.json again in the project's agreed notation, listed in "notation".
 The fact comes from a source with its own conventions: its "glossary" and the quotations in "sources" tell what its symbols mean there.
-For each symbol, decide what it means in this fact. Rewrite it when the agreed notation gives that symbol another meaning, or writes this notion
-with another symbol. The members' "comments" on an entry explain its use: follow them. An entry with "status": "local" is not a project symbol:
+For each symbol, decide what it means in this fact. Rewrite it when the agreed notation writes this notion with another symbol. When the
+agreed notation gives that symbol another meaning, rename it, unless the fact's field writes it this way as a standard, such as Feferman's
+$(\mu)$ in higher-order reverse mathematics while the project's $\mu(n)$ is a binary exponent: then keep it, and define it in
+"local_notation", which takes precedence over the project's meaning in this fact. A symbol whose meaning differs from the project's is never
+left undefined. The members' "comments" on an entry explain its use: follow them. An entry with "status": "local" is not a project symbol:
 unfold it, or define it within the statement, for example "where $B \oplus C$ denotes $B \cup C$ with $\max B < \min C$".
 An entry whose "variants" are instances is one general notion: a fact working in one of these settings keeps using it, without renaming it.
 An entry whose name ends with a setting in parentheses, such as "full-match (HT)", is the meaning of the term in that setting. Use the entry of
@@ -120,7 +123,8 @@ symbols the rewrite defines for itself ("rewrite.local_notation").
 Answer "faithful" when a careful mathematician reading both finds the same result and the same proof. Changes of wording, order or
 layout are faithful. Answer "unfaithful" when anything mathematical changed: a convention (finite sums with or without 0, a set of
 numbers starting at 0 or 1), a hypothesis lost or added, a weaker or stronger conclusion, a project symbol whose meaning differs from what
-the original meant, a step of the proof dropped or changed. In "note", for an unfaithful rewrite, say precisely what changed, quoting
+the original meant, a step of the proof dropped or changed. A symbol the rewrite keeps with its field's meaning, while the project gives it
+another, is faithful when "rewrite.local_notation" defines it with the original's meaning; left undefined, it is unfaithful. In "note", for an unfaithful rewrite, say precisely what changed, quoting
 both; for a faithful one, an empty string or a short remark. Answer in "checks", one entry per rewrite with its "rewrite_id". Leave out
 a rewrite you cannot judge, rather than guess. An unfaithful rewrite is not shown, and the original stays as it is.
 TXT,
@@ -173,8 +177,10 @@ the ids it "depends_on", its "topics", its "status" and whether it is already "w
   "action" "adopt" makes an entry the project's notation: name an entry that is still proposed in "entry", or leave "entry" null and
   write a new one ("symbol" in LaTeX without dollars, "meaning" as a precise definition with $...$, "note" saying how sources differ or
   an empty string, "variants" listing the other spellings and meanings found, each with "where" and "relation": "instance" for the same
-  notion in a particular setting, "clash" for a different meaning). "local" keeps a proposed entry out of the project's notation: too
-  specific, each fact defines it. "reject" sets aside a proposed entry that should not be used. In "fact", name a fact that defines or
+  notion in a particular setting, "clash" for a different meaning). "local" keeps an entry out of the project's notation: too
+  specific, each fact defines it, or the standard symbol of one paper or field whose meaning clashes with an adopted entry, such as
+  Kreuzer's $(\mu)$ beside the project's $\mu(n)$. A local entry applies to its defining fact and the facts of the same paper, where it
+  takes precedence over the project's meaning: name its defining fact in "fact". "reject" sets aside a proposed entry that should not be used. In "fact", name a fact that defines or
   uses the symbol. One symbol per proposal, at most 30. Never propose a change to an entry whose "decided_by" is "person".
   When sources disagree, choose: the most common convention of the literature, and another symbol for a meaning that also matters,
   for example FS(X) including 0 and NS(X) without it. Do not leave notation to people: a wrong choice is cheap, it can be undone, and

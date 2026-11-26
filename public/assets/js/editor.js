@@ -7,6 +7,7 @@ import { escapeHtml, markTerms } from './util.js';
 import { mentionMatches, mentionQuery } from './questions-model.js';
 import { askAiPrefix, offersAskAi } from './ai-model.js';
 import { notationMarker, trustMarks } from './notation-marks.js';
+import { linkFactRefs } from './fact-refs.js';
 
 const Embed = Quill.import('blots/embed');
 
@@ -233,7 +234,7 @@ function showNotation(target, entry) {
   p.innerHTML = '';
   const head = document.createElement('div'); head.className = 'nt-pop-head';
   const sym = document.createElement('span'); sym.className = 'nt-pop-sym'; sym.textContent = `$${String(entry.symbol).replace(/^\$+|\$+$/g, '')}$`;
-  const from = document.createElement('span'); from.className = 'nt-pop-from'; from.textContent = entry.source === 'project' ? 'Project notation' : 'Defined in this fact';
+  const from = document.createElement('span'); from.className = 'nt-pop-from'; from.textContent = { project: 'Project notation', paper: 'Notation of its paper' }[entry.source] || 'Defined in this fact';
   head.append(sym, from);
   const body = document.createElement('div'); body.className = 'nt-pop-body';
   if (entry.meaning_html) body.innerHTML = entry.meaning_html; // sanitized by the server, like every rich text shown
@@ -277,7 +278,8 @@ export const MathText = {
 /** Displays sanitized rich text coming from the server. */
 export const RichContent = {
   // notation: entries {symbol, meaning or meaning_html, source} whose uses in formulas are marked, with their meaning on hover.
-  props: { html: String, notation: Array },
+  // factRefs: facts the text names the way its paper does, {text: "Lemma 2.4", fact_id}, linked with a preview on hover.
+  props: { html: String, notation: Array, factRefs: Array },
   template: `<div class="rich" v-html="html" @click="onClick" @keydown.enter="onClick" @keydown.esc="onEscape" @mouseover="onHover" @mouseout="onLeave" @focusin="onHover" @focusout="onLeave"></div>`,
   mounted() { this.decorate(); },
   beforeUnmount() { hideNotation(); },
@@ -285,6 +287,7 @@ export const RichContent = {
     html() { this.$nextTick(() => this.decorate()); },
     // The formulas were rendered with the previous notation: render them again from the stored text.
     notation(now, before) { if (JSON.stringify(now) !== JSON.stringify(before)) { this.$el.innerHTML = this.html || ''; this.$nextTick(() => this.decorate()); } },
+    factRefs(now, before) { if (JSON.stringify(now) !== JSON.stringify(before)) { this.$el.innerHTML = this.html || ''; this.$nextTick(() => this.decorate()); } },
   },
   methods: {
     decorate() {
@@ -294,7 +297,7 @@ export const RichContent = {
         if (n.dataset.type === 'user' && +n.dataset.id === store.user?.id) n.classList.add('me');
       });
       hydrateChips(el);
-      const paint = () => { renderMath(el, this.notation?.length ? notationMarker(this.notation) : null); this.markNotation(); };
+      const paint = () => { renderMath(el, this.notation?.length ? notationMarker(this.notation) : null); this.markNotation(); linkFactRefs(el, this.factRefs, store.project?.id); };
       if (window.renderMathInElement) paint();
       else setTimeout(paint, 500); // KaTeX is loaded with defer
     },

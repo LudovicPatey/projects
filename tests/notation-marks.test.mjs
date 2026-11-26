@@ -39,9 +39,19 @@ test('what the fact defines for itself comes first, and replaces the project sym
   assert.deepEqual(list.map((e) => [e.symbol, e.source]), [['FS(X)', 'fact'], ['\\mathrm{FIN}', 'project']]);
 });
 
+test('a local entry of the fact\'s paper replaces the project symbol of the same name: Kreuzer\'s (\\mu) is not the binary exponent', () => {
+  assert.equal(notationKey('(\\mu)'), notationKey('\\mu(n)'), 'an axiom named after its symbol is that symbol');
+  const list = factNotation([], [{ id: 1, symbol: '\\mu(n)', meaning_html: 'largest binary exponent' }, { id: 2, symbol: '\\mathrm{FIN}', meaning_html: 'finite sets' }], [{ id: 3, symbol: '(\\mu)', meaning_html: 'Feferman' }]);
+  assert.deepEqual(list.map((e) => [e.symbol, e.source]), [['(\\mu)', 'paper'], ['\\mathrm{FIN}', 'project']]);
+  const marked = notationMarker(list).preProcess('\\mathsf{ACA}_0+(\\mu)+f(\\mu(f))');
+  assert.equal(marked, '\\mathsf{ACA}_0+(\\htmlClass{oq-nt oq-nt-0}{\\mu})+f(\\htmlClass{oq-nt oq-nt-0}{\\mu}(f))', 'every \\mu with the paper\'s meaning');
+  const own = factNotation([['\\mu', 'defined here']], [], [{ id: 3, symbol: '(\\mu)', meaning_html: 'Feferman' }]);
+  assert.deepEqual(own.map((e) => e.source), ['fact'], 'what the fact defines itself still comes first');
+});
+
 test('every text of a fact is marked, and its page receives the agreed notation only', async () => {
   const view = fs.readFileSync('public/assets/js/views/facts.js', 'utf8');
-  for (const part of ['shown(statementHtml)', 'shown(proofHtml)', 'shown(p.body_html)', 'shown(content.intuition_html)']) assert.ok(view.includes(`<rich-content :html="${part}" :notation="notationMarks"/>`), part);
+  for (const part of ['shown(statementHtml)', 'shown(proofHtml)', 'shown(p.body_html)', 'shown(content.intuition_html)']) assert.ok(view.includes(`<rich-content :html="${part}" :notation="notationMarks" :fact-refs="fact.text_refs"/>`), part);
   app = await startApp();
   const ann = await app.signIn('0000-0002-1825-0097');
   const pid = (await app.call(ann, 'POST', '/api/projects', { title: 'Marks', question_html: '<p>Q</p>' })).data.id;
@@ -53,4 +63,18 @@ test('every text of a fact is marked, and its page receives the agreed notation 
   const f = (await app.call(ann, 'GET', `/api/facts/${fid}`)).data;
   assert.deepEqual(f.notation.map((n) => n.symbol), ['\\mathrm{FIN}'], 'a proposal is not marked');
   assert.match(f.notation[0].meaning_html, /nonempty finite subsets/);
+});
+
+test('a local entry applies to its defining fact and the facts of the same paper, not to other papers', async () => {
+  const ann = await app.signIn('0000-0002-1825-0097');
+  const pid = (await app.call(ann, 'POST', '/api/projects', { title: 'Local', question_html: '<p>Q</p>' })).data.id;
+  const key = { token: (await app.call(ann, 'POST', '/api/me/keys', { name: 'k' })).data.token };
+  const bib = async (t) => (await app.call(ann, 'POST', `/api/projects/${pid}/bib`, { fields: { title: t, author: 'Doe, J.', year: '2020' }, cite_key: t })).data.created[0];
+  const kreuzer = await bib('kreuzer'); const carlucci = await bib('carlucci');
+  const F = (ref, b) => ({ ref, title: ref, kind: 'lemma', labels: ['conclusion'], method: 'extracted', statement_text: `$(\\mu)$ ${ref}.`, proof_text: 'P.', sources: [{ type: 'bib', id: b, quote: ref, covers: 'statement' }] });
+  const ids = Object.fromEntries((await app.call(key, 'POST', `/api/projects/${pid}/facts/batch`, { format: 'native', ai_model: 'm', facts: [F('def', kreuzer), F('same', kreuzer), F('other', carlucci)] })).data.created.map((x) => [x.ref, x.id]));
+  const local = (await app.call(ann, 'POST', `/api/projects/${pid}/notation`, { symbol: '(\\mu)', meaning_text: 'Feferman\'s functional exists.', definition_fact_id: ids.def })).data;
+  assert.equal((await app.call(ann, 'POST', `/api/notation/${local.id}/status`, { status: 'local' })).status, 200);
+  const get = async (k) => (await app.call(ann, 'GET', `/api/facts/${ids[k]}`)).data.local_entries.map((e) => e.symbol);
+  assert.deepEqual(await get('def'), ['(\\mu)']); assert.deepEqual(await get('same'), ['(\\mu)']); assert.deepEqual(await get('other'), []);
 });

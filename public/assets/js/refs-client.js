@@ -104,7 +104,7 @@ export const RefPreview = {
   },
   mounted() {
     this.over = (e) => {
-      const chip = e.target.closest?.('.rich .mention[data-type]');
+      const chip = e.target.closest?.('.rich .mention[data-type], .rich .fact-ref[data-type]');
       if (chip) { clearTimeout(this.hideT); clearTimeout(this.showT); this.showT = setTimeout(() => this.show(chip), e.type === 'focusin' ? 0 : 220); return; }
       if (e.target.closest?.('.ref-card')) { clearTimeout(this.hideT); return; }
       clearTimeout(this.showT);

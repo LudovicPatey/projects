@@ -210,6 +210,31 @@ final class NotationController
             Db::all("SELECT * FROM notations WHERE project_id = ? AND status " . ($agreedOnly ? ($withLocal ? "IN ('agreed', 'local')" : "= 'agreed'") : "<> 'rejected'") . ' ORDER BY symbol_key LIMIT 300', [$pid]));
     }
 
+    /**
+     * The local entries that apply to a fact: kept out of the project notation, they still say what a symbol means in the facts
+     * that use it, those of the paper that defines it. One applies to its defining fact, to the facts it lists, and to the facts
+     * found in the same sources as its defining fact. On that fact's page, it goes before an agreed entry of the same symbol:
+     * Kreuzer's $(\mu)$ is Feferman's functional there, even though the project's $\mu(n)$ is a binary exponent.
+     * @return list<array{id: int, symbol: string, meaning_html: string}>
+     */
+    public static function localFor(int $pid, int $fid): array
+    {
+        $out = [];
+        $sourcesOf = fn(int $id) => array_map(fn($x) => $x['source_type'] . ':' . $x['source_id'], Db::all("SELECT s.source_type, s.source_id FROM fact_sources s
+            JOIN facts f ON f.id = s.fact_id AND s.revision_no = f.current_revision WHERE s.fact_id = ? AND s.covers <> 'context' AND s.source_type IN ('bib', 'document')", [$id]));
+        $mine = null;
+        foreach (Db::all("SELECT id, symbol, meaning_html, facts_json, definition_fact_id FROM notations WHERE project_id = ? AND status = 'local' ORDER BY id", [$pid]) as $n) {
+            $def = (int)$n['definition_fact_id'];
+            $applies = $def === $fid || in_array($fid, array_map('intval', json_decode((string)$n['facts_json'], true) ?: []), true);
+            if (!$applies && $def) {
+                $mine ??= $sourcesOf($fid);
+                $applies = $mine && array_intersect($mine, $sourcesOf($def));
+            }
+            if ($applies) $out[] = ['id' => (int)$n['id'], 'symbol' => $n['symbol'], 'meaning_html' => $n['meaning_html']];
+        }
+        return $out;
+    }
+
     /** Who decided an entry: nobody yet, the consolidation on its own, or a person (also when a person accepted the consolidation's proposal). */
     public static function decidedBy(array $n): ?string
     {

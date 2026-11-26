@@ -6,7 +6,8 @@ const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /** The name of a symbol, without its arguments: FS(X) is written FS(H) as well, and \mathrm{FU}(B_n) is FU. */
 function head(symbol) {
-  const s = String(symbol || '').trim().replace(/^\$+|\$+$/g, '').trim();
+  // An axiom named after its symbol, such as (\mu) for the existence of Feferman's \mu, is that symbol.
+  const s = String(symbol || '').trim().replace(/^\$+|\$+$/g, '').trim().replace(/^\(\s*(\\[A-Za-z]+)\s*\)$/, '$1');
   return s.replace(/\s*[(_^].*$/s, '').trim() || s;
 }
 
@@ -74,11 +75,14 @@ export function notationMarker(entries) {
 export const trustMarks = (ctx) => ctx.command === '\\htmlClass' && /^oq-nt oq-nt-\d+$/.test(ctx.class || '');
 
 /**
- * The entries a fact's text is marked with: what the fact defines for itself first, then the agreed project notation
- * for the symbols it does not define itself.
+ * The entries a fact's text is marked with: what the fact defines for itself first, then the local entries of its paper
+ * (a symbol the field writes its own way, kept out of the project notation), then the agreed project notation for the
+ * symbols neither defines. A fact may so use a standard symbol that the project gives another meaning.
  */
-export function factNotation(local, project) {
+export function factNotation(local, project, paper = []) {
   const own = (local || []).map(([symbol, meaning]) => ({ symbol, meaning: String(meaning ?? ''), source: 'fact' }));
   const mine = new Set(own.map((x) => notationKey(x.symbol)));
-  return [...own, ...(project || []).filter((e) => !mine.has(notationKey(e.symbol))).map((e) => ({ symbol: e.symbol, meaning_html: e.meaning_html, source: 'project', id: e.id }))];
+  const theirs = (paper || []).filter((e) => !mine.has(notationKey(e.symbol))).map((e) => ({ symbol: e.symbol, meaning_html: e.meaning_html, source: 'paper', id: e.id }));
+  theirs.forEach((e) => mine.add(notationKey(e.symbol)));
+  return [...own, ...theirs, ...(project || []).filter((e) => !mine.has(notationKey(e.symbol))).map((e) => ({ symbol: e.symbol, meaning_html: e.meaning_html, source: 'project', id: e.id }))];
 }

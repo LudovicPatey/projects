@@ -1,7 +1,7 @@
 {
  "min_version": "1.0.0",
  "client_version": "1.20.0",
- "fingerprint": "f3f120a17a90dba26005f45a88b4879d0ac57868e17a3a9b66ffa1404d4eb2af",
+ "fingerprint": "33477d0899b61272bca9367a75c75e7d34f89d22ca8972393fabb5b23d1dd996",
  "routes": [
   "GET /api/ai/procedures AiTaskController::procedures",
   "GET /api/bib/{id}/pdf BibController::pdf",
@@ -211,7 +211,7 @@
   "ConsolidationController::list": "c0302eb0a40f0f6a101c4d9c8a88e12048f09ae56c7c64891db3a77a9f8c6528",
   "ConsolidationController::live": "0af99775dcce67c8c9abe6f186c07409b2f9f18c0f9fc5f759e5941de95cac46",
   "ConsolidationController::merge": "8e3e390c3a1236f61e318b1bcb2804de572a2d680834d8c28d8993858e8308d4",
-  "ConsolidationController::notation": "b75c82ef200ac404e3b616e53476f37c39a21df5a08b1dbf2a20ff0ab4ec2604",
+  "ConsolidationController::notation": "dada2322073114ccf69433f01d6ab60e8f685eb29f0baf7eb6f76e37b215a817",
   "ConsolidationController::obsolete": "755516d8c41502a54bc937441e83c58e7dfcbc81a21b8326de48c533b4d96ed8",
   "ConsolidationController::personDecided": "b783ecbe98bae829b6ecf932fe6b39798a5eeb4a25408a561d9f476ac4da8631",
   "ConsolidationController::present": "1a87ef4d2ddd26041af80366bd5a0cdcf1bbefa4484f7973bd14a4226456a52e",
@@ -306,7 +306,7 @@
   "FactController::mark": "6554dddf62eca896dfe6281495800123430af16cfd3f57563cdd3d52afd17c4e",
   "FactController::notifyMentions": "815bedeb8165cf7198bf00f6b60bf31748671febeb28d1442a72e420dbf7567d",
   "FactController::order": "e2261ef07490b848925439c25b3c143f618ab44d84cb5d0c5f75935d1da55acd",
-  "FactController::present": "42e41cb04ede795849f0a714ce3dec2f0dbdd24db0f6cbbd4e7b573dab0ec8a6",
+  "FactController::present": "ab02c1e8f26dc1e44d06901f27cdbc059134c65ecb3a8a578d9b819794fe848e",
   "FactController::presentSources": "517d072f6729ce1c3f5b709c4fb3ed3a279781cc921b6c042e633ed5a7af603a",
   "FactController::proof": "d7e3d8c35694e57b80ffe49a074be6df196d3cb67dfbcc5a60f7bc8e212d2f1c",
   "FactController::proposeProof": "5fac4e0914d1988066dda73e48a190264f969627db75b7de0afdbf38ade18953",
@@ -330,6 +330,13 @@
   "FactKind::PRIORITY": "973c58ba930cbdd83f3cc0cbb71a346ba3606bfaa0854a6852ca7feaaf24aae3",
   "FactKind::of": "6c9426190c4849802ccb0febd1b361fb60772b47bfa568e2461327cc377acac4",
   "FactMigration::repairRefs": "46c970e93573e5ef774a30d26e02cac04476d7ab20d1d03dab3bb9d4d1f81d96",
+  "FactRefs::PREFIX": "89833d096974f9819c14f2ff3571a765d5ba2f726b048c5fcb4828b28f7f05d3",
+  "FactRefs::WORDS": "58041966e21203666184e79f454a6117e280d5cba9bb03e77d01cda1892a36a1",
+  "FactRefs::has": "b317cce4414191476b4830ebbcc6ec9403e9d5a3fa3e73326d7f8b6c52a2103b",
+  "FactRefs::names": "41808a12a54d863acf14fd270a054408bfa15fd1b3f9fb47b71fe2a898d4d2aa",
+  "FactRefs::numbers": "870928f6cb2562aa6816bda4bfba72016564829fcc3cf5556bbec2bfcd8e0c32",
+  "FactRefs::pattern": "ca67d5c52c28a34975887d8307ac342403572e2257653dcd82bcfcef7d739d69",
+  "FactRefs::resolve": "cddf44fe16deaf0aa9990852a22dc579a4ef6562dd07c019a12c144df6fd9486",
   "ModelOrder::CLAUDE_TIERS": "39e34628b01b2c1ff2580fec6c25a71a81ca5fd11c53df4da6bbd6fe3b42f67f",
   "ModelOrder::atLeast": "d82efbf0a2c4ae3db584365616703f6bc4441c79c260f29a8cc7905d93813580",
   "ModelOrder::covered": "c7d8d6a042d857b10e5a531098f4f6d8fb24a0cb0d22ddaba142330fabfa1029",
@@ -350,6 +357,7 @@
   "NotationController::isProofVariable": "123de275951aa6bbde9309700f854268bbf60a60e3dddcd82a8b55906689476f",
   "NotationController::key": "5a9316d22ecabb2fc5424251872a380862fd040b2d583566b09ee9101dfedd18",
   "NotationController::list": "fbecc3f6cd4de3fc0a92ba806931e4b860bb82814e5a0dd29a1def4b0022a3ce",
+  "NotationController::localFor": "764a54a08d98ac7e9cf60acfabb6e0638f025253937f319c30742500854d7d0c",
   "NotationController::localNotation": "b0ff351e3cc94d7c7c42ca07486b3f625970bbc5157fe86bfa18c64680bc8eca",
   "NotationController::notionKey": "16c9c69af52bfb341fc86080b694f3ea95fcf6e1846e4e8649dc3f0843ec3bb4",
   "NotationController::one": "7c12bf6f8b7c8fa7376b1897e410444ae1e1cdeb7a3f62bb1a9ebf4de5f2d86b",
@@ -367,7 +375,7 @@
   "Notify::mentions": "87e12b1918ae6b9f84992280147d662e5dc4a5fff01d5418c4f370b99106da23",
   "Notify::send": "49a37c414cc94840696f77cfb49f21cc9ee4bfed2c9785504b4ab0825b71d7fe",
   "Procedures::CAPABILITIES": "4dce42bbadf21b695afcf974783a43c20da9c3e58306e6347d7f13d1e61f5e30",
-  "Procedures::INSTRUCTIONS": "7626bddbd312641c18d7f8ee566b7839fe52764db48b9c7f27ba6c6c6ef10659",
+  "Procedures::INSTRUCTIONS": "ddf6189dedcf80f60c257342f634ce91c2027104b490dcea349bcc6e26698f9c",
   "Procedures::REQUEST_NOTE": "24b0a276d5999286c5ee3500049fb549cab02c47210fcc847ff3fd0c652e1b6a",
   "Procedures::SCHEMAS": "8dfa5206b832aac1cbdabaa344c50c1579766426d92a3bd59f210e67a10a1b81",
   "Procedures::apply": "c9a40a410893046a53b86a5984d1f3db499fe76c21c9dfe4523afb89644f9403",
@@ -1117,6 +1125,36 @@
     "+Sweeps::SECOND_BATCH",
     "+Sweeps::checkCandidates",
     "+Sweeps::secondCandidates"
+   ]
+  },
+  {
+   "date": "2026-11-26",
+   "decision": "compatible",
+   "client_version": "1.20.0",
+   "min_version": "1.0.0",
+   "note": "GET /api/facts/{id} gains text_refs, an extra field clients ignore; nothing they send changes.",
+   "changed": [
+    "FactController::present",
+    "+FactRefs::PREFIX",
+    "+FactRefs::WORDS",
+    "+FactRefs::has",
+    "+FactRefs::names",
+    "+FactRefs::numbers",
+    "+FactRefs::pattern",
+    "+FactRefs::resolve"
+   ]
+  },
+  {
+   "date": "2026-11-26",
+   "decision": "compatible",
+   "client_version": "1.20.0",
+   "min_version": "1.0.0",
+   "note": "GET /api/facts/{id} gains local_entries and text_refs, extra fields; rewrite and consolidation instructions now allow a field's standard symbol kept with a local definition. Nothing clients send changes.",
+   "changed": [
+    "ConsolidationController::notation",
+    "FactController::present",
+    "Procedures::INSTRUCTIONS",
+    "+NotationController::localFor"
    ]
   }
  ]

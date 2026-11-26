@@ -446,6 +446,8 @@ final class ConsolidationController
         $id = Db::insert('notations', $stamp + [
             'project_id' => $pid, 'symbol' => $data['symbol'], 'symbol_key' => $key, 'meaning_html' => $html($data['meaning']),
             'note_html' => ($data['note'] ?? '') !== '' ? $html($data['note']) : null, 'variants_json' => ($data['variants'] ?? []) ? json_encode($data['variants'], JSON_UNESCAPED_UNICODE) : null,
+            // A local entry applies to the paper of the fact named with it, where it takes precedence over the project's meaning.
+            'definition_fact_id' => $status === 'local' ? (int)$s['fact_id'] : null,
             'author_id' => (int)($s['ai_user_id'] ?: $me), 'author_kind' => 'agent', 'ai_model' => $s['ai_model'], 'ai_user_id' => $s['ai_user_id'], 'ai_generation_ms' => $s['ai_generation_ms'], 'created_at' => $now,
         ]);
         return [['notation_id' => $id, 'created' => true], ['created' => $id]];

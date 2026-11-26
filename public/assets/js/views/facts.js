@@ -188,7 +188,7 @@ export const FactsView = {
     },
     mergedHere() { return (this.fact?.history || []).filter((h) => h.kind === 'same' && h.status === 'accepted' && h.fact_id === this.fact.id); },
     // The notation marked in the text shown: what this version defines for itself, then the agreed project symbols. None on an older revision.
-    notationMarks() { return this.fact && !this.shownRevision ? factNotation(this.localNotation, this.fact.notation) : []; },
+    notationMarks() { return this.fact && !this.shownRevision ? factNotation(this.localNotation, this.fact.notation, this.fact.local_entries) : []; },
     projectSymbols() { return this.rephrasing ? [...new Set((this.rephrasing.uses || []).map((u) => u.project_symbol).filter(Boolean))] : []; },
     myReview() { return this.fact?.reviews.find((v) => v.reviewer_id === this.me && v.reviewer_kind === 'human' && v.revision_no === this.fact.current_revision); },
     currentReviews() { return this.fact.reviews.filter((v) => v.revision_no === this.fact.current_revision); },
@@ -398,8 +398,8 @@ export const FactsView = {
           <ai-action v-if="notationState.tone === 'warn' || notationState.tone === 'bad'" kind="notation" source-type="fact" :source-id="fact.id" label="Rewrite again"/></div>
         <div v-if="rephrasing?.uses?.length" class="notation-uses"><span class="muted small">In its source:</span><span v-for="(u, i) in rephrasing.uses" :key="i" class="notation-use"><math-text :text="asMath(u.symbol)"/> <small><math-text :text="u.meaning_here"/></small><template v-if="u.project_symbol && u.project_symbol !== u.symbol"> → <math-text :text="asMath(u.project_symbol)"/></template></span></div>
         <div v-if="cited && !shownRevision" class="notation-banner t-info"><icon name="book" :size="14"/><span>Proofs that use this result rely on its source. <template v-if="fact.status === 'accepted'">A member who read the source accepted it.</template><template v-else>Nobody has accepted it yet: read the source, then click <b>Accept</b>. You can also propose a proof below.</template></span></div>
-        <section class="fact-sec statement"><h4>Statement</h4><rich-content :html="shown(statementHtml)" :notation="notationMarks"/></section>
-        <section class="fact-sec" v-if="content.proof_html"><h4>Proof<span v-if="!shownRevision && mainFlawed" class="tag amber">Disputed</span><span v-if="!shownRevision && proofs.length" class="tag">1 of {{ proofs.length + 1 }}</span></h4><rich-content :html="shown(proofHtml)" :notation="notationMarks"/></section>
+        <section class="fact-sec statement"><h4>Statement</h4><rich-content :html="shown(statementHtml)" :notation="notationMarks" :fact-refs="fact.text_refs"/></section>
+        <section class="fact-sec" v-if="content.proof_html"><h4>Proof<span v-if="!shownRevision && mainFlawed" class="tag amber">Disputed</span><span v-if="!shownRevision && proofs.length" class="tag">1 of {{ proofs.length + 1 }}</span></h4><rich-content :html="shown(proofHtml)" :notation="notationMarks" :fact-refs="fact.text_refs"/></section>
         <section v-if="!shownRevision && fact.outside_refs?.length" class="fact-sec outside-refs"><h4>Results used from other works<span class="count">{{ fact.outside_refs.length }}</span></h4>
           <p class="muted small">A proof relies only on facts of the database, so that it can be checked against them. Link each result the proof takes from another work to the fact that states it, usually a cited result. A consolidation proposes these links, and writes the cited results that are missing.</p>
           <div v-for="r in fact.outside_refs" :key="r.key" class="outside-ref" :class="{open: !r.resolved}">
@@ -432,7 +432,7 @@ export const FactsView = {
               <span class="grow"></span><span class="muted small">{{ timeAgo(p.updated_at) }}</span>
               <template v-if="p.author_id === me && p.author_kind === 'human'"><button class="icon-btn xs" title="Edit your proof" aria-label="Edit your proof" @click="proposing = {proof: p}"><icon name="edit" :size="13"/></button></template>
               <button v-if="p.author_id === me || isOwner" class="icon-btn xs" title="Withdraw this proof" aria-label="Withdraw this proof" @click="removeProof(p)"><icon name="trash" :size="13"/></button></header>
-            <rich-content :html="shown(p.body_html)" :notation="notationMarks"/>
+            <rich-content :html="shown(p.body_html)" :notation="notationMarks" :fact-refs="fact.text_refs"/>
             <footer class="alt-proof-foot">
               <span class="muted small">{{ tallyText(p) }}</span><span class="grow"></span>
               <template v-if="!(p.author_id === me && p.author_kind === 'human')">
@@ -446,7 +446,7 @@ export const FactsView = {
           <details v-if="oldProofs.length" class="old-proofs"><summary>{{ oldProofs.length }} proof{{ oldProofs.length > 1 ? 's' : '' }} of an earlier statement</summary>
             <article v-for="p in oldProofs" :key="p.id" class="alt-proof old"><header class="row-gap"><span class="tag">r{{ p.revision_no }}</span><by-line :name="p.author_name" :model="p.author_kind === 'agent' ? p.ai_model : null" :user="p.ai_user_name" :ms="p.ai_generation_ms"/></header><rich-content :html="shown(p.body_html)"/></article></details>
         </section>
-        <section class="fact-sec" v-if="content.intuition_html"><h4>Intuition</h4><rich-content :html="shown(content.intuition_html)" :notation="notationMarks"/></section>
+        <section class="fact-sec" v-if="content.intuition_html"><h4>Intuition</h4><rich-content :html="shown(content.intuition_html)" :notation="notationMarks" :fact-refs="fact.text_refs"/></section>
         <template v-if="!shownRevision">
           <section class="fact-sec" v-if="fact.sources.length"><h4>Sources</h4>
             <div v-for="(x, i) in fact.sources" :key="i" class="fact-source">

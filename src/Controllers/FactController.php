@@ -1491,6 +1491,10 @@ final class FactController
         }, Db::all('SELECT p.*, u.name AS author_name, au.name AS ai_user_name FROM fact_proofs p JOIN users u ON u.id = p.author_id LEFT JOIN users au ON au.id = p.ai_user_id
                     WHERE p.fact_id = ? ORDER BY p.revision_no DESC, p.id', [$id]));
         $out['rephrasings'] = NotationController::forFact($id, $pid, (int)$f['current_revision']);
+        // The facts its texts name the way its paper does ("Lemma 2.4"), which the page links, with a preview on hover.
+        $texts = array_merge([$out['statement_text'], $out['proof_text']], array_column($out['proofs'], 'body_text'),
+            array_map(fn($x) => Sanitizer::toText((string)$x['statement_html']) . "\n" . Sanitizer::toText((string)$x['proof_html']), array_filter($out['rephrasings'], fn($x) => $x['current'])));
+        $out['text_refs'] = array_values(array_filter(array_map(fn($x) => isset($byId[$x['fact_id']]) ? $x + ['fact' => $brief($x['fact_id'])] : null, \App\FactRefs::resolve($pid, $id, $texts))));
         // Its history beside its revisions: the consolidation changes applied to it, by people or by the AI on its own, each one undoable.
         $out['history'] = array_map(function ($s) {
             foreach (['id', 'fact_id', 'other_fact_id'] as $k) $s[$k] = $s[$k] === null ? null : (int)$s[$k];
@@ -1508,6 +1512,8 @@ final class FactController
         // The agreed notation, so that a reader sees the meaning of each symbol the fact uses.
         $out['notation'] = array_map(fn($n) => ['id' => (int)$n['id'], 'symbol' => $n['symbol'], 'meaning_html' => $n['meaning_html']],
             Db::all("SELECT id, symbol, meaning_html FROM notations WHERE project_id = ? AND status = 'agreed' ORDER BY id", [$pid]));
+        // The local entries of its paper, which say what a symbol means here when the project gives it another meaning.
+        $out['local_entries'] = NotationController::localFor($pid, $id);
         $out['starred_by'] = Db::all('SELECT u.id, u.name FROM fact_stars s JOIN users u ON u.id = s.user_id WHERE s.fact_id = ? ORDER BY s.created_at', [$id]);
         foreach ($out['starred_by'] as &$u) $u['id'] = (int)$u['id'];
         unset($u);
