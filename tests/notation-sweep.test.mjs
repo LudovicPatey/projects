@@ -38,7 +38,7 @@ test('a glossary key defining two symbols counts as two, and an agreed symbol is
 test('a symbols sweep settles every symbol without an entry: adopt, local, or another spelling', async () => {
   const t = (await claim(['consolidate'])).data.task;
   assert.ok(t); assert.equal(t.source_type, 'sweep'); assert.equal(t.recipe.variant, 'consolidate_notation');
-  assert.match(t.recipe.instructions, /Decide every symbol yourself/);
+  assert.match(t.recipe.instructions, /Decide every symbol\s+yourself/);
   const syms = t.context.symbols.map((x) => x.symbol).sort();
   assert.deepEqual(syms, ['\\lambda(n)', '\\mathrm{Subt}', '\\mathsf{RT}^1', '\\mathsf{RT}^1_{<\\infty}'].sort());
   assert.ok(t.context.notation.some((n) => n.id === mu), 'with the entries, to attach a spelling to');
@@ -72,4 +72,56 @@ test('keeping a paper\'s symbol local never demotes the agreed entry it shares a
   const entries = (await app.call(ann, 'GET', `/api/projects/${pid}/notation`)).data.entries;
   assert.equal(entries.find((e) => e.id === mu).status, 'agreed', 'the project\'s mu(n) stays agreed');
   assert.ok(entries.some((e) => e.symbol === '\\mu(f)' && e.status === 'local' && e.definition_fact_id === ids.b), 'a new local entry for its paper');
+});
+
+test('the sweep also settles proposed entries by their id, keeps the facts\' spelling, and reads a symbol it left once more', async () => {
+  const p = (await app.call(ann, 'POST', '/api/projects', { title: 'Symbols 2', question_html: '<p>Q</p>' })).data.id;
+  const F = (ref, glossary) => ({ ref, title: ref, kind: 'lemma', labels: ['conclusion'], method: 'deduced', statement_text: `S ${ref}.`, proof_text: 'P.', glossary });
+  const f = Object.fromEntries((await app.call(key, 'POST', `/api/projects/${p}/facts/batch`, { format: 'native', ai_model: 'm', facts: [
+    F('a', { semigroup: 'Hirst\'s code for a closed subsemigroup', 'P-branch, P-condition, $\\le$': 'forcing notions', fip: 'finite intersection property' }),
+    F('b', { semigroup: 'a closed subsemigroup of beta N, coded', 'P-branch, P-condition, $\\le$': 'as in Section 2', fip: 'the finite intersection property' }),
+  ] })).data.created.map((x) => [x.ref, x.id]));
+  const prop = (await app.call(ann, 'POST', `/api/projects/${p}/notation`, { symbol: 'fip', meaning_text: 'The finite intersection property.' })).data.id;
+  const claimP = () => app.call(key, 'POST', '/api/ai/tasks/claim', { client_name: 'c', ai_model: 'claude-opus-5-5', project_id: p, kinds: ['consolidate'], features: ['procedures', 'consolidate'], capabilities: [] });
+  let t = (await claimP()).data.task;
+  const syms = t.context.symbols.map((x) => x.symbol);
+  assert.ok(['P-branch', 'P-condition'].every((x) => syms.includes(x)) && !syms.some((x) => x.includes(',') || x.includes('$')), `one-word names are split: ${syms}`);
+  assert.equal(t.context.symbols.find((x) => x.symbol === 'fip').entry.id, prop, 'a proposed entry comes with its symbol');
+  const r = await app.call(key, 'POST', `/api/ai/tasks/${t.id}/answer`, { lease: t.lease, ai_model: 'claude-opus-5-5', answer: { summary: '', decisions: [
+    { symbol: 'fip', action: 'adopt', entry: prop, project_symbol: null, meaning: null, note: null, variants: [], fact: null, reason: 'Standard.' },
+    { symbol: 'semigroup', action: 'adopt', entry: null, project_symbol: 'semigroup (\\beta\\mathbb N)', meaning: 'Hirst\'s code for a closed subsemigroup of $\\beta\\mathbb N$.', note: '', variants: [], fact: f.a, reason: 'One notion.' },
+  ] } });
+  assert.equal(r.status, 200, JSON.stringify(r.data));
+  const n = (await app.call(ann, 'GET', `/api/projects/${p}/notation`)).data;
+  assert.equal(n.entries.find((e) => e.id === prop).status, 'agreed', 'the proposed entry is settled');
+  assert.ok(n.shared.find((x) => x.symbol === 'semigroup').entry, 'the facts\' spelling counts as the adopted entry');
+  t = (await claimP()).data.task;
+  assert.ok(t.context.symbols.some((x) => x.symbol === 'P-branch'), 'a symbol left once is read once more');
+  await app.call(key, 'POST', `/api/ai/tasks/${t.id}/answer`, { lease: t.lease, ai_model: 'claude-opus-5-5', answer: { summary: '', decisions: [] } });
+  assert.equal((await claimP()).data.task, null, 'but not a third time');
+});
+
+test('an expression in agreed symbols needs no entry, an indexed one does, and the sweep rejects a proposed composition', async () => {
+  const p = (await app.call(ann, 'POST', '/api/projects', { title: 'Symbols 3', question_html: '<p>Q</p>' })).data.id;
+  const F = (ref, glossary) => ({ ref, title: ref, kind: 'lemma', labels: ['conclusion'], method: 'deduced', statement_text: `S ${ref}.`, proof_text: 'P.', glossary });
+  const f = Object.fromEntries((await app.call(key, 'POST', `/api/projects/${p}/facts/batch`, { format: 'native', ai_model: 'm', facts: [
+    F('a', { '\\mathrm{FIN}\\cup\\{\\emptyset\\}': 'all finite sets', '\\mathrm{FIN}_k': 'Gowers\' FIN_k', '\\mathcal P_{fin}(\\mathbb N)': 'all finite sets' }),
+    F('b', { '\\mathrm{FIN}\\cup\\{\\emptyset\\}': 'finite sets, empty included', '\\mathrm{FIN}_k': 'functions to k', '\\mathcal P_{fin}(\\mathbb N)': 'finite subsets' }),
+  ] })).data.created.map((x) => [x.ref, x.id]));
+  const fin = (await app.call(ann, 'POST', `/api/projects/${p}/notation`, { symbol: '\\mathrm{FIN}', meaning_text: 'The non-empty finite subsets of $\\mathbb N$.' })).data.id;
+  await app.call(ann, 'POST', `/api/notation/${fin}/status`, { status: 'agreed' });
+  const prop = (await app.call(ann, 'POST', `/api/projects/${p}/notation`, { symbol: '\\mathcal P_{fin}(\\mathbb N)', meaning_text: 'All finite subsets.' })).data.id;
+  const s = (await app.call(ann, 'GET', `/api/projects/${p}/notation`)).data.shared;
+  assert.equal(s.find((x) => x.symbol === '\\mathrm{FIN}\\cup\\{\\emptyset\\}').entry.status, 'derived', 'needs no entry');
+  assert.equal(s.find((x) => x.symbol === '\\mathrm{FIN}_k').entry, null, 'an indexed symbol is a notion of its own');
+  const t = (await app.call(key, 'POST', '/api/ai/tasks/claim', { client_name: 'c', ai_model: 'claude-opus-5-5', project_id: p, kinds: ['consolidate'], features: ['procedures', 'consolidate'], capabilities: [] })).data.task;
+  const syms = t.context.symbols.map((x) => x.symbol);
+  assert.ok(!syms.includes('\\mathrm{FIN}\\cup\\{\\emptyset\\}') && syms.includes('\\mathrm{FIN}_k'), `${syms}`);
+  assert.match(t.recipe.instructions, /never adopt or keep local a mere combination/);
+  const r = await app.call(key, 'POST', `/api/ai/tasks/${t.id}/answer`, { lease: t.lease, ai_model: 'claude-opus-5-5', answer: { summary: '', decisions: [
+    { symbol: '\\mathcal P_{fin}(\\mathbb N)', action: 'reject', entry: prop, project_symbol: null, meaning: null, note: null, variants: [], fact: f.a, reason: 'FIN together with the empty set.' },
+    { symbol: '\\mathrm{FIN}_k', action: 'reject', entry: null, project_symbol: null, meaning: null, note: null, variants: [], fact: f.a, reason: 'Ignored: no entry to reject.' },
+  ] } });
+  assert.equal(r.status, 200, JSON.stringify(r.data));
+  assert.equal((await app.call(ann, 'GET', `/api/projects/${p}/notation`)).data.entries.find((e) => e.id === prop).status, 'rejected');
 });

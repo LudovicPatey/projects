@@ -99,8 +99,8 @@ final class Sweeps
     }
 
     /**
-     * Symbols that several facts define and that have no entry of the project notation, which no symbols sweep settled yet.
-     * @return list<string> their notion keys, the most used first
+     * What the notation still leaves to people: symbols that several facts define with no entry, and entries still proposed.
+     * A symbol a sweep read without settling is read once more. @return list<string> their notion keys, the most used first
      */
     public static function symbolCandidates(int $pid): array
     {
@@ -108,9 +108,13 @@ final class Sweeps
         $out = [];
         foreach (NotationController::shared($pid, 2, 1000) as $x) {
             $k = NotationController::notionKey($x['symbol']);
-            if ($x['entry'] === null && !isset($tried[$k])) $out[] = $k;
+            if (($x['entry'] === null || $x['entry']['status'] === 'proposed') && ($tried[$k] ?? 0) < 2) $out[$k] = true;
         }
-        return $out;
+        foreach (Db::all("SELECT symbol FROM notations WHERE project_id = ? AND status = 'proposed' ORDER BY id", [$pid]) as $n) {
+            $k = NotationController::notionKey($n['symbol']);
+            if (($tried[$k] ?? 0) < 2) $out[$k] = true;
+        }
+        return array_keys($out);
     }
 
     /**
@@ -186,7 +190,7 @@ final class Sweeps
             }
             if ($t['status'] !== 'done') continue;
             if (in_array($kind, ['rewrite_check', 'second_reading'], true)) { foreach ($snap['items'] ?? [] as $id) $done[(int)$id] = true; continue; }
-            if ($kind === 'consolidate') { if ($t['source_type'] === 'sweep') foreach ($snap['symbols'] ?? [] as $k) $done[(string)$k] = true; continue; }
+            if ($kind === 'consolidate') { if ($t['source_type'] === 'sweep') foreach ($snap['symbols'] ?? [] as $k) $done[(string)$k] = ($done[(string)$k] ?? 0) + 1; continue; }
             if ($t['source_type'] !== 'fact') foreach ($snap['facts'] ?? [] as [$f, $rev]) $done["$f:$rev"] = true;
             elseif (preg_match('/^srcchk:(\d+):(\d+)$/', (string)$t['dedupe_key'], $m)) $done["$m[1]:$m[2]"] = true;
         }

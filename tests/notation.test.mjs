@@ -307,3 +307,8 @@ test('one notion written in several ways is offered once, and proof variables ar
   assert.equal(after_.some((x) => x.symbol === 'FS(H)'), false, 'no second entry for the same notion');
   assert.ok(after_.some((x) => x.variants.some((v) => v.symbol === 'FS(H)')), 'recorded as a variant');
 });
+
+test('a symbol written with its own formulas shows no dollar', () => {
+  assert.equal(asMath('P-condition, $\\le$'), 'P-condition, $\\le$');
+  assert.equal(asMath('P-branch $(F,X)'), 'P-branch $(F,X)$', 'a dollar left open is closed');
+});

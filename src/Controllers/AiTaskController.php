@@ -956,10 +956,26 @@ final class AiTaskController
             $want = array_flip(json_decode((string)$t['snapshot_json'], true)['symbols'] ?? []);
             $labels = array_column(Db::all('SELECT id, label FROM facts WHERE project_id = ? AND deleted_at IS NULL', [$pid]), 'label', 'id');
             $ctx['symbols'] = [];
+            // An entry still proposed comes with the symbol: settling it means adopting it or keeping it local by its id.
+            $proposed = [];
+            foreach (Db::all("SELECT id, symbol, meaning_html, note_html, variants_json, facts_json FROM notations WHERE project_id = ? AND status = 'proposed'", [$pid]) as $n) {
+                $proposed[NotationController::notionKey($n['symbol'])] ??= $n;
+            }
+            $entryOf = fn(array $n) => ['id' => (int)$n['id'], 'symbol' => $n['symbol'], 'meaning' => Sanitizer::toText((string)$n['meaning_html']),
+                'note' => $n['note_html'] ? Sanitizer::toText((string)$n['note_html']) : null, 'variants' => json_decode((string)$n['variants_json'], true) ?: []];
+            $fact = fn($f) => ['id' => (int)$f, 'label' => $labels[$f] ?? null];
             foreach (NotationController::shared($pid, 2, 1000) as $x) {
-                if (!isset($want[NotationController::notionKey($x['symbol'])])) continue;
+                $k = NotationController::notionKey($x['symbol']);
+                if (!isset($want[$k])) continue;
+                unset($want[$k]);
                 $ctx['symbols'][] = ['symbol' => $x['symbol'], 'spellings' => $x['spellings'], 'facts' => $x['facts'],
-                    'meanings' => array_map(fn($m) => ['meaning' => $m['meaning'], 'facts' => array_map(fn($f) => ['id' => (int)$f, 'label' => $labels[$f] ?? null], array_slice($m['facts'], 0, 8))], $x['meanings'])];
+                    'meanings' => array_map(fn($m) => ['meaning' => $m['meaning'], 'facts' => array_map($fact, array_slice($m['facts'], 0, 8))], $x['meanings']),
+                    'entry' => isset($proposed[$k]) ? $entryOf($proposed[$k]) : null];
+            }
+            foreach (array_keys($want) as $k) {
+                if (!isset($proposed[$k])) continue;
+                $n = $proposed[$k]; $facts = array_slice(array_map('intval', json_decode((string)$n['facts_json'], true) ?: []), 0, 8);
+                $ctx['symbols'][] = ['symbol' => $n['symbol'], 'spellings' => [$n['symbol']], 'facts' => count($facts), 'meanings' => [], 'entry' => $entryOf($n) + ['facts' => array_map($fact, $facts)]];
             }
             $ctx['notation'] = NotationController::forTask($pid, false);
         }

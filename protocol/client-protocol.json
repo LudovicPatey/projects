@@ -1,7 +1,7 @@
 {
  "min_version": "1.0.0",
  "client_version": "1.20.0",
- "fingerprint": "11aea6ed82e56e3bd12600850cd9b59f67d9b35eee140c4fd629669cb189dac1",
+ "fingerprint": "1435c5438f188e9e65ce6b621cc5a216b733f95dd441eba844e79be99ab1ea10",
  "routes": [
   "GET /api/ai/procedures AiTaskController::procedures",
   "GET /api/bib/{id}/pdf BibController::pdf",
@@ -108,7 +108,7 @@
   "AiTaskController::complete": "14649896d16f0ea92e077574c6cc23551b603cc748c2c80b72f835af4af99161",
   "AiTaskController::computeSummary": "a8b57a62535a0c6a88dc28ae65cef5b9402f8f9780a255496fd4957e5d637912",
   "AiTaskController::computers": "077278c83c71633481710259b9c80d4b7d24714599d7ab525dd13b4d6c2fc7e5",
-  "AiTaskController::context": "77fd5372c6a5e12ce8efaa4694b57ea546c075c587fa8477881fc76c844062ba",
+  "AiTaskController::context": "55e75edab1d441246da6a2b5de8a95d4353df342635741d695047e6914cd0d84",
   "AiTaskController::conversationBlocked": "f32758b0c318c285be52be714f866a1368c141c814a73ed17274f29767916a6e",
   "AiTaskController::conversationComments": "5e6966d4aa5a5837698eb6f45632134ce5f7512306728fcf630e3e229a582f33",
   "AiTaskController::conversationHash": "edee696dcf4e3013026a75be4b20f37b502f78bc1eed6128113f66a7d8af0276",
@@ -350,6 +350,7 @@
   "NotationController::create": "ba30906a39a46b882775d9170dcb77b6b7a0ace3f3a5e4683375c10c71833d64",
   "NotationController::decidedBy": "a004c83cbf552c774996dc06a4e2eb469104a40de60bafdf1b2e4a9980446c71",
   "NotationController::definitions": "c1307c40dec0986747193e900445b63584224c9d981df5ac18fc215b904554f1",
+  "NotationController::derived": "1ed4f1d67bfd27218afc58830c5ab2d898ac38914bcf9d66dfe75499f88ae346",
   "NotationController::entries": "9dc215158807a46330a3901fb84be7187943796279521fbed4f2b000aedc0190",
   "NotationController::fields": "ecbcebcb00df3980e8d2a45d833b08ed4493753ccb3a458a67b676f392304e04",
   "NotationController::forFact": "65d51bb42828719a499dc4af7dc104fc448d144aaa72e405603194c243d7dee2",
@@ -368,8 +369,8 @@
   "NotationController::rephrase": "cac5dc5b0f6c5450ef736063bc530092cbd84e0518d7578409834a7b988b8d16",
   "NotationController::rephraseFact": "f9bf5a2b42b9f235da52d6258480f915f0f4369e872868f8f259e8d3edcf666d",
   "NotationController::sameText": "026ac8a0ef9a81d2632205062e60bdbe1add138f997862c11506d6673484822a",
-  "NotationController::shared": "194e0d350326a5cc07e339d2be80e5bcc769010c05d4394daaeb9f9fafae9083",
-  "NotationController::splitDefinitions": "8740aa15b4d19d3577c591330365d56ff0fb849ffb61801e906126e5b1db6245",
+  "NotationController::shared": "8e2432a3a15e03514a4771799b8ce61ed894577020fd2ae57e9899af60f73a6d",
+  "NotationController::splitDefinitions": "303e72a9a8073a90bf309f7c78219b033769ab1bf4804414c6def9e26994523e",
   "NotationController::sql": "2215461a1ac16d3edacf389f8c30b124ce0f4ff29a13d2aa4e6a3636b8cae6a0",
   "NotationController::states": "ddc43b7c84e6ab9e9ff27b155d5896ce4133105216ded3b0f3886058659e67b3",
   "NotationController::uses": "d1e982610e0b7c8b5af69523f49de139e2d555dad728886441c1ddc78a893824",
@@ -377,10 +378,10 @@
   "Notify::mentions": "87e12b1918ae6b9f84992280147d662e5dc4a5fff01d5418c4f370b99106da23",
   "Notify::send": "49a37c414cc94840696f77cfb49f21cc9ee4bfed2c9785504b4ab0825b71d7fe",
   "Procedures::CAPABILITIES": "4dce42bbadf21b695afcf974783a43c20da9c3e58306e6347d7f13d1e61f5e30",
-  "Procedures::INSTRUCTIONS": "38c194eff5066ac99533f25c94e1bcc7bcbba3fbd0c7ac254f1e7778c58411a0",
+  "Procedures::INSTRUCTIONS": "1233d20d8d7da5e3ffbeb7d6a7ac1c4ecc28d031e159c1a864ac8cdea677302d",
   "Procedures::REQUEST_NOTE": "24b0a276d5999286c5ee3500049fb549cab02c47210fcc847ff3fd0c652e1b6a",
-  "Procedures::SCHEMAS": "fb7a8071f4e09643bcb2d920be3e361e4fc9c3720a66c0308d4a229f75fb98be",
-  "Procedures::apply": "f1b1e590bb068fabd42146039662453c5d0a437943f25f733406e108a96848e7",
+  "Procedures::SCHEMAS": "9f4dbb715baff3c3d1a60768a61c43034333995bac30c1084c38d9f95553533c",
+  "Procedures::apply": "d0b7a3872b4a4cb16284ca411000ce481aa5e746b86614f53ae0d50ddb02bfbf",
   "Procedures::capabilities": "0cd0fd2bbacd82074d877b676192b2e11c0b127be10e089ebd2c1de62a47729e",
   "Procedures::defs": "312fab23fc91510748ae2525444718215385396fe6b7bec643308a26963ac440",
   "Procedures::has": "203dad6c3384cffbdd266434aa8286ddabbcbbed33b7a514a2bd53f87a93ef5d",
@@ -505,9 +506,9 @@
   "Sweeps::setting": "367cd3fda6ea7563d64307aa088114375d74efe7b4330e53088eb74d33d070d3",
   "Sweeps::sourceCandidates": "326493a32b9104213817d74ab98549d5f23cd4857267f4da5c5031150195caf8",
   "Sweeps::stale": "ddb079889a5925819c96b50cbf4f335775e51393b15db98902ce581b4a33e500",
-  "Sweeps::symbolCandidates": "08d2425e484574193ab095a04f6f1dc7bbd53e3c777307353962c90787e80712",
+  "Sweeps::symbolCandidates": "37b2b1c8580a9093f3fb5abc9583476989a3765bcb96ed0c87f239c78c3097a8",
   "Sweeps::take": "311d2c8b986b0fb50756fc2228a701c99857acd2d520871095b76387b0b09607",
-  "Sweeps::tried": "7cdb13feb3ded70ab1bb7856b64b233b24db8df73e276d16dcbfa29684f40637"
+  "Sweeps::tried": "83d70a09bf673a0f3eeb89b003e3bac77270359f675f4e1ae6fe7ba6dfd29028"
  },
  "history": [
   {
@@ -1204,6 +1205,35 @@
    "changed": [
     "FactController::COMPACT",
     "FactController::graph"
+   ]
+  },
+  {
+   "date": "2026-11-26",
+   "decision": "compatible",
+   "client_version": "1.20.0",
+   "min_version": "1.0.0",
+   "note": "The notation sweep's context gains entry per symbol and may include proposed entries; decisions may name a proposed entry. The recipe carries its own instructions and schema, so released clients run it as sent.",
+   "changed": [
+    "AiTaskController::context",
+    "NotationController::splitDefinitions",
+    "Procedures::INSTRUCTIONS",
+    "Procedures::apply",
+    "Sweeps::symbolCandidates",
+    "Sweeps::tried"
+   ]
+  },
+  {
+   "date": "2026-11-26",
+   "decision": "compatible",
+   "client_version": "1.20.0",
+   "min_version": "1.0.0",
+   "note": "Shared symbols may have entry status derived; the notation sweep may reject proposed entries; prompts updated. Recipes carry their own instructions and schema.",
+   "changed": [
+    "NotationController::shared",
+    "Procedures::INSTRUCTIONS",
+    "Procedures::SCHEMAS",
+    "Procedures::apply",
+    "+NotationController::derived"
    ]
   }
  ]

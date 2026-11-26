@@ -210,6 +210,34 @@ final class NotationController
             Db::all("SELECT * FROM notations WHERE project_id = ? AND status " . ($agreedOnly ? ($withLocal ? "IN ('agreed', 'local')" : "= 'agreed'") : "<> 'rejected'") . ' ORDER BY symbol_key LIMIT 300', [$pid]));
     }
 
+    /**
+     * Whether a symbol is only an expression in the project's agreed symbols and ordinary mathematics, such as
+     * \\mathrm{FIN}\\cup\\{\\emptyset\\} once \\mathrm{FIN} is agreed: it needs no entry of its own, and is written that way.
+     * @param list<string> $agreed the agreed symbols
+     */
+    public static function derived(string $symbol, array $agreed): bool
+    {
+        $s = self::bare($symbol);
+        $used = false;
+        foreach ($agreed as $a) {
+            $head = trim(preg_replace('/\s*\(.*$/s', '', self::bare($a)) ?? '');
+            if ($head === '' || $head === $s) continue;
+            $name = preg_match('/^\\\\(?:mathrm|mathsf|mathbf|mathit|mathcal|operatorname|textrm|text)\s*\{([^{}]+)\}$/', $head, $m) ? $m[1] : $head;
+            if (mb_strlen($name) < 2) continue; // a one-letter symbol is too common to recognize
+            // In its font or bare (FIN), but never with an index or exponent of its own: FIN_k and FIN^{[n]} are other notions.
+            $bare = preg_match('/^[A-Za-z]{2,}$/', $name) ? '|(?<![\\\\A-Za-z])' . preg_quote($name, '/') : '';
+            $pattern = '/(?:\\\\(?:mathrm|mathsf|mathbf|mathit|mathcal|operatorname|textrm|text)\s*\{\s*' . preg_quote($name, '/') . '\s*\}|' . preg_quote($head, '/') . $bare . ')(?![A-Za-z])(?!\s*[_^])/u';
+            $s2 = preg_replace($pattern, ' ', $s) ?? $s;
+            if ($s2 !== $s) { $used = true; $s = $s2; }
+        }
+        if (!$used) return false;
+        // What is left is ordinary mathematics: operators, brackets, the empty set, numbers, single letters, and no index.
+        if (preg_match('/[_^]/', $s)) return false;
+        $rest = preg_replace('/\\\\(?:cup|cap|setminus|emptyset|varnothing|times|cdot|circ|le|leq|ge|geq|lt|gt|in|notin|subseteq|subset|supseteq|supset|bigcup|bigcap|infty|omega|mathbb\s*\{\s*[A-Z]\s*\}|left|right|[{},;!]|quad|,)/u', ' ', $s) ?? $s;
+        $rest = preg_replace('/[\s(){}\[\]+\-=<>|,.;:0-9_^\/*]|(?<![A-Za-z])[A-Za-z](?![A-Za-z])/u', '', $rest) ?? $rest;
+        return $rest === '';
+    }
+
     /** Records another spelling of an entry, with the same meaning, as an "instance" variant. @return bool recorded */
     public static function addSpelling(int $pid, int $id, string $symbol, string $meaning, string $why): bool
     {
@@ -373,6 +401,7 @@ final class NotationController
             $entries[self::notionKey($n['symbol'])] ??= $e;
             foreach ($variants as $v) if (($v['relation'] ?? '') === 'instance' && is_string($v['symbol'] ?? null)) $entries[self::notionKey($v['symbol'])] ??= $e;
         }
+        $agreed = array_column(Db::all("SELECT symbol FROM notations WHERE project_id = ? AND status = 'agreed'", [$pid]), 'symbol');
         $by = [];
         foreach ($local as $fid => $defs) {
             foreach (self::splitDefinitions($defs) as [$symbol, $meaning]) {
@@ -393,7 +422,10 @@ final class NotationController
             $meanings = array_values($s['meanings']);
             usort($meanings, fn($a, $b) => count($b['facts']) <=> count($a['facts']));
             arsort($s['spellings']);
-            $out[] = ['symbol' => (string)array_key_first($s['spellings']), 'spellings' => array_keys($s['spellings']), 'facts' => count($s['facts']), 'meanings' => array_map(fn($m) => ['meaning' => $m['meaning'], 'facts' => array_slice($m['facts'], 0, 50)], array_slice($meanings, 0, 8)), 'entry' => $entries[$k] ?? null];
+            $symbol = (string)array_key_first($s['spellings']);
+            // An expression in agreed symbols needs no entry: it counts as settled.
+            $entry = $entries[$k] ?? (self::derived($symbol, $agreed) ? ['id' => null, 'status' => 'derived', 'clashes' => 0] : null);
+            $out[] = ['symbol' => $symbol, 'spellings' => array_keys($s['spellings']), 'facts' => count($s['facts']), 'meanings' => array_map(fn($m) => ['meaning' => $m['meaning'], 'facts' => array_slice($m['facts'], 0, 50)], array_slice($meanings, 0, 8)), 'entry' => $entry];
         }
         usort($out, fn($a, $b) => [$b['entry'] === null, $b['facts']] <=> [$a['entry'] === null, $a['facts']]);
         return array_slice($out, 0, $limit);
@@ -417,8 +449,8 @@ final class NotationController
             }
             $parts[] = $cur;
             $parts = array_values(array_filter(array_map(fn($x) => trim(self::bare(trim($x, " \t\n$"))), $parts), fn($x) => $x !== ''));
-            // Only symbols are split: "red, blue or green" is one term.
-            if (count($parts) > 1 && array_filter($parts, fn($x) => !preg_match('/[\\(_^]/', $x))) $parts = [self::bare((string)$symbol)];
+            // Symbols and one-word names are split ("P-branch, P-condition, $\le$"); a phrase is one term: "red, blue or green".
+            if (count($parts) > 1 && array_filter($parts, fn($x) => !preg_match('/[\\(_^]/', $x) && preg_match('/\s/u', $x))) $parts = [self::bare((string)$symbol)];
             foreach ($parts as $x) $out[] = [$x, (string)$meaning];
         }
         return $out;

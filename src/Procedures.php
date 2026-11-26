@@ -45,7 +45,8 @@ TASK: review the notation of the whole project, and help the team agree on it. E
 Suggest making a symbol global when several facts define it with the same meaning, or when it is a standard notion of the field,
 and list the ids of the facts that define it in "facts". Different wordings of one notion, such as the infinite pigeonhole principle stated for all numbers of colors or for every finite
 coloring, are one meaning, not a clash. When facts give one symbol mathematically different meanings, propose one global meaning and say
-in "note" which facts must use another symbol. "fact_texts" in task.json lists the facts, with their statement,
+in "note" which facts must use another symbol. Never propose a mere combination of symbols the project already agreed on, such as
+$\mathrm{FIN}\cup\{\emptyset\}$ once $\mathrm{FIN}$ is agreed: the facts write that expression. "fact_texts" in task.json lists the facts, with their statement,
 the meaning their "glossary" gives to symbols, and their "source". Papers often use the same symbol for different things, for example FS(X)
 for the finite sums of X with or without 0, or different symbols for the same notion. Find the symbols whose meaning differs between sources,
 or that matter to the project, and propose one entry for each: "symbol" in LaTeX without dollars, "meaning" as a precise definition with $...$,
@@ -81,6 +82,8 @@ An entry whose "variants" are instances is one general notion: a fact working in
 An entry whose name ends with a setting in parentheses, such as "full-match (HT)", is the meaning of the term in that setting. Use the entry of
 the fact's setting. Write the qualified name, or the bare term when the fact stays in that one setting, and then say in "local_notation" which
 entry the bare term stands for, for example "full-match" meaning "full-match (HT)".
+A notion the agreed symbols express directly is written with them, without a symbol of its own: all finite subsets of $\mathbb N$, written
+$\mathcal P_{fin}(\mathbb N)$ by a source, become $\mathrm{FIN}\cup\{\emptyset\}$ once $\mathrm{FIN}$ is agreed for the non-empty ones.
 The mathematical content must stay exactly the same: do not correct, strengthen or weaken anything, and do not add or
 remove hypotheses or steps. If nothing has to change, set "unchanged" to true and copy the text. The fact must be readable alone: in "local_notation", define every symbol
 of the rewritten fact that is not a project symbol, including the local entries you defined. In "uses", list each symbol whose meaning matters:
@@ -148,8 +151,10 @@ Answer in "decisions", one entry per proposal with its "suggestion_id".
 TXT,
         'consolidate_notation' => <<<'TXT'
 TASK: settle the project's notation for "symbols" in task.json: symbols that several facts define for themselves and that the project
-notation, listed in "notation", has no entry for yet. Each gives its spellings, the facts that use it, and its "meanings": the facts' own
-wordings, compared as text, with the facts that give each one. Decide every symbol yourself, so that people need not:
+notation, listed in "notation", has not decided yet. Each gives its spellings, the facts that use it, and its "meanings": the facts' own
+wordings, compared as text, with the facts that give each one. A symbol may come with an "entry" someone proposed and nobody decided:
+settle it by its id, in "entry", with "adopt" or "local" (leave "meaning" null to keep its wording), or "reject" it. Decide every symbol
+yourself, so that people need not:
 - "adopt": the notion is shared or standard, and the project should write it one way. Give "project_symbol" (LaTeX without dollars, usually
   the most common spelling), "meaning" as one precise definition with $...$, "note" saying how sources differ or an empty string, and
   "variants": the other spellings ("relation": "instance") and the mathematically different meanings found ("relation": "clash"), each
@@ -159,7 +164,10 @@ wordings, compared as text, with the facts that give each one. Decide every symb
   whose meaning clashes with an entry of the project (such as Feferman's $(\mu)$ beside the project's $\mu(n)$). Give its "meaning" in
   those facts; the facts of that paper then read it with that meaning.
 - "same": it is another spelling of the entry "entry" (an id of "notation"), with the same meaning. A different meaning is never "same".
-Give "fact": the id of a fact that defines it, from its meanings. Fields that do not apply are null or empty. In "reason", one sentence for
+- "reject" (only for a proposed "entry"): the project's agreed symbols already express it, such as $\mathrm{FIN}\cup\{\emptyset\}$ for all
+  finite sets once $\mathrm{FIN}$ is agreed, or it is not notation at all. Facts then write that expression rather than a symbol of its own.
+A notion the agreed symbols express directly needs no entry: never adopt or keep local a mere combination of them.
+Give "fact": the id of a fact that defines it, from its meanings or its entry. Fields that do not apply are null or empty. In "reason", one sentence for
 the members. Answer in "decisions", one entry per symbol, with its "symbol" as listed. Every choice can be undone.
 TXT,
         'consolidate' => <<<'TXT'
@@ -227,7 +235,7 @@ TXT,
         'source_check_batch' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'checks'], "properties" => ["summary" => ["type" => 'string'], "checks" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['fact_id', 'verdict', 'where', 'explanation'], "properties" => ["fact_id" => ["type" => 'integer'], "verdict" => ["type" => 'string', "enum" => ['confirmed', 'differs', 'not_found']], "where" => ["type" => 'string'], "explanation" => ["type" => 'string']]]]]],
         'rewrite_check' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'checks'], "properties" => ["summary" => ["type" => 'string'], "checks" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['rewrite_id', 'verdict', 'note'], "properties" => ["rewrite_id" => ["type" => 'integer'], "verdict" => ["type" => 'string', "enum" => ['faithful', 'unfaithful']], "note" => ["type" => 'string']]]]]],
         'second_reading' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'decisions'], "properties" => ["summary" => ["type" => 'string'], "decisions" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['suggestion_id', 'verdict', 'reason'], "properties" => ["suggestion_id" => ["type" => 'integer'], "verdict" => ["type" => 'string', "enum" => ['apply', 'drop', 'unsure']], "reason" => ["type" => 'string']]]]]],
-        'consolidate_notation' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'decisions'], "properties" => ["summary" => ["type" => 'string'], "decisions" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'action', 'entry', 'project_symbol', 'meaning', 'note', 'variants', 'fact', 'reason'], "properties" => ["symbol" => ["type" => 'string'], "action" => ["type" => 'string', "enum" => ['adopt', 'local', 'same']], "entry" => ["type" => ['integer', 'null']], "project_symbol" => ["type" => ['string', 'null']], "meaning" => ["type" => ['string', 'null']], "note" => ["type" => ['string', 'null']], "variants" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'meaning', 'where', 'relation'], "properties" => ["symbol" => ["type" => 'string'], "meaning" => ["type" => 'string'], "where" => ["type" => 'string'], "relation" => ["type" => 'string', "enum" => ['instance', 'clash']]]]], "fact" => ["type" => ['integer', 'null']], "reason" => ["type" => 'string']]]]]],
+        'consolidate_notation' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'decisions'], "properties" => ["summary" => ["type" => 'string'], "decisions" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'action', 'entry', 'project_symbol', 'meaning', 'note', 'variants', 'fact', 'reason'], "properties" => ["symbol" => ["type" => 'string'], "action" => ["type" => 'string', "enum" => ['adopt', 'local', 'same', 'reject']], "entry" => ["type" => ['integer', 'null']], "project_symbol" => ["type" => ['string', 'null']], "meaning" => ["type" => ['string', 'null']], "note" => ["type" => ['string', 'null']], "variants" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'meaning', 'where', 'relation'], "properties" => ["symbol" => ["type" => 'string'], "meaning" => ["type" => 'string'], "where" => ["type" => 'string'], "relation" => ["type" => 'string', "enum" => ['instance', 'clash']]]]], "fact" => ["type" => ['integer', 'null']], "reason" => ["type" => 'string']]]]]],
         'source_check' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'verdict', 'where', 'explanation'], "properties" => ["summary" => ["type" => 'string'], "verdict" => ["type" => 'string', "enum" => ['confirmed', 'differs', 'not_found']], "where" => ["type" => 'string'], "explanation" => ["type" => 'string']]],
     ];
 
@@ -362,15 +370,32 @@ TXT,
                 // Only the symbols of this batch, once each. Adopt and local go through the consolidation, applied on their own when the
                 // project allows it, and undone like its other changes; "same" records a spelling of an existing entry.
                 $mine = array_flip(json_decode((string)$t['snapshot_json'], true)['symbols'] ?? []);
-                $items = []; $same = 0; $seen = [];
+                $items = []; $same = 0; $seen = []; $usedBy = null;
                 foreach ($answer['decisions'] as $d) {
                     $k = NotationController::notionKey((string)$d['symbol']);
                     if (!isset($mine[$k]) || isset($seen[$k])) continue;
                     $seen[$k] = true;
                     if ($d['action'] === 'same') { if ($d['entry'] && NotationController::addSpelling($pid, (int)$d['entry'], (string)$d['symbol'], (string)($d['meaning'] ?? ''), (string)$d['reason'])) $same++; continue; }
-                    if (!$d['fact'] || trim((string)$d['meaning']) === '') continue;
-                    $items[] = ['kind' => 'notation', 'fact' => (string)$d['fact'], 'reason' => $d['reason'] ?: 'Settles a symbol several facts define.', 'confidence' => 'medium',
-                        'notation' => ['action' => $d['action'], 'entry' => null, 'symbol' => trim((string)($d['project_symbol'] ?: $d['symbol'])), 'meaning' => $d['meaning'], 'note' => (string)($d['note'] ?? ''), 'variants' => $d['variants']]];
+                    $fact = $d['fact'] ?: ($d['entry'] ? Db::value('SELECT definition_fact_id FROM notations WHERE id = ? AND project_id = ?', [(int)$d['entry'], $pid]) : null);
+                    $fact = $fact ?: ($d['entry'] ? (json_decode((string)Db::value('SELECT facts_json FROM notations WHERE id = ? AND project_id = ?', [(int)$d['entry'], $pid]), true) ?: [null])[0] : null);
+                    // Else a fact that defines the symbol.
+                    if (!$fact) { $usedBy ??= array_column(array_map(fn($x) => [NotationController::notionKey($x['symbol']), $x['meanings'][0]['facts'][0] ?? null], NotationController::shared($pid, 2, 1000)), 1, 0); $fact = $usedBy[$k] ?? null; }
+                    if ($d['action'] === 'reject' && !$d['entry']) continue; // only a proposed entry is rejected
+                    // A proposed entry, settled by its id.
+                    if ($d['entry'] && $fact && Db::value("SELECT 1 FROM notations WHERE id = ? AND project_id = ? AND status = 'proposed'", [(int)$d['entry'], $pid])) {
+                        $items[] = ['kind' => 'notation', 'fact' => (string)$fact, 'reason' => $d['reason'] ?: 'Settles a proposed entry.', 'confidence' => 'medium',
+                            'notation' => ['action' => $d['action'], 'entry' => (int)$d['entry'], 'symbol' => null, 'meaning' => null, 'note' => null, 'variants' => []]];
+                        continue;
+                    }
+                    if (!$fact || trim((string)$d['meaning']) === '') continue;
+                    $symbol = trim((string)($d['project_symbol'] ?: $d['symbol']));
+                    // The facts' own spelling stays that entry's, when the project writes it otherwise: semigroup and semigroup (\beta\mathbb N).
+                    $variants = $d['variants'];
+                    if (NotationController::notionKey($symbol) !== $k && !array_filter($variants, fn($v) => NotationController::notionKey((string)$v['symbol']) === $k)) {
+                        $variants[] = ['symbol' => (string)$d['symbol'], 'meaning' => 'as the facts write it', 'where' => 'facts of the project', 'relation' => 'instance'];
+                    }
+                    $items[] = ['kind' => 'notation', 'fact' => (string)$fact, 'reason' => $d['reason'] ?: 'Settles a symbol several facts define.', 'confidence' => 'medium',
+                        'notation' => ['action' => $d['action'], 'entry' => null, 'symbol' => $symbol, 'meaning' => $d['meaning'], 'note' => (string)($d['note'] ?? ''), 'variants' => $variants]];
                 }
                 $r = ConsolidationController::store($pid, $items, $model, Provenance::stamp($model, $seconds), (int)$t['id']);
                 $a = count($r['applied']); $c = count($r['created']) - $a;

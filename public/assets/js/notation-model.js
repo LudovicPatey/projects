@@ -14,8 +14,10 @@ const piece = (s) => (looksMath(s) ? `$${s}$` : s);
  * and a setting in parentheses after a space, such as "full-match (HT)", kept as text.
  */
 export function asMath(symbol) {
-  const s = String(symbol || '').trim().replace(/^\$+|\$+$/g, '');
-  if (s.includes('$')) return s; // the person wrote the dollars
+  const raw = String(symbol || '').trim();
+  const s = raw.replace(/^\$+|\$+$/g, '');
+  // Text with its own formulas, "P-condition, $\le$": kept as written, a dollar left open closed, so that none shows.
+  if (s.includes('$')) return (raw.match(/\$/g) || []).length % 2 ? `${raw}$` : raw;
   const m = s.match(/^(.*\S)\s+\(([^()]*[A-Za-z][^()]*)\)$/);
   if (m && !/[\\^_{}]/.test(m[2])) return `${piece(m[1])} (${m[2]})`;
   return piece(s);
