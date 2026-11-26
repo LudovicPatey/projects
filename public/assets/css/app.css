@@ -1708,3 +1708,15 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: non
 .reading-cites { color: var(--warn); overflow-wrap: anywhere; }
 /* What the buttons of a group do, beside them: members do not know the interface. */
 .action-help { margin: 4px 0 8px; padding: 6px 9px; border-left: 3px solid var(--accent); background: var(--accent-2); border-radius: 0 6px 6px 0; line-height: 1.45; }
+
+/* A person's AI requests of the last 24 hours, against the limit: green, amber near it, red at it. */
+.usage-meter { margin: 10px 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); font-size: 13px; }
+.usage-top { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 5px; }
+.usage-top b { font-variant-numeric: tabular-nums; }
+.usage-bar { height: 6px; border-radius: 3px; background: var(--line-2); overflow: hidden; }
+.usage-bar i { display: block; height: 100%; border-radius: 3px; background: var(--good); }
+.usage-meter.t-warn .usage-bar i { background: var(--warn); }
+.usage-meter.t-bad .usage-bar i { background: var(--bad); }
+.usage-meter.t-bad { border-color: var(--bad); background: var(--bad-bg); }
+.usage-meter small { display: block; margin-top: 5px; color: var(--muted); line-height: 1.4; }
+.btn.at-limit { opacity: .55; }

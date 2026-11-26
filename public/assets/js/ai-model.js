@@ -12,6 +12,28 @@ export const AI_KINDS = {
   lean: { label: 'Lean proof', short: 'Lean', icon: 'code', hint: 'Writes a Lean proof, kept only if it compiles. A person must still compare the Lean statement with the fact.', needs: 'fact' },
 };
 
+/** "3 h 20 min", "12 min": how long until a moment. */
+function waitText(ms) {
+  const min = Math.max(1, Math.ceil(ms / 60000));
+  return min >= 60 ? `${Math.floor(min / 60)} h${min % 60 ? ` ${min % 60} min` : ''}` : `${min} min`;
+}
+
+/**
+ * A person's AI requests of the last 24 hours, as the interface shows them: a meter that turns amber near the limit and red at it,
+ * how many are left, and when the next one frees up. The window slides: each request counts for 24 hours.
+ */
+export function usageView(u, now = Date.now()) {
+  if (!u || !u.limit) return null;
+  const left = Math.max(0, u.limit - u.used);
+  const pct = Math.min(100, Math.round((100 * u.used) / u.limit));
+  const tone = left === 0 ? 'bad' : pct >= 80 ? 'warn' : 'good';
+  const next = u.next_free_at ? waitText(Date.parse(u.next_free_at) - now) : null;
+  const text = left === 0
+    ? `Limit reached. The next request is available in ${next}.`
+    : `${left} left. Each request counts for 24 hours${u.used && next ? `: the oldest frees up in ${next}` : ''}.`;
+  return { used: u.used, limit: u.limit, left, pct, tone, text, label: `${u.used} of ${u.limit} AI requests in the last 24 hours` };
+}
+
 /** Upkeep only the platform queues, as sweeps: shown in the queue, never offered in the request form. */
 export const SWEEP_KINDS = {
   rewrite_check: { label: 'Check rewrites in the project notation', short: 'Rewrite check', icon: 'eye', hint: 'A second AI compares each rewrite with its original. One that changes the meaning is not shown. People can overrule it.' },

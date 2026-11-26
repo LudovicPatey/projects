@@ -711,6 +711,7 @@ CREATE TABLE IF NOT EXISTS ai_tasks (
   conversation_id INT UNSIGNED NULL,      -- set when the task exposes a private conversation
   prompt_text TEXT NULL,
   requested_by INT UNSIGNED NULL,
+  counted TINYINT(1) NOT NULL DEFAULT 0, -- one of the AI requests a person made, against their limit of 40 in 24 hours
   dedupe_key VARCHAR(60) NULL,
   priority SMALLINT NOT NULL DEFAULT 50,  -- lower runs sooner: the scheduler's order (AiTaskController::PRIORITY)
   after_json TEXT NULL,                   -- ids of the tasks it waits for: it is offered once none of them is waiting or running

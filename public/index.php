@@ -16,6 +16,7 @@ $routes = [
     ['POST',   '/api/logout',                             [AuthController::class, 'logout']],
     ['PATCH',  '/api/me',                                 [AuthController::class, 'updateProfile']],
     ['GET',    '/api/me/keys',                            [KeyController::class, 'list']],
+    ['GET',    '/api/me/ai-usage',                        [AiTaskController::class, 'myUsage']],
     ['POST',   '/api/me/keys',                            [KeyController::class, 'create']],
     ['DELETE', '/api/me/keys/{id}',                       [KeyController::class, 'revoke']],
     // projects & members

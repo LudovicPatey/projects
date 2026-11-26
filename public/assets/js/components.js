@@ -1,7 +1,15 @@
 import { initials, colorFor, formatDuration } from './util.js';
 import { store, unreadCount, markAllRead, attempt } from './store.js';
 import { api } from './api.js';
-import { AI_KINDS } from './ai-model.js';
+import { AI_KINDS, usageView } from './ai-model.js';
+
+let usageLoad = null;
+/** The person's AI requests of the last 24 hours, fetched once for every AI button of the page, again when asked. */
+export function loadAiUsage(again = false) {
+  if (!store.user) return null;
+  if (!usageLoad || again) usageLoad = api.get('api/me/ai-usage').then((u) => { store.aiUsage = u; }).catch(() => { usageLoad = null; });
+  return usageLoad;
+}
 
 export const ICONS = {
   sparkles: '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 15v4"/><path d="M17 17h4"/><path d="M5 3v3"/><path d="M3.5 4.500h3"/>',
@@ -105,7 +113,15 @@ export const AiAction = {
     info() { return AI_KINDS[this.kind]; },
     text() { return this.label || this.info.label; },
     needsPrompt() { return this.kind === 'ask'; },
+    usage() { return usageView(store.aiUsage); },
+    full() { return this.usage?.left === 0; },
+    tip() {
+      const base = this.title || this.info.hint;
+      if (!this.usage) return base;
+      return this.full ? `${this.usage.label}. ${this.usage.text}` : `${base}\n\nYour AI requests: ${this.usage.used} of ${this.usage.limit} in the last 24 hours.`;
+    },
   },
+  mounted() { loadAiUsage(); },
   methods: {
     click() { if (this.needsPrompt) this.asking = true; else this.send(); },
     async send() {
@@ -114,11 +130,12 @@ export const AiAction = {
       const body = { kind: this.kind, ...(this.sourceType ? { source_type: this.sourceType, source_id: this.sourceId } : {}), ...(this.needsPrompt ? { prompt_text: this.prompt.trim() } : {}) };
       const done = await attempt(() => api.post(`api/projects/${store.project.id}/ai/tasks`, body), 'Added to the AI queue. A running AI client will process it.');
       this.busy = false;
-      if (done) { this.asking = false; this.prompt = ''; this.$emit('queued', done); }
+      if (done) { this.asking = false; this.prompt = ''; if (done.usage) store.aiUsage = done.usage; this.$emit('queued', done); }
+      else loadAiUsage(true); // refused, perhaps at the limit: show where it stands
     },
   },
   emits: ['queued'],
-  template: `<button class="btn sm" :disabled="busy || disabled" :title="title || info.hint" @click="click"><icon :name="info.icon === 'files' ? 'sparkles' : info.icon" :size="14"/> {{ text }}</button>
+  template: `<button class="btn sm" :class="{'at-limit': full}" :disabled="busy || disabled || full" :title="tip" @click="click"><icon :name="info.icon === 'files' ? 'sparkles' : info.icon" :size="14"/> {{ text }}</button>
   <modal v-if="asking" :title="text" @close="asking = false">
     <label class="field"><span>Your question</span><textarea v-model="prompt" rows="4" maxlength="4000"></textarea></label>
     <p class="muted small">The answer appears on the AI work page.</p>

@@ -624,6 +624,8 @@ export const ARTICLES = [
         ['**Review proofs**', 'A sweep, once the project is quiet, on clients that turned it on', 'An independent AI review of each proof nobody reviewed, six at a time, the facts others rely on first'],
         ['**Prove new facts**', 'A member starts a [proof search](help:danus) from their client', 'New facts, marked unchecked']),
       p('These actions are also available where they are useful: on a reference, a file, a conversation, a fact or a question. They all join the same queue.'),
+      h('Your AI requests'),
+      p('Each member may make **40 AI requests in any 24 hours**, so that nobody uses up the AI subscriptions of the team by accident. **Your AI requests**, in the request form of the AI work page, shows how many you made, as a bar that turns amber near the limit and red at it, and when the oldest one frees up: each request counts for 24 hours. Pointing at an AI button anywhere shows the same count. At the limit the buttons are greyed out until a request frees up. Only what you ask for counts: the upkeep the platform queues on its own, sweeps and the extraction of uploaded files, counts for nobody.'),
       h('In what order'),
       p('AI clients do first what someone is waiting for, and heavy background work last: a question to `@AI`, then reviews, source checks and reference searches, then consolidation and notation, proof searches, rewrites in the project notation, and the extraction of files last. Your own request goes before the same work queued automatically. Some tasks wait for others: a consolidation waits for the extractions that are adding facts, and rewrites in the project notation wait for the consolidation that may change it.'),
       h('Upkeep: sweeps'),

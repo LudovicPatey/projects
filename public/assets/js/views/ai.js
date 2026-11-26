@@ -2,7 +2,7 @@ import { api, expandFacts } from '../api.js';
 import { store, link, attempt, refreshCounters, toast } from '../store.js';
 import { timeAgo, fullDate } from '../util.js';
 import { Pill, Kpi, StackBar } from '../dashboard.js';
-import { bibProgress, privateExtractionNotice, clientStatus, computeTime, timeByKind, CLIENT_PERIODS, AI_KINDS, TASK_SEGMENTS, TASK_STATUS, filterTasks, requestBody, requestError, resultLinks, suggestionLink, taskActions, taskTitle, queueGroups, groupSummary, kindInfo } from '../ai-model.js';
+import { bibProgress, privateExtractionNotice, clientStatus, computeTime, timeByKind, CLIENT_PERIODS, AI_KINDS, TASK_SEGMENTS, TASK_STATUS, filterTasks, requestBody, requestError, resultLinks, suggestionLink, taskActions, taskTitle, queueGroups, groupSummary, kindInfo, usageView } from '../ai-model.js';
 
 export const AiView = {
   components: { Pill, Kpi, StackBar },
@@ -11,6 +11,8 @@ export const AiView = {
     return { d: null, filter: 'all', period: 'd7', draft: { kind: 'bib', prompt: '', document: '', question: '', fact: '' }, documents: [], references: [], conversations: [], questions: [], facts: [], busy: false, timer: null, bibData: null, openGroups: {} };
   },
   computed: {
+    /** The person's AI requests of the last 24 hours, against the limit. */
+    usage() { return usageView(store.aiUsage); },
     tasks() { return filterTasks(this.d?.tasks || [], this.filter); },
     queue() { return queueGroups(this.d?.groups, this.d?.tasks, this.filter); },
     task() { return (this.d?.tasks || []).find((t) => t.id === this.id) || null; },
@@ -47,7 +49,7 @@ export const AiView = {
     link, timeAgo, fullDate, taskTitle, groupSummary, kindInfo, resultLinks, suggestionLink, clientStatus, computeTime,
     async load() {
       const r = await attempt(() => api.get(`api/projects/${this.pid}/ai`));
-      if (r) { this.d = r; this.$nextTick(() => this.reveal()); }
+      if (r) { this.d = r; if (r.usage) store.aiUsage = r.usage; this.$nextTick(() => this.reveal()); }
     },
     reveal() {
       const id = this.query?.suggestion;
@@ -198,7 +200,12 @@ export const AiView = {
             <label v-if="kinds[draft.kind].needs === 'fact'" class="field"><span>Fact</span><select v-model="draft.fact"><option value="">Choose…</option><option v-for="f in facts" :key="f.id" :value="f.id">{{ f.label }}: {{ f.title }}</option></select></label>
             <label v-if="draft.kind === 'derive'" class="field"><span>Toward a question (optional)</span><select v-model="draft.question"><option value="">The whole project</option><option v-for="q in questions" :key="q.id" :value="q.id">{{ q.title }}</option></select></label>
             <label class="field"><span>{{ draft.kind === 'ask' ? 'Your question' : 'Instructions (optional)' }}</span><textarea v-model="draft.prompt" rows="3" maxlength="4000" :placeholder="draft.kind === 'bib' ? 'For example: work on sunflower bounds since 2019' : ''"></textarea></label>
-            <button class="btn primary block" :disabled="!!error || busy" :title="explain('task.send')" @click="send">Add to the queue</button>
+            <div v-if="usage" class="usage-meter" :class="'t-' + usage.tone" role="group" aria-label="Your AI requests">
+              <div class="usage-top"><span>Your AI requests</span><b>{{ usage.used }} / {{ usage.limit }}</b></div>
+              <div class="usage-bar" role="meter" :aria-valuenow="usage.used" aria-valuemin="0" :aria-valuemax="usage.limit" :aria-label="usage.label"><i :style="{width: usage.pct + '%'}"></i></div>
+              <small>{{ usage.text }} Work the platform queues on its own, such as sweeps and extractions of uploaded files, does not count.</small>
+            </div>
+            <button class="btn primary block" :disabled="!!error || busy || usage?.left === 0" :title="usage?.left === 0 ? usage.text : explain('task.send')" @click="send">Add to the queue</button>
             <p class="ai-note">The next member's AI client to run will process it, with the model that member chose for this work.</p>
           </section>
         </aside>

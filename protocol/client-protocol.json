@@ -1,7 +1,7 @@
 {
  "min_version": "1.0.0",
  "client_version": "1.20.0",
- "fingerprint": "19571546ce61b14ac539b9032e5e9bdf27f8b93fb37eabce8fbe590acaa6c633",
+ "fingerprint": "32f28190b42bf196aeb6369d705da43affd588da1db2da74c975098ddb9bf2c9",
  "routes": [
   "GET /api/ai/procedures AiTaskController::procedures",
   "GET /api/bib/{id}/pdf BibController::pdf",
@@ -134,7 +134,7 @@
   "AiTaskController::listSql": "6b0e24e4c5b2242aa146df678f7460ac2495279d97db5ac925eb3afadbb51dac",
   "AiTaskController::mayReview": "d3b38a4dc9cfa153838b04bfa863a419cef23ce855beeb9b609591db11df5ac9",
   "AiTaskController::outsideMembers": "e210c2ce2c375984e61843a7db22dbb363ebae29afd855099760e485bcceeabd",
-  "AiTaskController::overview": "d19035587776c331286f463bbd0179d9d22f6fd483c56d103c20dddb8e4d9f00",
+  "AiTaskController::overview": "3bdd2b78c16a21dc0e2d5d05112e527d96a5c329d48d61e9b7044c270336e721",
   "AiTaskController::owned": "eaeaafdd80af0b378ab3fc612d2d975429ff06c90c16db12adaa4fa2f9790d56",
   "AiTaskController::postReply": "90df8bebf96f2ed48b781a12cb379950e32c7d5a99b271f76aee378355d1c47d",
   "AiTaskController::present": "cfbb0b007606c46f3b06b8b2a20f7663252c0d38905d04f00601765a6526f8c2",
@@ -146,7 +146,7 @@
   "AiTaskController::readableSource": "68eeb56094633a6b67ee75f961b9537d8cdaf1216015f1a86339192fde5312c5",
   "AiTaskController::referenceDocument": "86b0e89fa6228925bbcbb1cffb757ab5b199f215a71f24cfe9ba745cf3cda21a",
   "AiTaskController::release": "4c03bb38208114549337705a9e4843535f263aa8e971ec9f1a181af86cc978a0",
-  "AiTaskController::request": "462dfb9ecac30797eac9b9a33dec8582d19b99598830433ea2d3e25c77ccf4fa",
+  "AiTaskController::request": "5fd7988b1992b353d3e6b20149b0e79d1001080b11bf23a141b880351b714c76",
   "AiTaskController::resultLink": "581196303278b655d044c568328f198c2cc6d394574e5214236ea7812fe76fff",
   "AiTaskController::row": "ed4d809d5008e7f0d0f76d1933d46d9a7a41999793f95921de6f11765e236540",
   "AiTaskController::seen": "a8300ebfba9e5e25ed35b5c32826ae22a2cf28acffd3edbec1d2c6b128f794a7",
@@ -158,6 +158,7 @@
   "AiTaskController::subjectSql": "909b62aefea480de724cc79562b22cef5b5fe23c1a98e23de9b613aad5e47ce3",
   "AiTaskController::suggest": "b40241bc86e502fee88ec804bed6a85b7cf1843282933b3e005557b1098dd337",
   "AiTaskController::thread": "528c9b4d340d9958b2e7af5116ebe6e82b6abc43f7498974c6e21bbf78af7b8f",
+  "AiTaskController::usage": "e9def034a462688d57abbd2528989e72a0ab35916fd41583d3e8fa7b2891a04e",
   "AiTaskController::visibleSql": "26187e1bcd9350fd74013d82ffdca146ebb36b6966b647bfb3c018daa8be2a48",
   "AiTaskController::waitingFor": "472964ed33ee9abfcad86a9bf875821aaa45ce7a270f9ab99593a1a6df3d1f1e",
   "Auth::CLIENT_NO_READ": "8db4213104a184fda95e9f4df267a7dacb14bad54b5e65396f8299691419c0b0",
@@ -1323,6 +1324,18 @@
     "+Sweeps::TYPES_BATCH",
     "+Sweeps::reviewCandidates",
     "+Sweeps::typeCandidates"
+   ]
+  },
+  {
+   "date": "2026-11-26",
+   "decision": "compatible",
+   "client_version": "1.20.0",
+   "min_version": "1.0.0",
+   "note": "Requests and the AI page add a usage field; only person-made requests count toward the limit; clients do not request tasks this way",
+   "changed": [
+    "AiTaskController::overview",
+    "AiTaskController::request",
+    "+AiTaskController::usage"
    ]
   }
  ]

@@ -8,6 +8,7 @@ const onScreen = new Map();
 let readTimer = null;
 
 export const store = reactive({
+  aiUsage: null, // the person's AI requests of the last 24 hours, against the limit
   user: null,
   dev: false,
   project: null,

@@ -217,6 +217,9 @@ final class Db
         $migrations[] = 'ALTER TABLE notations ADD COLUMN params_json TEXT NULL';
         // Whether a source check had the text of the source: one made blind is made again once the source is readable.
         $migrations[] = 'ALTER TABLE fact_source_checks ADD COLUMN had_source TINYINT(1) NULL';
+        // The AI requests a person made, against their daily limit. Before, every task without a dedupe key counted, sweeps included:
+        // the platform's own upkeep counted against whoever's client asked for work. The count starts afresh: the window is 24 hours.
+        $migrations[] = 'ALTER TABLE ai_tasks ADD COLUMN counted TINYINT(1) NOT NULL DEFAULT 0';
         foreach ($migrations as $m) {
             try { self::pdo()->exec($m); } catch (\PDOException) { /* already applied */ }
         }

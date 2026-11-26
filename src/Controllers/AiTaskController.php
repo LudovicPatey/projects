@@ -16,7 +16,26 @@ final class AiTaskController
     private const BUILT_IN = ['ask' => null, 'notation' => 'notation', 'consolidate' => 'consolidate'];
     private const LEASE_SECONDS = 900;
     private const MAX_ATTEMPTS = 3;
-    private const MAX_REQUESTS_PER_DAY = 40;
+    /** AI requests a person may make in any 24 hours. Work the platform queues on its own does not count. */
+    public const MAX_REQUESTS_PER_DAY = 40;
+
+    /**
+     * A person's AI requests over the last 24 hours, against the limit, and when the oldest one leaves that window and frees a request.
+     * @return array{used: int, limit: int, window_hours: int, next_free_at: ?string}
+     */
+    public static function usage(int $uid): array
+    {
+        // Only what the person asked for: sweeps and extractions the platform queues while they work count for nobody.
+        $rows = Db::all('SELECT created_at FROM ai_tasks WHERE requested_by = ? AND counted = 1 AND created_at > ? ORDER BY created_at', [$uid, gmdate('Y-m-d H:i:s', time() - 86400)]);
+        return ['used' => count($rows), 'limit' => self::MAX_REQUESTS_PER_DAY, 'window_hours' => 24,
+            'next_free_at' => $rows ? gmdate('Y-m-d\TH:i:s\Z', strtotime($rows[0]['created_at'] . ' UTC') + 86400) : null];
+    }
+
+    /** What the interface shows a person: their AI requests of the last 24 hours. */
+    public static function myUsage(Request $r): never
+    {
+        Response::json(self::usage((int)Auth::id()));
+    }
     private const ONLINE_SECONDS = 180;
     private const ASSISTANT = 'ai-assistant';
     private const SOURCES = ['document', 'bib', 'conversation', 'question', 'strategy', 'fact'];
@@ -140,7 +159,7 @@ final class AiTaskController
             "SELECT s.*, u.name AS ai_user_name, d.name AS decided_by_name FROM bib_suggestions s LEFT JOIN users u ON u.id = s.ai_user_id LEFT JOIN users d ON d.id = s.decided_by
              WHERE s.project_id = ? ORDER BY CASE s.status WHEN 'proposed' THEN 0 ELSE 1 END, s.id DESC LIMIT 100", [$pid]);
         Response::json(['tasks' => array_map([self::class, 'present'], $tasks), 'groups' => self::groups($pid, $me), 'counts' => $counts, 'clients' => $clients, 'computers' => self::computers($pid),
-            'suggestions' => array_map([self::class, 'presentSuggestion'], $suggestions)]);
+            'suggestions' => array_map([self::class, 'presentSuggestion'], $suggestions), 'usage' => self::usage((int)$me)]);
     }
 
     public static function request(Request $r): never
@@ -152,9 +171,11 @@ final class AiTaskController
         if (Auth::isAi() && !(Auth::isClient() && $kind === 'derive')) throw new HttpError(403, 'Only a person can do this.');
         if (!in_array($kind, self::kinds(), true)) throw new HttpError(422, 'Choose what the AI should do.');
         if (in_array($kind, ['rewrite_check', 'second_reading', 'proof_review'], true)) throw new HttpError(422, 'The platform queues this on its own, whenever there is work for it.');
-        $since = gmdate('Y-m-d H:i:s', time() - 86400);
-        if ((int)Db::value('SELECT COUNT(*) FROM ai_tasks WHERE requested_by = ? AND created_at > ? AND dedupe_key IS NULL', [Auth::id(), $since]) >= self::MAX_REQUESTS_PER_DAY) {
-            throw new HttpError(429, 'You have reached the limit of AI requests for today.');
+        $usage = self::usage((int)Auth::id());
+        if ($usage['used'] >= $usage['limit']) {
+            $wait = max(1, (int)ceil((strtotime((string)$usage['next_free_at']) - time()) / 60));
+            $in = $wait >= 60 ? intdiv($wait, 60) . ' h' . ($wait % 60 ? ' ' . ($wait % 60) . ' min' : '') : "$wait min";
+            throw new HttpError(429, "You have used your {$usage['limit']} AI requests of the last 24 hours. The next one is available in $in.");
         }
         $prompt = trim((string)$r->input('prompt_text', ''));
         if (mb_strlen($prompt) > 4000) throw new HttpError(422, 'The instructions are too long (4000 characters at most).');
@@ -194,13 +215,14 @@ final class AiTaskController
             $snapshot = self::conversationSnapshot($pid, $sourceId, $private);
         }
         $id = self::insertTask($pid, $kind, $sourceType, $sourceId, $versionId, $sourceType === 'conversation' ? $sourceId : null, $prompt !== '' ? $prompt : null, null, $blobId, $snapshot, !Auth::isAi());
+        Db::update('ai_tasks', ['counted' => 1], 'id = :id', ['id' => $id]); // one of the person's AI requests
         if ($snapshot['shared'] ?? false) {
             $subject = (string)Db::value('SELECT subject FROM conversations WHERE id = ?', [$sourceId]);
             foreach (Db::all("SELECT u.id FROM conversation_participants cp JOIN users u ON u.id = cp.user_id WHERE cp.conversation_id = ? AND u.kind = 'human' AND u.id <> ?", [$sourceId, Auth::id()]) as $u) {
                 Notify::send((int)$u['id'], $pid, 'conversation_extract', ['link' => ['view' => 'conversations', 'id' => $sourceId], 'excerpt' => $subject]);
             }
         }
-        Response::json(self::present(self::row($id)), 201);
+        Response::json(self::present(self::row($id)) + ['usage' => self::usage((int)Auth::id())], 201);
     }
 
     /** Queues every reference whose current PDF has no finished or waiting extraction. */
