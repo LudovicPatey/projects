@@ -14,6 +14,7 @@ const ACTIONS = {
   at_risk: { icon: 'eye', tone: 'bad', label: 'Answer at risk', text: 'The fact behind this answer changed' },
   ratify: { icon: 'check-circle', tone: 'warn', label: 'To ratify', text: 'An answer awaits a human decision' },
   disputed: { icon: 'x', tone: 'bad', label: 'Disputed', text: 'Settle this fact' },
+  ai_question: { icon: 'comment', tone: 'warn', label: 'The AI asks', text: 'A choice it could not settle from the text' },
   review: { icon: 'graph', tone: 'info', label: 'To review', text: 'No check from you yet' },
   strategy: { icon: 'route', tone: 'neutral', label: 'No strategy', text: 'Propose an approach' },
 };

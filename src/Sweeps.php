@@ -106,7 +106,9 @@ final class Sweeps
     private static function stale(int $pid, string $sweep): bool
     {
         return (bool)match ($sweep) {
-            'rewrite' => self::rewriteCandidates($pid), 'source' => self::sourceCandidates($pid),
+            // Rewrites wait while the notation still has symbols to settle: a fact rewritten now would be rewritten again once they
+            // are. A member who asks for the rewrites starts them at once all the same (NotationController::rephraseAll).
+            'rewrite' => self::rewriteCandidates($pid) && !self::open($pid, 'symbols') && !self::symbolCandidates($pid), 'source' => self::sourceCandidates($pid),
             'check' => self::checkCandidates($pid), 'second' => self::secondCandidates($pid), 'review' => self::reviewCandidates($pid), 'symbols' => self::symbolCandidates($pid) || self::typeCandidates($pid),
         };
     }
@@ -231,10 +233,13 @@ final class Sweeps
     public static function checkCandidates(int $pid): array
     {
         $tried = self::tried($pid, 'rewrite_check', null);
-        $ids = array_map('intval', array_column(Db::all("SELECT x.id FROM fact_rephrasings x JOIN facts f ON f.id = x.fact_id AND x.revision_no = f.current_revision
-            WHERE f.project_id = ? AND f.deleted_at IS NULL AND f.retracted_at IS NULL AND x.notation_hash = ? AND x.unchanged = 0 AND x.check_verdict IS NULL ORDER BY x.id",
-            [$pid, NotationController::hash($pid)]), 'id'));
-        return array_values(array_filter($ids, fn($id) => !isset($tried[$id])));
+        $hashes = NotationController::factHashes($pid); // each rewrite against the notation its own fact uses
+        $ids = [];
+        foreach (Db::all("SELECT x.id, x.fact_id, x.notation_hash FROM fact_rephrasings x JOIN facts f ON f.id = x.fact_id AND x.revision_no = f.current_revision
+            WHERE f.project_id = ? AND f.deleted_at IS NULL AND f.retracted_at IS NULL AND x.unchanged = 0 AND x.check_verdict IS NULL ORDER BY x.id", [$pid]) as $x) {
+            if ($x['notation_hash'] === ($hashes[(int)$x['fact_id']] ?? null) && !isset($tried[(int)$x['id']])) $ids[] = (int)$x['id'];
+        }
+        return $ids;
     }
 
     /**
@@ -256,9 +261,8 @@ final class Sweeps
      */
     public static function rewriteCandidates(int $pid): array
     {
-        $hash = NotationController::hash($pid);
-        if ($hash === sha1('')) return [];
-        $tried = self::tried($pid, 'notation', $hash);
+        if (NotationController::isEmptyHash(NotationController::hash($pid))) return [];
+        $tried = self::tried($pid, 'notation', null);
         $out = [];
         foreach (NotationController::states($pid) as $fid => $s) {
             $times = $tried["$fid:{$s['revision']}"] ?? 0;
@@ -305,7 +309,13 @@ final class Sweeps
             $snap = json_decode((string)$t['snapshot_json'], true) ?: [];
             if ($kind === 'notation') {
                 // A rewrite tried in this notation, by a sweep that finished: failed sweeps are tried again.
-                if ($t['source_type'] === 'sweep' && $t['status'] === 'done' && ($snap['hash'] ?? null) === $hash) foreach ($snap['facts'] ?? [] as [$f, $rev]) $done["$f:$rev"] = ($done["$f:$rev"] ?? 0) + 1;
+                // Each fact against the notation it uses: a sweep of before the per-fact fingerprints recorded one for the project.
+                if ($t['source_type'] === 'sweep' && $t['status'] === 'done') {
+                    foreach ($snap['facts'] ?? [] as [$f, $rev]) {
+                        $then = $snap['hashes'][$f] ?? $snap['hash'] ?? null;
+                        if ($then !== null && $then === NotationController::hashFor($pid, (int)$f)) $done["$f:$rev"] = ($done["$f:$rev"] ?? 0) + 1;
+                    }
+                }
                 continue;
             }
             if ($t['status'] !== 'done') continue;
@@ -344,7 +354,7 @@ final class Sweeps
                 $batch[] = [$f, $rev]; $chars += $size;
             }
             // Full: more was left than this batch could hold. The facts it holds count as tried, so none is taken again and again.
-            $snap = ['facts' => $batch, 'hash' => NotationController::hash($pid), 'full' => $full];
+            $snap = ['facts' => $batch, 'hashes' => array_combine(array_column($batch, 0), array_map(fn($x) => NotationController::hashFor($pid, (int)$x[0]), $batch)) ?: [], 'full' => $full];
         } elseif ($t['kind'] === 'rewrite_check') {
             $batch = []; $chars = 0; $full = false;
             foreach (self::checkCandidates($pid) as $id) {

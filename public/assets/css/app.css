@@ -515,27 +515,35 @@ h4.mt { margin-top: 18px; }
 .notation-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }
 .notation-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 360px); gap: 14px; align-items: start; }
 .notation-main, .notation-side { display: grid; gap: 14px; min-width: 0; }
-.notation-entry { display: grid; grid-template-columns: fit-content(150px) minmax(0, 1fr) auto; gap: 8px 14px; align-items: start; padding: 12px 2px; border-top: 1px solid var(--line); }
+/* A notation entry: a header (symbol, who decided it, actions), the meaning, then labelled rows. One structure, not blocks stacked. */
+.notation-entry { display: grid; gap: 8px; padding: 14px 2px; border-top: 1px solid var(--line); }
+.nt-head { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 6px 14px; }
+.nt-provenance { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; min-width: 0; color: var(--muted); font-size: 12.5px; }
+.nt-meaning { font-size: 14.5px; line-height: 1.55; }
+.nt-meaning p { margin: 0; }
+.nt-rows { display: grid; grid-template-columns: 140px minmax(0, 1fr); gap: 7px 14px; margin: 0; padding: 10px 12px; border: 1px solid var(--line-2); border-radius: 8px; background: var(--panel-2); font-size: 13px; line-height: 1.5; }
+.nt-rows:empty { display: none; }
+.nt-rows dt { padding-top: 1px; color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; }
+.nt-rows dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
+.nt-rows .pm-name { font-weight: 600; }
+.nt-rows .pm-group + .pm-group { margin-left: 10px; }
+.nt-rows .pm-missing { color: var(--muted); font-style: italic; }
+.nt-hint { display: block; margin-top: 2px; color: var(--muted); font-size: 12px; }
+.nt-list { margin: 0; padding-left: 16px; }
+.nt-list li + li { margin-top: 3px; }
+.nt-dash { color: var(--muted); }
+.nt-where { margin-left: 6px; color: var(--muted); font-size: 12px; }
 .notation-entry.flash { background: var(--warn-bg); }
 .notation-symbol { font-size: 17px; overflow-wrap: anywhere; }
 .notation-body { display: grid; gap: 4px; min-width: 0; }
-.notation-note { display: flex; gap: 6px; margin: 0; color: var(--warn); font-size: 13px; }
-.notation-note svg { flex: none; margin-top: 2px; }
 .notation-variants { margin: 0; padding-left: 18px; font-size: 13px; }
-.notation-variants-group > small { color: var(--muted); font-size: 11.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .03em; }
-.notation-variants-group.g-clashes > small { color: var(--warn); }
 .notation-variants small { margin-left: 6px; color: var(--muted); }
 .notation-actions { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
 /* What an entry applies to: its parameters in color, with their type. */
 .oq-pm-0, .oq-pm-4, .pm-0 { color: var(--pm-0); } .oq-pm-1, .oq-pm-5, .pm-1 { color: var(--pm-1); }
 .oq-pm-2, .oq-pm-6, .pm-2 { color: var(--pm-2); } .oq-pm-3, .oq-pm-7, .pm-3 { color: var(--pm-3); }
 .oq-pm { cursor: help; }
-.notation-scope { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin: 6px 0 2px; padding: 6px 9px; border-radius: 6px; background: var(--panel-2); border: 1px solid var(--line-2); font-size: 13px; }
-.notation-scope.untyped .pm-missing { color: var(--muted); font-style: italic; }
-.notation-scope .scope-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); }
-.notation-scope .pm-name { font-weight: 600; }
-.notation-scope .scope-hint { flex-basis: 100%; color: var(--muted); }
-.notation-effects { margin: 6px 0 2px; font-size: 13px; }
+.notation-effects { margin: 0; font-size: 13px; }
 .notation-effects summary { cursor: pointer; color: var(--accent); font-size: 12.5px; }
 .notation-effects dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 12px; margin: 6px 0 0; }
 .notation-effects dt { font-weight: 600; }
@@ -545,10 +553,13 @@ h4.mt { margin-top: 18px; }
 .notation-edit { grid-column: 1 / -1; }
 .notation-talk .comments, .notation-talk .col-comments { height: auto; max-height: 60vh; overflow-y: auto; }
 .notation-talk .ai-head h2 { font-size: 16px; }
-.notation-shared { display: grid; grid-template-columns: fit-content(150px) minmax(0, 1fr) auto; gap: 8px 14px; align-items: start; padding: 10px 2px; border-top: 1px solid var(--line); }
+/* A symbol several facts define: a header (symbol, facts, state, its entry), its wordings, then what a member can decide. */
+.notation-shared { display: grid; gap: 6px; padding: 12px 2px; border-top: 1px solid var(--line); }
+.notation-shared .shared-state, .notation-shared .nt-spellings { margin: 0; }
+.nt-decide { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding-top: 4px; }
+.nt-decide select { max-width: 260px; }
 .warn-text { color: var(--warn); }
 .fact-project-symbols { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; margin: 8px 0 0; }
-@media (max-width: 900px) { .notation-shared { grid-template-columns: minmax(0, 1fr); } }
 .notation-def { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px 12px; padding: 10px 2px; border-top: 1px solid var(--line); }
 .notation-def-main { flex: 1 1 260px; min-width: 0; }
 .notation-def-main p { margin: 4px 0; overflow-wrap: anywhere; }
@@ -560,7 +571,8 @@ h4.mt { margin-top: 18px; }
 .notation-use { padding: 3px 8px; border: 1px solid var(--line); border-radius: 999px; background: #fff; font-size: 13px; }
 .notation-use small { color: var(--muted); }
 @media (max-width: 1200px) { .notation-grid { grid-template-columns: minmax(0, 1fr); } .notation-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 900px) { .notation-entry { grid-template-columns: minmax(0, 1fr); } .notation-actions { justify-content: flex-start; } }
+@media (max-width: 900px) { .nt-head { grid-template-columns: minmax(0, 1fr); } .notation-actions { justify-content: flex-start; } }
+@media (max-width: 600px) { .nt-rows { grid-template-columns: minmax(0, 1fr); gap: 2px; } .nt-rows dd + dt { margin-top: 8px; } }
 /* Consolidation and subject tags */
 .cons-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 14px; align-items: start; padding: 12px 2px; border-top: 1px solid var(--line); }
 .cons-main { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
@@ -1726,7 +1738,6 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: non
 
 /* When the AI settles a symbol defined in several facts, or that it left it to the members. */
 .shared-state { display: flex; align-items: center; gap: 5px; margin-top: 3px; color: var(--muted); }
-.shared-state.s-left { color: var(--warn); }
 
 /* An object not in its final state: an AI pass is still due on it (Sweeps::pendingForFact, pendingItems). */
 .ai-pending { display: flex; align-items: flex-start; gap: 7px; margin: 6px 0 10px; padding: 7px 10px; border: 1px dashed var(--line); border-radius: 8px; background: var(--panel-2); color: var(--muted); font-size: 13px; line-height: 1.45; }
@@ -1748,3 +1759,9 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: non
 .wording-entry { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-left: 4px; }
 .wording-group .notation-variants { margin-top: 2px; }
 .wording-head > .muted { margin-left: 4px; }
+
+/* The notice of what a fact waits for: one group for AI passes, one for people. */
+.ai-pending-group { display: block; margin-top: 3px; }
+.ai-pending-head { display: block; color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; }
+.ai-pending-answer { color: var(--muted); }
+.ai-pending.compact .ai-pending-group, .ai-pending.compact .ai-pending-head { display: inline; }

@@ -103,7 +103,7 @@ test('a symbol defined in several facts says when the AI compares and settles it
   assert.equal(sharedState({ sweep: 'next', meanings: [1, 2] }), 'The AI compares its wordings and settles it in the next symbols sweep, once nobody has added facts for a while.');
   assert.match(sharedState({ sweep: 'later', meanings: [1] }), /^The AI settles it in a later symbols sweep/);
   assert.match(sharedState({ sweep: 'reading', meanings: [1] }), /now/);
-  assert.match(sharedState({ sweep: 'left', meanings: [1] }), /left to the members/);
+  assert.match(sharedState({ sweep: 'left', meanings: [1] }), /waits for a member/);
   assert.equal(sharedState({ sweep: null, entry: { status: 'agreed' } }), '');
   const p2 = (await app.call(ann, 'POST', '/api/projects', { title: 'Shared', question_html: '<p>Q</p>' })).data.id;
   const fact = (ref, m) => ({ ref, title: ref, kind: 'lemma', labels: ['conclusion'], method: 'deduced', statement_text: 'Every $\\mathrm{SG}$ works.', proof_text: 'P.', glossary: { '\\mathrm{SG}': m } });

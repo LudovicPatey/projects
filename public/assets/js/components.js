@@ -1,7 +1,7 @@
 import { initials, colorFor, formatDuration } from './util.js';
 import { store, unreadCount, markAllRead, attempt } from './store.js';
 import { api } from './api.js';
-import { AI_KINDS, pendingView, usageView } from './ai-model.js';
+import { AI_KINDS, pendingView, questionView, usageView } from './ai-model.js';
 
 let usageLoad = null;
 /** The person's AI requests of the last 24 hours, fetched once for every AI button of the page, again when asked. */
@@ -110,10 +110,16 @@ export const AiMeta = {
  * do meanwhile. `items`: [{sweep, open}] from the server.
  */
 export const AiPending = {
-  props: { items: Array, compact: Boolean },
-  computed: { passes() { return pendingView(this.items); } },
-  template: `<div v-if="passes.length" class="ai-pending" :class="{compact}" role="note"><icon name="clock" :size="13"/><span><b>Not final yet: waiting for {{ passes.length > 1 ? 'AI passes' : 'an AI pass' }}.</b>
-    <template v-for="p in passes" :key="p.sweep"> <span class="ai-pending-pass" :title="p.text"><b>{{ p.name }}</b><template v-if="!compact">: {{ p.text }}</template></span></template></span></div>`,
+  props: { items: Array, questions: Array, compact: Boolean },
+  computed: {
+    passes() { return pendingView(this.items); },
+    asks() { return (this.questions || []).map(questionView).filter(Boolean); },
+  },
+  template: `<div v-if="passes.length || asks.length" class="ai-pending" :class="{compact}" role="note"><icon name="clock" :size="13"/><span><b>Not final yet.</b>
+    <span v-if="passes.length" class="ai-pending-group"><span class="ai-pending-head">Waiting for {{ passes.length > 1 ? 'AI passes' : 'an AI pass' }}</span>
+      <template v-for="p in passes" :key="p.sweep"> <span class="ai-pending-pass" :title="p.text"><b>{{ p.name }}</b><template v-if="!compact">: {{ p.text }}</template></span></template></span>
+    <span v-if="asks.length" class="ai-pending-group"><span class="ai-pending-head">Waiting for a person</span>
+      <span v-for="q in asks" :key="q.key" class="ai-pending-pass"><b>{{ q.who }}:</b> <math-text :text="q.text"/> <span class="ai-pending-answer">{{ q.answer }}</span></span></span></span></div>`,
 };
 
 /** The same AI request from anywhere it is relevant. It joins the queue shown on the AI page. */

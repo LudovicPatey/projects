@@ -266,8 +266,11 @@ final class FactController
         foreach (Db::all('SELECT r.fact_id, r.revision_no, r.statement_html, r.proof_html, r.glossary_json, r.external_refs_json FROM fact_revisions r
                           JOIN facts f ON f.id = r.fact_id AND r.revision_no = f.current_revision WHERE f.project_id = ? AND f.deleted_at IS NULL', [$pid]) as $x) $rev[(int)$x['fact_id']] = $x;
         $notation = [];
-        foreach (Db::all("SELECT p.fact_id, p.statement_html, p.proof_html, p.local_json FROM fact_rephrasings p JOIN facts f ON f.id = p.fact_id AND p.revision_no = f.current_revision
-                          WHERE f.project_id = ? AND p.unchanged = 0 AND COALESCE(p.check_verdict, '') <> 'unfaithful' AND p.notation_hash = ? ORDER BY p.id", [$pid, NotationController::hash($pid)]) as $x) $notation[(int)$x['fact_id']] = $x;
+        $hashes = NotationController::factHashes($pid); // each rewrite against the notation its own fact uses
+        foreach (Db::all("SELECT p.fact_id, p.statement_html, p.proof_html, p.local_json, p.notation_hash FROM fact_rephrasings p JOIN facts f ON f.id = p.fact_id AND p.revision_no = f.current_revision
+                          WHERE f.project_id = ? AND p.unchanged = 0 AND COALESCE(p.check_verdict, '') <> 'unfaithful' ORDER BY p.id", [$pid]) as $x) {
+            if ($x['notation_hash'] === ($hashes[(int)$x['fact_id']] ?? null)) $notation[(int)$x['fact_id']] = $x;
+        }
         // A fact may be built on when it is established, and everything it relies on too.
         $trusted = [];
         $ok = function (int $id, array $seen = []) use (&$ok, &$trusted, $byId): bool {
@@ -671,6 +674,34 @@ final class FactController
     {
         [$fid, $created] = self::recordReview($r);
         Response::json(self::present(Access::fact($fid)), $created ? 201 : 200);
+    }
+
+    /**
+     * The questions an AI asked people about facts, still open: a choice its rewrite in project notation made that the text does not
+     * settle, until a person checks that rewrite; what a person should check in the source of a cited result, until a person reviews
+     * it. Only for the current revision, and the rewrite in the notation the fact now uses.
+     * @return list<array{fact_id: int, label: string, title: string, kind: string, text: string, model: ?string, at: string}>
+     */
+    public static function aiQuestions(int $pid, ?int $fid = null): array
+    {
+        $only = $fid ? ' AND f.id = ' . (int)$fid : '';
+        $hashes = NotationController::factHashes($pid);
+        $out = [];
+        foreach (Db::all("SELECT x.fact_id, x.doubt_text, x.ai_model, x.created_at, x.notation_hash, f.label, f.title FROM fact_rephrasings x
+                          JOIN facts f ON f.id = x.fact_id AND x.revision_no = f.current_revision
+                          WHERE f.project_id = ? AND f.deleted_at IS NULL AND f.retracted_at IS NULL AND x.checked_by IS NULL AND x.doubt_text IS NOT NULL$only ORDER BY x.id DESC", [$pid]) as $x) {
+            if ($x['notation_hash'] !== ($hashes[(int)$x['fact_id']] ?? null) || isset($out['rewrite:' . $x['fact_id']])) continue;
+            $out['rewrite:' . $x['fact_id']] = ['fact_id' => (int)$x['fact_id'], 'label' => $x['label'], 'title' => $x['title'], 'kind' => 'rewrite', 'text' => $x['doubt_text'], 'model' => $x['ai_model'], 'at' => $x['created_at']];
+        }
+        foreach (Db::all("SELECT c.fact_id, c.doubt_text, c.ai_model, c.created_at, f.label, f.title FROM fact_source_checks c
+                          JOIN facts f ON f.id = c.fact_id AND c.revision_no = f.current_revision
+                          WHERE f.project_id = ? AND f.deleted_at IS NULL AND f.retracted_at IS NULL AND c.doubt_text IS NOT NULL$only
+                            AND c.id = (SELECT MAX(c2.id) FROM fact_source_checks c2 WHERE c2.fact_id = c.fact_id AND c2.revision_no = c.revision_no)
+                            AND NOT EXISTS (SELECT 1 FROM fact_reviews v WHERE v.fact_id = f.id AND v.revision_no = f.current_revision AND v.reviewer_kind = 'human')
+                          ORDER BY c.id DESC", [$pid]) as $c) {
+            $out['source:' . $c['fact_id']] = ['fact_id' => (int)$c['fact_id'], 'label' => $c['label'], 'title' => $c['title'], 'kind' => 'source', 'text' => $c['doubt_text'], 'model' => $c['ai_model'], 'at' => $c['created_at']];
+        }
+        return array_values($out);
     }
 
     /** Records a review of a fact's current revision, by a person or an AI. @return array{0: int, 1: bool} the fact, and whether the review is new */
@@ -1530,6 +1561,8 @@ final class FactController
                     WHERE (s.fact_id = ? OR s.other_fact_id = ?) AND s.status IN ('accepted', 'undone') ORDER BY s.decided_at DESC, s.id DESC LIMIT 100", [$id, $id]));
         // The AI passes it still waits for: it is not in its final state, and people need not fix by hand what an AI is about to do.
         $out['ai_pending'] = \App\Sweeps::pendingForFact($pid, $id);
+        // And what it waits for from a person: a question the AI asked about its rewrite or its check of the source.
+        $out['ai_questions'] = self::aiQuestions($pid, $id);
         $out['worth_reading'] = $f['highlight_at'] ? ['reason' => $f['highlight_reason'], 'at' => $f['highlight_at'], 'model' => $f['highlight_model']] : null;
         // The agreed notation, so that a reader sees the meaning of each symbol the fact uses.
         // Each with its parameters and their types: an entry applies to those objects only.

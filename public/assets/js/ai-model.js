@@ -64,6 +64,17 @@ export function pendingView(items) {
   });
 }
 
+/**
+ * A question an AI asked people about a fact, as the notice words it: who asks, what, and how a person answers it. The rewrite's
+ * question closes when a person checks that rewrite; the source check's, when a person reviews the cited result.
+ */
+export function questionView(q) {
+  if (!q?.text) return null;
+  return q.kind === 'rewrite'
+    ? { key: `rewrite-${q.fact_id}`, who: 'The AI that wrote it in the project notation asks', text: q.text, answer: 'Answer it by checking that version: Faithful or Unfaithful, under the statement.' }
+    : { key: `source-${q.fact_id}`, who: 'The AI that checked its source asks', text: q.text, answer: 'Answer it by reviewing this cited result once you have read the source.' };
+}
+
 /** What the interface says about a kind of task, requestable or not. */
 export const kindInfo = (kind) => AI_KINDS[kind] || SWEEP_KINDS[kind] || null;
 

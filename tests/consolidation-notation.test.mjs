@@ -80,7 +80,8 @@ test('undoing gives the notation back as it was, and the rewrites in that notati
   const progress = async () => (await entries()).progress;
   assert.equal((await app.call(key, 'POST', `/api/facts/${id.c}/rephrasings`, { ai_model: 'claude-opus-5-5', unchanged: true })).status, 201);
   assert.equal((await progress()).unchanged, 1);
-  const r = await propose({ action: 'adopt', entry: null, symbol: '\\mathrm{NS}(X)', meaning: 'The finite sums of $X$, with 0.', note: '', variants: [] });
+  // The facts write FS(X): the entry records that spelling, as the symbols sweep does, which ties it to them.
+  const r = await propose({ action: 'adopt', entry: null, symbol: '\\mathrm{NS}(X)', meaning: 'The finite sums of $X$, with 0.', note: '', variants: [{ symbol: '\\mathrm{FS}(X)', meaning: 'as the facts write it', where: 'facts of the project', relation: 'instance' }] });
   assert.equal(r.applied.length, 1);
   assert.equal((await progress()).unchanged, 0, 'the notation changed: the rewrite is out of date');
   assert.equal((await app.call(key, 'POST', `/api/facts/${id.c}/rephrasings`, { ai_model: 'claude-opus-5-5', unchanged: true })).status, 201, 'rewritten in the new notation');

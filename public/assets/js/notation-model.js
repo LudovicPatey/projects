@@ -115,7 +115,8 @@ export function wordingGroups(s) {
   if (n > 1 && groups.length === 1 && !unread.length) summary = `${n} wordings, all equivalent`;
   else if (n > 1 && groups.length > 1) summary = `${n} wordings, ${groups.length} different meanings${unread.length ? `, ${unread.length} not compared yet` : ''}`;
   else if (n > 1 && groups.length === 1) summary = `${n} wordings, ${unread.length} not compared yet`;
-  else if (n > 1) summary = `${n} wordings, not compared yet`;
+  // A settled symbol is not compared again: its wordings are only listed.
+  else if (n > 1) summary = s?.entry ? `${n} wordings` : `${n} wordings, not compared yet`;
   return { summary, blocks, grouped: groups.length > 0 };
 }
 
@@ -129,7 +130,7 @@ export function sharedState(s) {
     case 'reading': return `The AI ${what} now, in the symbols sweep under way.`;
     case 'next': return `The AI ${what} in the next symbols sweep, once nobody has added facts for a while.`;
     case 'later': return `The AI ${what} in a later symbols sweep: thirty symbols at a time, the most used first.`;
-    case 'left': return 'Two symbols sweeps read it without settling it: it is left to the members. Propose it as global, or discuss it.';
+    case 'left': return 'Two symbols sweeps read it without settling it: it waits for a member. Record it as a spelling of an entry, keep it local, or propose it as global.';
     default: return '';
   }
 }

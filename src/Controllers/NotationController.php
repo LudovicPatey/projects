@@ -142,9 +142,11 @@ final class NotationController
         $local = self::localNotation($r->input('local_notation', []));
         $model = Provenance::agentModel($r);
         $id = Db::insert('fact_rephrasings', Provenance::stamp($model, $r->input('generation_seconds')) + [
-            'fact_id' => $f['id'], 'revision_no' => $f['current_revision'], 'notation_hash' => $hash ?: self::hash($pid), 'unchanged' => $unchanged ? 1 : 0,
+            'fact_id' => $f['id'], 'revision_no' => $f['current_revision'], 'notation_hash' => $hash ?: self::hashFor($pid, (int)$f['id']), 'unchanged' => $unchanged ? 1 : 0,
             'statement_html' => $statement['html'], 'proof_html' => $proof, 'uses_json' => $uses ? json_encode($uses, JSON_UNESCAPED_UNICODE) : null, 'local_json' => $local ? json_encode($local, JSON_UNESCAPED_UNICODE) : null,
             'author_id' => Auth::id(), 'ai_model' => $model, 'created_at' => Db::now(),
+            // A question about a choice the fact's text does not settle: shown on the fact until a person checks the rewrite.
+            'doubt_text' => mb_substr(trim((string)$r->input('doubt_text', '')), 0, 2000) ?: null,
         ]);
         Activity::touch($pid, 'fact', (int)$f['id'], 'rephrased', $id);
         return (int)$f['id'];
@@ -209,6 +211,94 @@ final class NotationController
         // Local entries count too: a rewrite unfolds them.
         $rows = Db::all("SELECT id, symbol_key, meaning_html, status FROM notations WHERE project_id = ? AND status IN ('agreed', 'local') ORDER BY id", [$pid]);
         return $rows ? sha1(json_encode(array_map(fn($n) => [(int)$n['id'], $n['symbol_key'], $n['meaning_html'], $n['status'] === 'local' ? 'local' : ''], $rows))) : self::EMPTY;
+    }
+
+    /** Signs of every formula: a meaning that uses them says nothing about which facts concern the entry. */
+    private const COMMON = ['\\in', '\\notin', '\\subseteq', '\\subset', '\\supseteq', '\\setminus', '\\cup', '\\cap', '\\leq', '\\geq', '\\neq', '\\lt', '\\gt', '\\to', '\\mapsto',
+        '\\mid', '\\ldots', '\\dots', '\\cdots', '\\cdot', '\\times', '\\emptyset', '\\infty', '\\forall', '\\exists', '\\land', '\\lor', '\\neg', '\\iff', '\\implies',
+        '\\langle', '\\rangle', '\\lbrace', '\\rbrace', '\\sum', '\\bigcup', '\\bigcap', '\\min', '\\max', '\\sup', '\\inf', '\\lim', '\\log', '\\frac', '\\sqrt', '\\vert', '\\colon'];
+
+    /** The fingerprints of each fact, by notation fingerprint: computed once per state of the notation in a request. */
+    private static array $factHashCache = [];
+
+    /**
+     * The fingerprint of the notation a fact is written in: the agreed and local entries it uses, those whose symbol or another
+     * spelling of it occurs in the fact's own text (statement, proof, glossary of its revision; never its rewrite). A rewrite is out
+     * of date when this changes, so a new entry for one paper's notion no longer sends every fact of the project to be rewritten.
+     * A fact that uses no entry needs no rewrite (EMPTY). An entry is found by the rarest token of each of its spellings, a command
+     * such as \ll or a name such as FS: when a spelling occurs, all its tokens do, so a fact that writes it is never missed.
+     * @return array<int, string> by fact id
+     */
+    public static function factHashes(int $pid): array
+    {
+        $ck = $pid . ':' . self::hash($pid);
+        if (isset(self::$factHashCache[$ck])) return self::$factHashCache[$ck];
+        $entries = Db::all("SELECT id, symbol, symbol_key, meaning_html, status, variants_json FROM notations WHERE project_id = ? AND status IN ('agreed', 'local') ORDER BY id", [$pid]);
+        $texts = [];
+        foreach (Db::all('SELECT f.id, r.statement_html, r.proof_html, r.glossary_json FROM facts f JOIN fact_revisions r ON r.fact_id = f.id AND r.revision_no = f.current_revision
+                          WHERE f.project_id = ? AND f.deleted_at IS NULL', [$pid]) as $f) {
+            $g = json_decode((string)$f['glossary_json'], true) ?: [];
+            $texts[(int)$f['id']] = self::tokenText(html_entity_decode(strip_tags((string)$f['statement_html'] . ' ' . (string)$f['proof_html']), ENT_QUOTES | ENT_HTML5) . ' ' . implode(' ', array_keys($g)) . ' ' . implode(' ', array_map('strval', array_values($g))));
+        }
+        // How many facts each token occurs in, to pick the rarest token of each spelling.
+        $df = [];
+        $spellings = [];
+        foreach ($entries as $n) {
+            $list = [(string)$n['symbol']];
+            foreach (json_decode((string)$n['variants_json'], true) ?: [] as $v) if (is_string($v['symbol'] ?? null)) $list[] = $v['symbol'];
+            foreach ($list as $sp) { $tokens = self::tokens($sp); if ($tokens) $spellings[(int)$n['id']][] = $tokens; foreach ($tokens as $t) $df[$t] ??= null; }
+            // The names and commands of the formulas of its meaning count on their own: $\mathrm{NS}(X)$, defined as
+            // $\mathrm{FS}(X)\setminus\{0\}$, concerns a fact that writes FS(X); $x \ll y$, defined by $\mu(x) < \lambda(y)$, one that
+            // writes it out. Broader than needed: an extra rewrite is cheap, a missing one leaves a fact in an old notation.
+            preg_match_all('/\$([^$]+)\$/', Sanitizer::toText((string)$n['meaning_html']), $math);
+            foreach ($math[1] as $formula) foreach (self::tokens($formula) as $t) {
+                if (in_array($t, self::COMMON, true)) continue;
+                $spellings[(int)$n['id']][] = [$t]; $df[$t] ??= null;
+            }
+        }
+        foreach (array_keys($df) as $t) { $c = 0; foreach ($texts as $x) if (str_contains($x, $t)) $c++; $df[$t] = $c; }
+        $out = [];
+        foreach ($texts as $fid => $x) {
+            $uses = [];
+            foreach ($entries as $n) {
+                foreach ($spellings[(int)$n['id']] ?? [] as $tokens) {
+                    usort($tokens, fn($a, $b) => $df[$a] <=> $df[$b]);
+                    if ($df[$tokens[0]] > 0 && str_contains($x, $tokens[0])) { $uses[] = [(int)$n['id'], $n['symbol_key'], $n['meaning_html'], $n['status'] === 'local' ? 'local' : '']; break; }
+                }
+            }
+            $out[$fid] = $uses ? sha1(json_encode($uses)) : self::EMPTY;
+        }
+        return self::$factHashCache[$ck] = $out;
+    }
+
+    /** The fingerprint of the notation one fact is written in. */
+    public static function hashFor(int $pid, int $fid): string
+    {
+        return self::factHashes($pid)[$fid] ?? self::EMPTY;
+    }
+
+    /** A fingerprint with nothing in it: the fact uses no entry. */
+    public static function isEmptyHash(string $h): bool
+    {
+        return $h === self::EMPTY;
+    }
+
+    /** The tokens of a symbol that its occurrences always contain: commands other than fonts and spacing, and names of two letters or more. */
+    private static function tokens(string $symbol): array
+    {
+        preg_match_all('/\\\\([A-Za-z]+)|([A-Za-z]{2,})/', self::tokenText(self::bare($symbol)), $m, PREG_SET_ORDER);
+        $out = [];
+        foreach ($m as $x) {
+            if (($x[1] ?? '') !== '') { if (!in_array($x[1], ['mathrm', 'mathsf', 'mathbf', 'mathit', 'mathcal', 'mathscr', 'mathfrak', 'mathbb', 'boldsymbol', 'operatorname', 'text', 'textrm', 'textit', 'left', 'right', 'quad', 'qquad'], true)) $out['\\' . $x[1]] = true; }
+            else $out[$x[2]] = true;
+        }
+        return array_keys($out);
+    }
+
+    /** Text with the spellings of one notion made alike: \le and \leq, \ge and \geq, \ne and \neq. */
+    private static function tokenText(string $s): string
+    {
+        return preg_replace(['/\\\\le(?![A-Za-z])/', '/\\\\ge(?![A-Za-z])/', '/\\\\ne(?![A-Za-z])/'], ['\\leq', '\\geq', '\\neq'], $s) ?? $s;
     }
 
     /** The entries for an AI client: agreed ones are binding, proposed ones are suggestions. */
@@ -305,14 +395,20 @@ final class NotationController
     /** Where each fact's current revision stands. */
     public static function states(int $pid): array
     {
-        $hash = self::hash($pid);
+        // Each fact against the entries it uses: a change of notation elsewhere leaves its rewrite current. A fact that uses no
+        // entry already follows the notation, when the project has one.
+        $hashes = self::factHashes($pid);
+        $any = self::hash($pid) !== self::EMPTY;
         $out = [];
         foreach (Db::all('SELECT id, current_revision FROM facts WHERE project_id = ? AND deleted_at IS NULL AND retracted_at IS NULL', [$pid]) as $f) {
-            $out[(int)$f['id']] = ['revision' => (int)$f['current_revision'], 'state' => 'none', 'queued' => false];
+            $none = $any && ($hashes[(int)$f['id']] ?? self::EMPTY) === self::EMPTY;
+            $out[(int)$f['id']] = ['revision' => (int)$f['current_revision'], 'state' => $none ? 'unchanged' : 'none', 'queued' => false];
         }
         foreach (Db::all('SELECT x.fact_id, x.notation_hash, x.check_verdict, x.unchanged FROM fact_rephrasings x JOIN facts f ON f.id = x.fact_id AND x.revision_no = f.current_revision
                           WHERE f.project_id = ? ORDER BY x.id', [$pid]) as $x) {
             if (!isset($out[(int)$x['fact_id']])) continue;
+            $hash = $hashes[(int)$x['fact_id']] ?? self::EMPTY;
+            if ($hash === self::EMPTY) continue;
             // A rewrite in the current notation wins over a later one in a notation since undone.
             if ($x['notation_hash'] !== $hash && in_array($out[(int)$x['fact_id']]['state'], ['current', 'unchanged', 'unfaithful'], true)) continue;
             $out[(int)$x['fact_id']]['state'] = $x['notation_hash'] !== $hash ? 'stale' : ($x['check_verdict'] === 'unfaithful' ? 'unfaithful' : ($x['unchanged'] ? 'unchanged' : 'current'));
@@ -337,7 +433,7 @@ final class NotationController
     /** The rephrasings of a fact, newest first, with their state. */
     public static function forFact(int $factId, int $pid, int $revision): array
     {
-        $hash = self::hash($pid);
+        $hash = self::hashFor($pid, $factId);
         return array_map(function ($x) use ($hash, $revision) {
             foreach (['id', 'fact_id', 'revision_no', 'author_id', 'checked_by', 'ai_generation_ms', 'check_ai_user_id', 'check_ai_generation_ms'] as $k) $x[$k] = $x[$k] === null ? null : (int)$x[$k];
             $x['unchanged'] = (bool)$x['unchanged'];
@@ -407,19 +503,31 @@ final class NotationController
                           WHERE f.project_id = ? AND f.deleted_at IS NULL AND f.retracted_at IS NULL', [$pid]) as $f) {
             $local[(int)$f['id']] = self::localNotation(json_decode((string)$f['glossary_json'], true) ?: []);
         }
-        $hash = self::hash($pid);
-        foreach (Db::all("SELECT x.fact_id, x.local_json FROM fact_rephrasings x JOIN facts f ON f.id = x.fact_id AND x.revision_no = f.current_revision
-                          WHERE f.project_id = ? AND x.notation_hash = ? AND x.unchanged = 0 AND (x.check_verdict IS NULL OR x.check_verdict <> 'unfaithful') ORDER BY x.id", [$pid, $hash]) as $x) {
-            if (isset($local[(int)$x['fact_id']])) $local[(int)$x['fact_id']] = self::localNotation(json_decode((string)$x['local_json'], true) ?: []);
+        // A fact rewritten in the current notation keeps, of its own definitions, those its rewrite still makes: the symbols the
+        // project now writes for it are no longer its own. The wordings stay the fact's: a rewrite rewords its definitions, and the
+        // groups of equivalent wordings would come apart; and a notion that only rewrites define, spelled out in each statement, is
+        // not a symbol several facts define.
+        $hashes = self::factHashes($pid);
+        foreach (Db::all("SELECT x.fact_id, x.local_json, x.notation_hash FROM fact_rephrasings x JOIN facts f ON f.id = x.fact_id AND x.revision_no = f.current_revision
+                          WHERE f.project_id = ? AND x.unchanged = 0 AND (x.check_verdict IS NULL OR x.check_verdict <> 'unfaithful') ORDER BY x.id", [$pid]) as $x) {
+            $fid = (int)$x['fact_id'];
+            if (!isset($local[$fid]) || $x['notation_hash'] !== ($hashes[$fid] ?? self::EMPTY)) continue;
+            $still = [];
+            foreach (self::splitDefinitions(self::localNotation(json_decode((string)$x['local_json'], true) ?: [])) as [$sym]) $still[self::notionKey(self::bare((string)$sym))] = true;
+            $local[$fid] = array_filter($local[$fid], function ($meaning, $key) use ($still) {
+                foreach (self::splitDefinitions([$key => $meaning]) as [$sym]) if (isset($still[self::notionKey(self::bare((string)$sym))])) return true;
+                return false;
+            }, ARRAY_FILTER_USE_BOTH);
         }
-        $entries = [];
+        $entries = []; $loose = [];
         // An entry says, once an AI or a person judged them, how many meanings found in sources really differ ("clash").
         // Its other spellings of the same notion ("instance" variants) are that entry too.
         foreach (Db::all("SELECT id, symbol, status, variants_json FROM notations WHERE project_id = ? AND status <> 'rejected' ORDER BY status = 'agreed' DESC, id", [$pid]) as $n) {
             $variants = json_decode((string)$n['variants_json'], true) ?: [];
             $e = ['id' => (int)$n['id'], 'status' => $n['status'], 'clashes' => count(array_filter($variants, fn($v) => ($v['relation'] ?? '') === 'clash'))];
             $entries[self::notionKey($n['symbol'])] ??= $e;
-            foreach ($variants as $v) if (($v['relation'] ?? '') === 'instance' && is_string($v['symbol'] ?? null)) $entries[self::notionKey($v['symbol'])] ??= $e;
+            $loose[self::looseKey($n['symbol'])] ??= $e;
+            foreach ($variants as $v) if (($v['relation'] ?? '') === 'instance' && is_string($v['symbol'] ?? null)) { $entries[self::notionKey($v['symbol'])] ??= $e; $loose[self::looseKey($v['symbol'])] ??= $e; }
         }
         $agreed = array_column(Db::all("SELECT symbol FROM notations WHERE project_id = ? AND status = 'agreed'", [$pid]), 'symbol');
         $by = [];
@@ -445,17 +553,30 @@ final class NotationController
             arsort($s['spellings']);
             $symbol = (string)array_key_first($s['spellings']);
             // An expression in agreed symbols needs no entry: it counts as settled.
-            $entry = $entries[$k] ?? (self::derived($symbol, $agreed) ? ['id' => null, 'status' => 'derived', 'clashes' => 0] : null);
+            // Whatever its dollars: "F$ full-matches $X" is the spelling "F full-matches X" an entry recorded.
+            $entry = $entries[$k] ?? $loose[self::looseKey($symbol)] ?? (self::derived($symbol, $agreed) ? ['id' => null, 'status' => 'derived', 'clashes' => 0] : null);
             $meanings = array_slice($meanings, 0, 8);
             [$groups, $unread] = self::groupsFor($classes[$k] ?? null, $meanings);
             // Every wording grouped, and every group an entry: the symbol is settled, under the entry of its most common meaning.
             if ($entry === null && $groups && !$unread && !array_filter($groups, fn($g) => $g['entry'] === null)) $entry = $groups[0]['entry'] + ['clashes' => count($groups) - 1];
-            $out[] = ['symbol' => $symbol, 'spellings' => array_keys($s['spellings']), 'facts' => count($s['facts']),
+            $related = self::termKey($symbol) !== null ? array_values(array_filter($terms ??= self::termIndex($pid), fn($x) => $x['term'] === self::termKey($symbol))) : [];
+            $out[] = ['symbol' => $symbol, 'spellings' => array_keys($s['spellings']), 'facts' => count($s['facts']), 'related' => array_map(fn($x) => $x['entry'], $related),
                 'meanings' => array_map(fn($m) => ['meaning' => $m['meaning'], 'key' => $m['key'], 'facts' => array_slice($m['facts'], 0, 50)], $meanings), 'entry' => $entry,
                 'classes' => $groups, 'unclassified' => $unread];
         }
         usort($out, fn($a, $b) => [$b['entry'] === null, $b['facts']] <=> [$a['entry'] === null, $a['facts']]);
         return array_slice($out, 0, $limit);
+    }
+
+    /** Each entry with the term it names, for linking a symbol in words to the entries of the same term. */
+    private static function termIndex(int $pid): array
+    {
+        $out = [];
+        foreach (Db::all("SELECT id, symbol, status FROM notations WHERE project_id = ? AND status <> 'rejected' ORDER BY status = 'agreed' DESC, id", [$pid]) as $n) {
+            $t = self::termKey((string)$n['symbol']);
+            if ($t !== null) $out[] = ['term' => $t, 'entry' => ['id' => (int)$n['id'], 'symbol' => $n['symbol'], 'status' => $n['status']]];
+        }
+        return $out;
     }
 
     /** The groups of equivalent wordings the symbols sweep recorded, by notion key. @return array<string, list<array>> */
@@ -560,6 +681,55 @@ final class NotationController
      * The notion a symbol writes, whatever its arguments are called: FS(X), FS(H) and \mathrm{FS}(S) are one notion.
      * A setting in parentheses, such as full-match (HT), stays part of it.
      */
+    /** The notion key of a symbol whatever its dollars: a glossary key "F$ full-matches $X" and an answer "F full-matches X" match. */
+    public static function looseKey(string $symbol): string
+    {
+        return self::notionKey(str_replace('$', '', $symbol));
+    }
+
+    /**
+     * The term a symbol in words names, its arguments and setting aside: "F$ full-matches $X" and "full-match (FUT)" both name
+     * "full-match", "P-branch $(F,X)$" names "p-branch". Null for a symbol that is not a term in words.
+     */
+    public static function termKey(string $symbol): ?string
+    {
+        // Dollars go, whichever way they face ("F$ full-matches $X" lost its outer ones), and so do LaTeX commands: \mathrm is no word.
+        $s = preg_replace('/\\\\[A-Za-z]+/', ' ', str_replace('$', ' ', ' ' . $symbol . ' ')) ?? $symbol;
+        $s = preg_replace('/\s\([^()]*\)\s*$/', ' ', $s) ?? $s;                       // a setting in parentheses at the end
+        preg_match_all('/[A-Za-z]+(?:-[A-Za-z]+)+|[A-Za-z]{4,}/', $s, $m);
+        if (!$m[0]) return null;
+        $words = array_map(fn($w) => preg_replace('/(?<=[a-z]{3})(?:es|s)$/', '', mb_strtolower($w)) ?? $w, $m[0]);
+        return implode(' ', $words);
+    }
+
+    /** The agreed, local and proposed entries naming the same term as a symbol: full-match (HT) and full-match (FUT) for "F full-matches X". */
+    public static function sameTerm(int $pid, string $symbol): array
+    {
+        $t = self::termKey($symbol);
+        if ($t === null) return [];
+        $out = [];
+        foreach (Db::all("SELECT id, symbol, status FROM notations WHERE project_id = ? AND status <> 'rejected' ORDER BY status = 'agreed' DESC, id", [$pid]) as $n) {
+            if (self::termKey((string)$n['symbol']) === $t) $out[] = ['id' => (int)$n['id'], 'symbol' => $n['symbol'], 'status' => $n['status']];
+        }
+        return $out;
+    }
+
+    /** A person records a symbol several facts define as another spelling of an entry: "F full-matches X" for full-match (FUT). */
+    public static function spelling(Request $r): never
+    {
+        if (Auth::isAi()) throw new HttpError(403, 'Only a person can do this.');
+        $n = Db::one("SELECT * FROM notations WHERE id = ? AND status <> 'rejected'", [$r->int('nid')]);
+        if (!$n) throw new HttpError(404, 'Notation entry not found.');
+        Access::member((int)$n['project_id']);
+        $symbol = trim(self::bare($r->str('symbol')));
+        if ($symbol === '') throw new HttpError(422, 'Give the symbol as the facts write it.');
+        if (!self::addSpelling((int)$n['project_id'], (int)$n['id'], $symbol, mb_substr(trim($r->str('meaning')), 0, 500) ?: 'as the facts write it', 'Recorded by a member.')) {
+            throw new HttpError(409, 'This entry already lists that spelling.');
+        }
+        Activity::touch((int)$n['project_id'], 'notation', (int)$n['id'], 'updated');
+        Response::json(['ok' => true]);
+    }
+
     public static function notionKey(string $symbol): string
     {
         $symbol = self::bare($symbol);

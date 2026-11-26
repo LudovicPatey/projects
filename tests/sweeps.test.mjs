@@ -44,7 +44,7 @@ test('new cited results make no task of their own; a source sweep checks them te
 
 test('a rewrite sweep writes at most twelve facts per session, records each, and carries on until every fact is in the notation', async () => {
   const P = (ref) => ({ ref, title: ref, kind: 'lemma', labels: ['conclusion'], method: 'deduced', statement_text: `$FS(X)$ is large ${ref}.`, proof_text: 'P.' });
-  await batch([P('p1'), P('p2'), P('p3')]);
+  await batch(Array.from({ length: 17 }, (_, i) => P(`p${i}`))); // seventeen facts that use FS(X); the others use no entry, so need no rewrite
   const e = (await app.call(ann, 'POST', `/api/projects/${pid}/notation`, { symbol: 'FS(X)', meaning_text: 'The finite sums of $X$.', params: [{ name: 'X', type: 'sets of numbers' }] })).data;
   await app.call(ann, 'POST', `/api/notation/${e.id}/status`, { status: 'agreed' });
   let t = (await claim(['notation'])).data.task;
@@ -67,6 +67,7 @@ test('a rewrite sweep writes at most twelve facts per session, records each, and
 });
 
 test('a client that does not run recipes never gets a sweep', async () => {
+  await batch([{ ref: 'fu', title: 'fu', kind: 'lemma', labels: ['conclusion'], method: 'deduced', statement_text: 'Every $FU(X)$ is large.', proof_text: 'P.' }]);
   await app.call(ann, 'POST', `/api/projects/${pid}/notation`, { symbol: 'FU(X)', meaning_text: 'The finite unions of $X$.', params: [{ name: 'X', type: 'sets of finite sets' }] }).then((x) => app.call(ann, 'POST', `/api/notation/${x.data.id}/status`, { status: 'agreed' }));
   assert.equal((await claim(['notation'], { features: ['notation'] })).data.task, null);
   const t = (await claim(['notation'])).data.task;
@@ -79,7 +80,7 @@ test('with the usual settings, nothing is queued while facts arrive; a member as
   const a = await quiet.signIn(ANN);
   const p = (await quiet.call(a, 'POST', '/api/projects', { title: 'Quiet', question_html: '<p>Q</p>' })).data.id;
   const k = { token: (await quiet.call(a, 'POST', '/api/me/keys', { name: 'k' })).data.token };
-  const P = (ref) => ({ ref, title: ref, kind: 'lemma', labels: ['conclusion'], method: 'deduced', statement_text: `S ${ref}.`, proof_text: 'P.' });
+  const P = (ref) => ({ ref, title: ref, kind: 'lemma', labels: ['conclusion'], method: 'deduced', statement_text: `$FS(X)$ in ${ref}.`, proof_text: 'P.' });
   await quiet.call(k, 'POST', `/api/projects/${p}/facts/batch`, { format: 'native', ai_model: 'claude-opus-5-5', facts: [P('a'), P('b')] });
   const e = (await quiet.call(a, 'POST', `/api/projects/${p}/notation`, { symbol: 'FS(X)', meaning_text: 'Sums.', params: [{ name: 'X', type: 'sets' }] })).data;
   await quiet.call(a, 'POST', `/api/notation/${e.id}/status`, { status: 'agreed' });

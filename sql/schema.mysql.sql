@@ -409,6 +409,7 @@ CREATE TABLE IF NOT EXISTS fact_rephrasings (
   ai_generation_ms INT UNSIGNED NULL,
   check_verdict VARCHAR(12) NULL,         -- faithful, unfaithful
   check_note TEXT NULL,
+  doubt_text TEXT NULL,                  -- a question the AI that wrote it asks the members, about a choice the text does not settle
   checked_by INT UNSIGNED NULL,            -- the person who checked it; NULL with check_ai_model: an AI checked it
   checked_at DATETIME NULL,
   check_ai_model VARCHAR(120) NULL,
@@ -506,6 +507,7 @@ CREATE TABLE IF NOT EXISTS fact_source_checks (
   verdict VARCHAR(10) NOT NULL,           -- 'confirmed' | 'differs' | 'not_found' | 'unreadable' (the AI could not read the source)
   body_html MEDIUMTEXT NULL,
   had_source TINYINT(1) NULL,             -- the AI had the text of the source (a project file or the PDF of the reference); null: not recorded
+  doubt_text TEXT NULL,                   -- what a person should check, when the verdict rests on what the AI could not read or decide
   ai_model VARCHAR(120) NULL,
   ai_user_id INT UNSIGNED NULL,
   ai_generation_ms INT UNSIGNED NULL,

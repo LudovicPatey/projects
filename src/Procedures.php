@@ -96,7 +96,9 @@ entry the bare term stands for, for example "full-match" meaning "full-match (HT
 A notion the agreed symbols express directly is written with them, without a symbol of its own: all finite subsets of $\mathbb N$, written
 $\mathcal P_{fin}(\mathbb N)$ by a source, become $\mathrm{FIN}\cup\{\emptyset\}$ once $\mathrm{FIN}$ is agreed for the non-empty ones.
 The mathematical content must stay exactly the same: do not correct, strengthen or weaken anything, and do not add or
-remove hypotheses or steps. If nothing has to change, set "unchanged" to true and copy the text. The fact must be readable alone: in "local_notation", define every symbol
+remove hypotheses or steps. If nothing has to change, set "unchanged" to true and copy the text. When you made a choice that the fact's
+text does not settle, such as whether its FS includes 0, ask the members in "doubt": one question a person can answer by reading the
+fact and its source; it is shown on the fact until a person checks the rewrite. Otherwise "doubt" is an empty string: not for remarks. The fact must be readable alone: in "local_notation", define every symbol
 of the rewritten fact that is not a project symbol, including the local entries you defined. In "uses", list each symbol whose meaning matters:
 "symbol" as the fact writes it, "meaning_here", and "project_symbol", the agreed symbol now used. Fill "proof" only if the fact has a proof.
 TXT,
@@ -116,7 +118,8 @@ Answer in "verdict": "confirmed" if the work states this result, as written or i
 different, for example with other hypotheses, a weaker conclusion or another setting; "not_found" if you read the work and the result is
 not in it; "unreadable" if you could not read the work at all: no text in the folder, and web search did not give you what
 it states. In "where", give the theorem number and page when you found it, or an empty string. In "explanation", say what the
-work states, quoting it briefly, and how it differs when it does. You do not judge whether the result is true, only what the work says.
+work states, quoting it briefly, and how it differs when it does. You do not judge whether the result is true, only what the work says. When your verdict rests on what you could not read or decide, say in
+"doubt" what a person should check; otherwise an empty string.
 TXT,
         'source_check_batch' => <<<'TXT'
 TASK: "cited_results" in task.json lists results that the project takes from other works, without their proofs, found in the same source.
@@ -128,7 +131,9 @@ equivalent form; "differs" if it states something different, for example with ot
 "not_found" if you read the work and the result is not in it; "unreadable" if you could not read the work at all: no text in the folder,
 and web search did not give you what it states. In "where", give the theorem number and page when you
 found it, or an empty string. In "explanation", say what the work states, quoting it briefly, and how it differs when it does. You do not
-judge whether a result is true, only what the work says.
+judge whether a result is true, only what the work says. When your verdict rests on what you could not read or decide, such as a
+summary instead of the work, or a theorem number you could not see, say in "doubt" what a person should check; it is shown on the
+result until a person accepts or disputes it. Otherwise "doubt" is an empty string.
 TXT,
         'rewrite_check' => <<<'TXT'
 TASK: "rewrites" in task.json lists facts that an AI wrote again in the project's notation, listed in "notation". For each one, compare
@@ -197,6 +202,9 @@ yourself, so that people need not:
   "semigroup" as a clash.
 - "reject" (only for a proposed "entry"): the project's agreed symbols already express it, such as $\mathrm{FIN}\cup\{\emptyset\}$ for all
   finite sets once $\mathrm{FIN}$ is agreed, or it is not notation at all. Facts then write that expression rather than a symbol of its own.
+"same_term" lists the entries of "notation" that name the same term, whatever its arguments or setting, such as "full-match (HT)" and
+"full-match (FUT)" for "F full-matches X": a symbol whose meaning is one of them is "same" as that entry, never a new one. A notion
+used by one paper's proofs, such as a forcing notion named after a common letter, is "local", not "adopt".
 Group the "meanings" of each symbol into "classes" of mathematically equivalent wordings: one wording that unfolds another, or says
 the same with other words or letters, is in the same class; wordings that define different objects are in different classes. Each class
 gives "meanings", the "no" of its wordings, every wording in exactly one class; "label", that meaning in a few
@@ -279,15 +287,15 @@ TXT,
     private const SCHEMAS = [
         'ask' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'reply'], "properties" => ["summary" => ["type" => 'string'], "reply" => ["type" => 'string']]],
         'notation_propose' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'entries'], "properties" => ["summary" => ["type" => 'string'], "entries" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'meaning', 'note', 'variants', 'params', 'definition_fact_id', 'facts'], "properties" => ["symbol" => ["type" => 'string'], "params" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['name', 'type'], "properties" => ["name" => ["type" => 'string'], "type" => ["type" => 'string']]]], "meaning" => ["type" => 'string'], "note" => ["type" => ['string', 'null']], "variants" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'meaning', 'where', 'relation'], "properties" => ["symbol" => ["type" => 'string'], "meaning" => ["type" => 'string'], "where" => ["type" => 'string'], "relation" => ["type" => 'string', "enum" => ['instance', 'clash']]]]], "definition_fact_id" => ["type" => ['integer', 'null']], "facts" => ["type" => 'array', "items" => ["type" => 'integer']]]]]]],
-        'notation_rephrase' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'unchanged', 'statement', 'proof', 'local_notation', 'uses'], "properties" => ["summary" => ["type" => 'string'], "unchanged" => ["type" => 'boolean'], "statement" => ["type" => 'string'], "proof" => ["type" => ['string', 'null']], "local_notation" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'meaning'], "properties" => ["symbol" => ["type" => 'string'], "meaning" => ["type" => 'string']]]], "uses" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'meaning_here', 'project_symbol'], "properties" => ["symbol" => ["type" => 'string'], "meaning_here" => ["type" => 'string'], "project_symbol" => ["type" => 'string']]]]]],
+        'notation_rephrase' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'unchanged', 'statement', 'proof', 'local_notation', 'uses', 'doubt'], "properties" => ["summary" => ["type" => 'string'], "doubt" => ["type" => 'string'], "unchanged" => ["type" => 'boolean'], "statement" => ["type" => 'string'], "proof" => ["type" => ['string', 'null']], "local_notation" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'meaning'], "properties" => ["symbol" => ["type" => 'string'], "meaning" => ["type" => 'string']]]], "uses" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'meaning_here', 'project_symbol'], "properties" => ["symbol" => ["type" => 'string'], "meaning_here" => ["type" => 'string'], "project_symbol" => ["type" => 'string']]]]]],
         'consolidate' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'suggestions'], "properties" => ["summary" => ["type" => 'string'], "suggestions" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['kind', 'fact', 'other_fact', 'new_kind', 'title', 'topics', 'ref', 'statement', 'notation', 'reason', 'confidence'], "properties" => ["kind" => ["type" => 'string', "enum" => ['same', 'depends', 'kind', 'question', 'topics', 'cite', 'progress', 'notation']], "notation" => ["type" => ['object', 'null'], "additionalProperties" => false, "required" => ['action', 'entry', 'symbol', 'meaning', 'note', 'variants', 'params'], "properties" => ["params" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['name', 'type'], "properties" => ["name" => ["type" => 'string'], "type" => ["type" => 'string']]]], "action" => ["type" => 'string', "enum" => ['adopt', 'local', 'reject']], "entry" => ["type" => ['integer', 'null']], "symbol" => ["type" => ['string', 'null']], "meaning" => ["type" => ['string', 'null']], "note" => ["type" => ['string', 'null']], "variants" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'meaning', 'where', 'relation'], "properties" => ["symbol" => ["type" => 'string'], "meaning" => ["type" => 'string'], "where" => ["type" => 'string'], "relation" => ["type" => 'string', "enum" => ['instance', 'clash']]]]]]], "ref" => ["type" => ['string', 'null']], "statement" => ["type" => ['string', 'null']], "confidence" => ["type" => 'string', "enum" => ['high', 'medium', 'low']], "fact" => ["type" => 'string'], "other_fact" => ["type" => ['string', 'null']], "new_kind" => ["type" => ['string', 'null'], "enum" => ['definition', 'lemma', 'proposition', 'theorem', 'corollary', 'conjecture', 'remark', null]], "title" => ["type" => ['string', 'null']], "topics" => ["type" => 'array', "items" => ["type" => 'string']], "reason" => ["type" => 'string']]]]]],
-        'notation_rephrase_batch' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'facts'], "properties" => ["summary" => ["type" => 'string'], "facts" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['fact_id', 'unchanged', 'statement', 'proof', 'local_notation', 'uses'], "properties" => ["fact_id" => ["type" => 'integer'], "unchanged" => ["type" => 'boolean'], "statement" => ["type" => 'string'], "proof" => ["type" => ['string', 'null']], "local_notation" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'meaning'], "properties" => ["symbol" => ["type" => 'string'], "meaning" => ["type" => 'string']]]], "uses" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'meaning_here', 'project_symbol'], "properties" => ["symbol" => ["type" => 'string'], "meaning_here" => ["type" => 'string'], "project_symbol" => ["type" => 'string']]]]]]]]],
-        'source_check_batch' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'checks'], "properties" => ["summary" => ["type" => 'string'], "checks" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['fact_id', 'verdict', 'where', 'explanation'], "properties" => ["fact_id" => ["type" => 'integer'], "verdict" => ["type" => 'string', "enum" => ['confirmed', 'differs', 'not_found', 'unreadable']], "where" => ["type" => 'string'], "explanation" => ["type" => 'string']]]]]],
+        'notation_rephrase_batch' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'facts'], "properties" => ["summary" => ["type" => 'string'], "facts" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['fact_id', 'unchanged', 'statement', 'proof', 'local_notation', 'uses', 'doubt'], "properties" => ["fact_id" => ["type" => 'integer'], "doubt" => ["type" => 'string'], "unchanged" => ["type" => 'boolean'], "statement" => ["type" => 'string'], "proof" => ["type" => ['string', 'null']], "local_notation" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'meaning'], "properties" => ["symbol" => ["type" => 'string'], "meaning" => ["type" => 'string']]]], "uses" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'meaning_here', 'project_symbol'], "properties" => ["symbol" => ["type" => 'string'], "meaning_here" => ["type" => 'string'], "project_symbol" => ["type" => 'string']]]]]]]]],
+        'source_check_batch' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'checks'], "properties" => ["summary" => ["type" => 'string'], "checks" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['fact_id', 'verdict', 'where', 'explanation', 'doubt'], "properties" => ["fact_id" => ["type" => 'integer'], "doubt" => ["type" => 'string'], "verdict" => ["type" => 'string', "enum" => ['confirmed', 'differs', 'not_found', 'unreadable']], "where" => ["type" => 'string'], "explanation" => ["type" => 'string']]]]]],
         'rewrite_check' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'checks'], "properties" => ["summary" => ["type" => 'string'], "checks" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['rewrite_id', 'verdict', 'note'], "properties" => ["rewrite_id" => ["type" => 'integer'], "verdict" => ["type" => 'string', "enum" => ['faithful', 'unfaithful']], "note" => ["type" => 'string']]]]]],
         'proof_review' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'reviews'], "properties" => ["summary" => ["type" => 'string'], "reviews" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['fact_id', 'verdict', 'explanation'], "properties" => ["fact_id" => ["type" => 'integer'], "verdict" => ["type" => 'string', "enum" => ['correct', 'gap', 'incorrect']], "explanation" => ["type" => 'string']]]]]],
         'second_reading' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'decisions'], "properties" => ["summary" => ["type" => 'string'], "decisions" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['suggestion_id', 'verdict', 'reason'], "properties" => ["suggestion_id" => ["type" => 'integer'], "verdict" => ["type" => 'string', "enum" => ['apply', 'drop', 'unsure']], "reason" => ["type" => 'string']]]]]],
         'consolidate_notation' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'decisions', 'types'], "properties" => ["summary" => ["type" => 'string'], "types" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['entry', 'params'], "properties" => ["entry" => ["type" => 'integer'], "params" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['name', 'type'], "properties" => ["name" => ["type" => 'string'], "type" => ["type" => 'string']]]]]]], "decisions" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'action', 'entry', 'project_symbol', 'meaning', 'note', 'variants', 'params', 'fact', 'reason', 'classes', 'class'], "properties" => ["symbol" => ["type" => 'string'], "class" => ["type" => ['integer', 'null']], "classes" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['meanings', 'label', 'entry', 'decided'], "properties" => ["meanings" => ["type" => 'array', "items" => ["type" => 'integer']], "label" => ["type" => 'string'], "entry" => ["type" => ['integer', 'null']], "decided" => ["type" => 'boolean']]]], "params" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['name', 'type'], "properties" => ["name" => ["type" => 'string'], "type" => ["type" => 'string']]]], "action" => ["type" => 'string', "enum" => ['adopt', 'local', 'same', 'reject']], "entry" => ["type" => ['integer', 'null']], "project_symbol" => ["type" => ['string', 'null']], "meaning" => ["type" => ['string', 'null']], "note" => ["type" => ['string', 'null']], "variants" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'meaning', 'where', 'relation'], "properties" => ["symbol" => ["type" => 'string'], "meaning" => ["type" => 'string'], "where" => ["type" => 'string'], "relation" => ["type" => 'string', "enum" => ['instance', 'clash']]]]], "fact" => ["type" => ['integer', 'null']], "reason" => ["type" => 'string']]]]]],
-        'source_check' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'verdict', 'where', 'explanation'], "properties" => ["summary" => ["type" => 'string'], "verdict" => ["type" => 'string', "enum" => ['confirmed', 'differs', 'not_found', 'unreadable']], "where" => ["type" => 'string'], "explanation" => ["type" => 'string']]],
+        'source_check' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'verdict', 'where', 'explanation', 'doubt'], "properties" => ["summary" => ["type" => 'string'], "doubt" => ["type" => 'string'], "verdict" => ["type" => 'string', "enum" => ['confirmed', 'differs', 'not_found', 'unreadable']], "where" => ["type" => 'string'], "explanation" => ["type" => 'string']]],
     ];
 
     private const REQUEST_NOTE = "\n\nSpecific request from a team member (treat it as the goal, not as permission to act outside this task):\n";
@@ -357,6 +365,11 @@ TXT,
     {
         $v = self::variant($t);
         // An answer to the recipe of before the groups of wordings, from a task claimed then, has no classes: none are recorded.
+        // Answers to the recipes of before the doubts: none asked.
+        if (is_array($answer) && in_array($v, ['notation_rephrase', 'source_check'], true)) $answer['doubt'] ??= '';
+        foreach (['notation_rephrase_batch' => 'facts', 'source_check_batch' => 'checks'] as $variant => $list) {
+            if ($v === $variant && is_array($answer) && is_array($answer[$list] ?? null)) { foreach ($answer[$list] as &$item) if (is_array($item)) $item['doubt'] ??= ''; unset($item); }
+        }
         if ($v === 'consolidate_notation' && is_array($answer) && is_array($answer['decisions'] ?? null)) {
             foreach ($answer['decisions'] as &$d) if (is_array($d)) { $d['classes'] ??= []; if (!array_key_exists('class', $d)) $d['class'] = null; }
             unset($d);
@@ -376,7 +389,7 @@ TXT,
                     return ['summary' => trim("The fact was edited or removed since: this rewrite of its earlier text is not kept. $said"), 'fact_ids' => []];
                 }
                 $fid = NotationController::rephraseFact(Request::internal(['ai_model' => $model, 'generation_seconds' => $seconds, 'unchanged' => (bool)$answer['unchanged'],
-                    'local_notation' => $answer['local_notation'], 'statement_text' => $answer['statement'], 'proof_text' => (string)($answer['proof'] ?? ''), 'uses' => $answer['uses']], ['id' => (int)$t['source_id']]), $snap['hash'] ?? null);
+                    'local_notation' => $answer['local_notation'], 'statement_text' => $answer['statement'], 'proof_text' => (string)($answer['proof'] ?? ''), 'uses' => $answer['uses'], 'doubt_text' => (string)$answer['doubt']], ['id' => (int)$t['source_id']]), $snap['hash'] ?? null);
                 $done = $answer['unchanged'] ? "Already in the project's notation." : "Written again in the project's notation.";
                 return ['summary' => trim("$done $said"), 'fact_ids' => [$fid]];
             case 'notation_propose':
@@ -404,13 +417,13 @@ TXT,
                 return self::recordSourceCheck($t, $answer, $model, $seconds);
             case 'notation_rephrase_batch':
                 $mine = array_flip(AiTaskController::batchFacts($t)); $ids = []; $same = 0; $refused = 0;
-                $hash = json_decode((string)$t['snapshot_json'], true)['hash'] ?? null; // the notation the batch was written in
+                $snapNotation = json_decode((string)$t['snapshot_json'], true) ?: []; // the notation each fact was written in
                 foreach ($answer['facts'] as $x) {
                     $fid = (int)$x['fact_id'];
                     if (!isset($mine[$fid]) || in_array($fid, $ids, true)) continue; // only the facts of this batch, once each
                     try {
                         NotationController::rephraseFact(Request::internal(['ai_model' => $model, 'generation_seconds' => is_numeric($seconds) ? $seconds / max(1, count($answer['facts'])) : null, 'unchanged' => (bool)$x['unchanged'], 'local_notation' => $x['local_notation'],
-                            'statement_text' => $x['statement'], 'proof_text' => (string)($x['proof'] ?? ''), 'uses' => $x['uses']], ['id' => $fid]), $hash);
+                            'statement_text' => $x['statement'], 'proof_text' => (string)($x['proof'] ?? ''), 'uses' => $x['uses'], 'doubt_text' => (string)($x['doubt'] ?? '')], ['id' => $fid]), $snapNotation['hashes'][$fid] ?? $snapNotation['hash'] ?? null);
                         $ids[] = $fid; if ($x['unchanged']) $same++;
                     } catch (HttpError) { $refused++; }
                 }
@@ -432,11 +445,16 @@ TXT,
                 // Only the symbols of this batch, once each. Adopt and local go through the consolidation, applied on their own when the
                 // project allows it, and undone like its other changes; "same" records a spelling of an existing entry.
                 $mine = array_flip(json_decode((string)$t['snapshot_json'], true)['symbols'] ?? []);
+                // An answer names a symbol as it likes: "F full-matches X" for the listed "F$ full-matches $X". Matched whatever the
+                // dollars, so that a decision is never dropped because the model tidied the spelling.
+                $loose = [];
+                foreach (array_keys($mine) as $key) $loose[NotationController::looseKey((string)$key)] = (string)$key;
                 $items = []; $same = 0; $seen = []; $symbols = []; $grouped = []; $usedBy = null;
                 $wordings = null;
                 $settles = []; // for each item: [notion key, class number] of the group of wordings it settles
                 foreach ($answer['decisions'] as $d) {
                     $k = NotationController::notionKey((string)$d['symbol']);
+                    if (!isset($mine[$k])) $k = $loose[NotationController::looseKey((string)$d['symbol'])] ?? $k;
                     // One decision per symbol, or one per group of wordings: a symbol whose wordings are several meanings that each
                     // matter gets a decision for each, naming its group in "class".
                     $class = is_int($d['class'] ?? null) && $d['class'] > 0 ? $d['class'] : null;
@@ -550,7 +568,7 @@ TXT,
         if (trim((string)$answer['where']) !== '') $text .= "\n\nWhere: " . trim((string)$answer['where']);
         Db::insert('fact_source_checks', Provenance::stamp($model, $seconds) + ['fact_id' => $fid, 'revision_no' => (int)$f['current_revision'], 'verdict' => $answer['verdict'],
             'body_html' => $text !== '' ? Sanitizer::clean(Sanitizer::textToHtml($text, (int)$f['project_id']))['html'] : null, 'ai_model' => $model,
-            'checked_by' => Auth::id(), 'task_id' => (int)$t['id'], 'created_at' => Db::now(),
+            'checked_by' => Auth::id(), 'task_id' => (int)$t['id'], 'created_at' => Db::now(), 'doubt_text' => mb_substr(trim((string)($answer['doubt'] ?? '')), 0, 2000) ?: null,
             // Whether the AI had the text of the source: a check made blind is made again once the source can be read.
             'had_source' => $t['had_source'] ?? (isset($t['kind']) && AiTaskController::sourceCheckDocument($t) ? 1 : 0)]);
         Activity::touch((int)$f['project_id'], 'fact', $fid, 'updated');

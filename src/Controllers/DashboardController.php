@@ -138,6 +138,10 @@ final class DashboardController
         foreach ($facts as $f) {
             if ($f['status'] === 'disputed') $out[] = ['kind' => 'disputed', 'ref' => 'fact:' . $f['id'], 'title' => $f['title'], 'code' => $f['label'], 'link' => ['view' => 'facts', 'id' => $f['id']]];
         }
+        // Questions an AI asked people: a choice it could not settle from the text. Two at most, the latest first.
+        foreach (array_slice(FactController::aiQuestions($pid), 0, 2) as $q) {
+            $out[] = ['kind' => 'ai_question', 'ref' => 'fact:' . $q['fact_id'], 'title' => $q['title'], 'code' => $q['label'], 'link' => ['view' => 'facts', 'id' => $q['fact_id']]];
+        }
         $reviewed = array_flip(array_map('intval', array_column(Db::all(
             "SELECT v.fact_id FROM fact_reviews v JOIN facts f ON f.id = v.fact_id AND v.revision_no = f.current_revision
              WHERE f.project_id = ? AND v.reviewer_id = ? AND v.reviewer_kind = 'human'", [$pid, $me]), 'fact_id')));

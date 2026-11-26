@@ -149,11 +149,15 @@ test('a fact is rewritten in the agreed notation without touching its reviewed t
   assert.equal((await app.call(ann, 'POST', `/api/fact-rephrasings/${x.id}/check`, { verdict: 'unfaithful' })).status, 422);
   f = (await app.call(ann, 'POST', `/api/fact-rephrasings/${x.id}/check`, { verdict: 'faithful' })).data;
   assert.equal(f.rephrasings[0].check_verdict, 'faithful');
-  // A new agreed entry makes every rewrite out of date.
+  // A new agreed entry the fact does not use leaves its rewrite current; one it uses makes it out of date.
   const e = (await propose({ symbol: '\\omega', meaning_text: 'The natural numbers.' })).data;
   await decide(e.id, 'agreed');
   f = (await app.call(ann, 'GET', `/api/facts/${target}`)).data;
-  assert.equal(f.rephrasings[0].current, false);
+  assert.equal(f.rephrasings[0].current, true, 'the fact does not write omega: its rewrite stays current');
+  const used = (await propose({ symbol: '\\mathrm{FS}^{+}(X)', meaning_text: 'The non-empty finite sums of $X$.' })).data;
+  await decide(used.id, 'agreed');
+  f = (await app.call(ann, 'GET', `/api/facts/${target}`)).data;
+  assert.equal(f.rephrasings[0].current, false, 'the fact writes FS: an entry about FS makes its rewrite out of date');
   assert.ok((await notation()).progress.stale >= 1);
   await clear();
 });

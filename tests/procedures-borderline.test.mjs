@@ -54,7 +54,7 @@ test('a rewrite asked for one fact is not kept when the fact was edited before t
 
 test('a rewrite made in a notation changed before the answer counts as out of date, and is made again', async () => {
   const pid = await project('Notation moved');
-  await facts(pid, [F('b')]);
+  await facts(pid, [F('b', { statement_text: 'Every $X\\in\\mathrm{FIN}$ has $FS(X)$ finite.' })]); // it uses both entries below
   await agree(pid, '\\mathrm{FIN}', 'The non-empty finite subsets of $\\mathbb N$.');
   const t = (await claim(pid, ['notation'])).data.task;
   assert.equal(t.source_type, 'sweep');

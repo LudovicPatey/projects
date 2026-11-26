@@ -46,28 +46,33 @@ const entryEditor = `<div class="notation-edit">
   <p v-if="editing.agreed" class="muted small">Changing the symbol, its meaning or the types makes it a proposal again.</p>
   <div class="row-end"><button class="btn ghost sm" @click="editing = null">Cancel</button><button class="btn primary sm" @click="save">Save</button></div></div>`;
 
-const entryView = (by, actions) => `<div class="notation-symbol"><notation-symbol :symbol="e.symbol" :params="e.params"/></div>
-  <div class="notation-body"><rich-content :html="e.meaning_html"/>
-    <div v-if="e.params?.length" class="notation-scope" :class="{untyped: !scopeOf(e).typed}"><span class="scope-label">Applies to</span>
-      <span v-for="g in paramGroups(e.params)" :key="g.type" class="pm-group"><template v-for="(p, j) in g.params" :key="p.name"><span class="pm-name" :class="'pm-' + (p.i % 4)"><math-text :text="'$' + p.name + '$'"/></span>{{ j < g.params.length - 1 ? ', ' : '' }}</template>: <math-text v-if="g.type" :text="g.type"/><span v-else class="pm-missing">type not stated yet</span></span>
-      <small v-if="!scopeOf(e).typed" class="scope-hint">{{ typesHint(e) }} Until then, the meaning says what the entry applies to.</small>
-      <small v-else class="scope-hint">The same symbol between other objects keeps its own meaning.</small></div>
+/**
+ * A notation entry, in one structure: a header (the symbol, who decided it and where it is defined, the actions), the meaning, then
+ * labelled rows for what more there is to know. Color is kept for what it carries: the parameters, each with its own.
+ */
+const entryView = (by, actions) => `<div class="nt-head"><div class="notation-symbol"><notation-symbol :symbol="e.symbol" :params="e.params"/></div>
+    <div class="nt-provenance">${by}</div>
+    <div class="notation-actions"><button class="btn sm" :class="{on: talk === e.id}" :aria-pressed="talk === e.id" :title="e.comment_count ? e.comment_count + ' comment(s)' : 'Discuss this entry'" @click="openTalk(e)"><icon name="comment" :size="13"/> {{ e.comment_count ? e.comment_count : 'Discuss' }}<b v-if="e.open_threads" class="seg-n" title="Open threads">{{ e.open_threads }}</b></button>${actions}</div></div>
+  <div class="notation-body"><div class="nt-meaning"><rich-content :html="e.meaning_html"/></div>
     <ai-pending :items="e.ai_pending"/>
-    <p v-if="e.note_text" class="notation-note"><icon name="lightbulb" :size="13"/> <math-text :text="e.note_text"/></p>
-    <template v-for="g in [['instances', 'In particular settings'], ['clashes', 'Other meanings in sources']]" :key="g[0]"><div v-if="splitVariants(e.variants)[g[0]].length" class="notation-variants-group" :class="'g-' + g[0]"><small>{{ g[1] }}</small>
-      <ul class="notation-variants"><li v-for="(v, i) in splitVariants(e.variants)[g[0]]" :key="i"><math-text :text="asMath(v.symbol)"/> <span><math-text :text="v.meaning"/></span><small v-if="v.where">{{ v.where }}</small></li></ul></div></template>
-    <small v-if="e.facts?.length" class="muted">Defined locally in {{ e.facts.length }} fact{{ e.facts.length > 1 ? 's' : '' }}: <template v-for="(id, i) in e.facts.slice(0, 6)" :key="id"><a :href="link('facts', id)">{{ labels.get(id) || '#' + id }}</a>{{ i < Math.min(e.facts.length, 6) - 1 ? ', ' : '' }}</template><template v-if="e.facts.length > 6">…</template></small>
-    <small class="muted">${by}<template v-if="e.definition_label"> · defined in <a :href="link('facts', e.definition_fact_id)">{{ e.definition_label }}</a></template></small>
+    <dl class="nt-rows">
+      <template v-if="e.params?.length"><dt>Applies to</dt><dd>
+        <span v-for="g in paramGroups(e.params)" :key="g.type" class="pm-group"><template v-for="(p, j) in g.params" :key="p.name"><span class="pm-name" :class="'pm-' + (p.i % 4)"><math-text :text="'$' + p.name + '$'"/></span>{{ j < g.params.length - 1 ? ', ' : '' }}</template>: <math-text v-if="g.type" :text="g.type"/><span v-else class="pm-missing">type not stated yet</span></span>
+        <small class="nt-hint">{{ scopeOf(e).typed ? 'The same symbol between other objects keeps its own meaning.' : typesHint(e) + ' Until then, the meaning says what the entry applies to.' }}</small></dd></template>
+      <template v-if="e.note_text"><dt>How sources differ</dt><dd><math-text :text="e.note_text"/></dd></template>
+      <template v-for="g in [['instances', 'Other forms'], ['clashes', 'Other meanings']]" :key="g[0]"><template v-if="splitVariants(e.variants)[g[0]].length"><dt>{{ g[1] }}</dt><dd>
+        <ul class="nt-list"><li v-for="(v, i) in splitVariants(e.variants)[g[0]]" :key="i"><math-text :text="asMath(v.symbol)"/> <span class="nt-dash">—</span> <math-text :text="v.meaning"/><small v-if="v.where" class="nt-where">{{ v.where }}</small></li></ul></dd></template></template>
+      <template v-if="definedIn(e).length"><dt>Defined in</dt><dd><template v-for="(id, i) in definedIn(e).slice(0, 4)" :key="id"><a :href="link('facts', id)">{{ id === e.definition_fact_id ? e.definition_label || labels.get(id) : labels.get(id) || '#' + id }}</a><small v-if="id === e.definition_fact_id && definedIn(e).length > 1" class="nt-where">its definition</small>{{ i < Math.min(definedIn(e).length, 4) - 1 ? ', ' : '' }}</template><template v-if="definedIn(e).length > 4"> and {{ definedIn(e).length - 4 }} more</template></dd></template>
+    </dl>
   <details v-if="actionEffects(e).length" class="notation-effects"><summary>What each choice changes</summary>
-    <dl><template v-for="r in actionEffects(e)" :key="r.action"><dt>{{ r.action }}</dt><dd><span class="eff-changes"><math-text :text="r.changes"/></span> <span class="eff-keeps"><b>Unchanged:</b> <math-text :text="r.keeps"/></span></dd></template></dl></details></div>
-  <div class="notation-actions"><button class="btn sm" :class="{on: talk === e.id}" :aria-pressed="talk === e.id" :title="e.comment_count ? e.comment_count + ' comment(s)' : 'Discuss this entry'" @click="openTalk(e)"><icon name="comment" :size="13"/> {{ e.comment_count ? e.comment_count : 'Discuss' }}<b v-if="e.open_threads" class="seg-n" title="Open threads">{{ e.open_threads }}</b></button>${actions}</div>`;
+    <dl><template v-for="r in actionEffects(e)" :key="r.action"><dt>{{ r.action }}</dt><dd><span class="eff-changes"><math-text :text="r.changes"/></span> <span class="eff-keeps"><b>Unchanged:</b> <math-text :text="r.keeps"/></span></dd></template></dl></details></div>`;
 
 /** The project's notation, inside Facts: agreed meanings, proposals, and how far facts follow them. */
 export const NotationPanel = {
   components: { Kpi, StackBar, NotationSymbol },
   props: { pid: Number, focus: Number, comment: Number },
   emits: ['mode'],
-  data() { return { d: null, facts: [], draft: { symbol: '', meaning: '', note: '', fact: '', params: '' }, editing: null, busy: false, talk: this.comment ? this.focus : null }; },
+  data() { return { sameTarget: {}, d: null, facts: [], draft: { symbol: '', meaning: '', note: '', fact: '', params: '' }, editing: null, busy: false, talk: this.comment ? this.focus : null }; },
   computed: {
     agreed() { return (this.d?.entries || []).filter((e) => e.status === 'agreed'); },
     proposed() { return (this.d?.entries || []).filter((e) => e.status === 'proposed'); },
@@ -79,6 +84,7 @@ export const NotationPanel = {
     definitions() { return this.facts.filter((f) => !f.retracted_at); },
     labels() { return new Map(this.facts.map((f) => [f.id, f.label])); },
     candidates() { return (this.d?.shared || []).filter((s) => !s.entry); },
+    sameChoices() { return (this.d?.entries || []).filter((e) => e.status !== 'rejected'); },
   },
   created() { this.segments = NOTATION_SEGMENTS; },
   async mounted() {
@@ -98,6 +104,25 @@ export const NotationPanel = {
     clipMath,
     timeAgo, link, asMath, splitVariants, sharedState, wordingGroups, actionEffects, paramGroups, inferParams,
     scopeOf(e) { return entryScope(e); },
+    /** A symbol as plain text, for a dropdown, which shows no formula: \\mathrm{FS}(X) reads FS(X). */
+    plainSymbol(sym) { return String(sym || '').replace(/\\(?:mathrm|mathsf|mathbf|mathit|mathcal|mathbb|operatorname|text)\s*\{([^{}]*)\}/g, '$1').replace(/\\([A-Za-z]+)/g, '$1').replace(/[{}$]/g, ''); },
+    statusWord(status) { return { agreed: 'agreed', local: 'local to its paper', proposed: 'proposed', rejected: 'rejected' }[status] || status; },
+    /** A symbol several facts define is another spelling of an entry: "F full-matches X" of full-match (FUT). */
+    async sameAs(s) {
+      const id = this.sameTarget[s.symbol];
+      const e = this.d.entries.find((x) => x.id === id);
+      if (!e || !confirm(`Record ${s.symbol} as another spelling of ${e.symbol}? Facts keep their wording and are read with the meaning of ${e.symbol}. You can remove the spelling by editing the entry.`)) return;
+      if (await attempt(() => api.post(`api/notation/${id}/spellings`, { symbol: s.symbol, meaning: s.meanings[0]?.meaning || '' }), 'Recorded')) await this.load();
+    },
+    /** Out of the project notation: a local entry, each paper's facts defining the symbol for themselves. */
+    async keepLocal(s) {
+      if (!confirm(`Keep ${s.symbol} local? It stays out of the project notation: the facts of each paper keep defining it for themselves. Any member can reopen it.`)) return;
+      const facts = [...new Set(s.meanings.flatMap((m) => m.facts))];
+      const e = await attempt(() => api.post(`api/projects/${this.pid}/notation`, { symbol: s.symbol.replace(/\$/g, ''), meaning_text: s.meanings[0]?.meaning || s.symbol, facts, definition_fact_id: facts[0] }));
+      if (e && await attempt(() => api.post(`api/notation/${e.id}/status`, { status: 'local' }), 'Kept local')) await this.load();
+    },
+    /** The facts that define an entry: its definition first, then the others that define it for themselves. */
+    definedIn(e) { return [...new Set([e.definition_fact_id, ...(e.facts || [])].filter(Boolean))]; },
     /** Who gives the missing types: the notation review queued for it, the sweep that settles a proposal, or the members. */
     typesHint(e) {
       if (e.ai_pending?.length) return '';
@@ -176,15 +201,27 @@ export const NotationPanel = {
             <header class="ai-head"><h2><icon name="layers" :size="15"/> Defined in several facts</h2><small>{{ candidates.length }} without a project entry</small></header>
             <p class="muted small">Each fact defines the symbols that are not project symbols, so that it reads alone. These symbols are defined in several facts. An AI settles them on its own, thirty at a time, once the project is quiet: it makes a symbol global, keeps it local to its paper, or records it as another spelling of an entry. Its choices appear among the agreed and local entries, and under Consolidate, where any member undoes them.</p>
             <article v-for="s in d.shared.slice(0, 30)" :key="s.symbol" class="notation-shared">
-              <div class="notation-symbol"><math-text :text="asMath(s.symbol)"/></div>
-              <div class="notation-body"><small v-if="s.spellings?.length > 1" class="muted">Written {{ s.spellings.length }} ways: <template v-for="(w, i) in s.spellings.slice(0, 5)" :key="w"><math-text :text="asMath(w)"/>{{ i < Math.min(s.spellings.length, 5) - 1 ? ', ' : '' }}</template></small><small class="muted">In {{ s.facts }} facts<template v-if="wordingGroups(s).summary"> · {{ wordingGroups(s).summary }}</template><template v-if="s.entry?.clashes"> · <b class="warn-text">{{ s.entry.clashes }} other meaning{{ s.entry.clashes > 1 ? 's' : '' }} in sources</b></template></small>
-                <small v-if="sharedState(s)" class="shared-state" :class="'s-' + s.sweep"><icon :name="s.sweep === 'left' ? 'users' : 'sparkles'" :size="12"/> {{ sharedState(s) }}</small>
-                <div v-for="b in wordingGroups(s).blocks" :key="b.key" class="wording-group" :class="[b.tone === null ? 'g-plain' : 'g-' + b.tone, {grouped: wordingGroups(s).grouped}]">
-                  <div v-if="b.title" class="wording-head"><b>{{ b.title }}</b><template v-if="b.label">: <math-text :text="b.label"/></template>
-                    <span v-if="b.entry" class="wording-entry">→ <a :href="link('facts', null, {mode: 'notation', notation: b.entry.id})"><math-text :text="asMath(b.entry.symbol)"/></a> <span class="pill t-neutral">{{ b.entry.word }}</span></span>
-                    <span v-else-if="b.key !== 'unread'" class="muted small">· no project entry</span></div>
-                  <ul class="notation-variants"><li v-for="(m, i) in b.items" :key="i"><math-text :text="m.meaning"/> <small><template v-for="(id, j) in m.facts.slice(0, 4)" :key="id"><a :href="link('facts', id)">{{ labels.get(id) || '#' + id }}</a>{{ j < Math.min(m.facts.length, 4) - 1 ? ', ' : '' }}</template><template v-if="m.facts.length > 4"> and {{ m.facts.length - 4 }} more</template></small></li></ul></div></div>
-              <div class="notation-actions"><span v-if="s.entry" class="pill t-neutral" :title="s.entry.status === 'derived' ? 'An expression in agreed project symbols: it needs no entry of its own' : ''">{{ s.entry.status === 'derived' ? 'from project symbols' : s.entry.status }}</span><button v-else class="btn sm" @click="fromShared(s)">Propose as global</button></div>
+              <div class="nt-head"><div class="notation-symbol"><math-text :text="asMath(s.symbol)"/></div>
+                <div class="nt-provenance">In {{ s.facts }} facts<template v-if="wordingGroups(s).summary"> · {{ wordingGroups(s).summary }}</template>
+                  <template v-if="s.entry?.id"> · <a :href="link('facts', null, {mode: 'notation', notation: s.entry.id})" title="Open the entry: who decided it, and how to reopen or undo it">project entry, {{ statusWord(s.entry.status) }}</a></template>
+                  <template v-else-if="s.entry?.status === 'derived'"> · <span title="An expression in agreed project symbols: it needs no entry of its own">written with project symbols</span></template>
+                  <template v-if="s.entry?.clashes"> · {{ s.entry.clashes }} other meaning{{ s.entry.clashes > 1 ? 's' : '' }} in sources</template></div></div>
+              <p v-if="sharedState(s)" class="shared-state" :class="'s-' + s.sweep"><icon :name="s.sweep === 'left' ? 'users' : 'sparkles'" :size="12"/> {{ sharedState(s) }}</p>
+              <p v-if="s.spellings?.length > 1" class="muted small nt-spellings">Written {{ s.spellings.length }} ways: <template v-for="(w, i) in s.spellings.slice(0, 5)" :key="w"><math-text :text="asMath(w)"/>{{ i < Math.min(s.spellings.length, 5) - 1 ? ', ' : '' }}</template></p>
+              <div v-for="b in wordingGroups(s).blocks" :key="b.key" class="wording-group" :class="[b.tone === null ? 'g-plain' : 'g-' + b.tone, {grouped: wordingGroups(s).grouped}]">
+                <div v-if="b.title" class="wording-head"><b>{{ b.title }}</b><template v-if="b.label">: <math-text :text="b.label"/></template>
+                  <span v-if="b.entry" class="wording-entry">→ <a :href="link('facts', null, {mode: 'notation', notation: b.entry.id})"><math-text :text="asMath(b.entry.symbol)"/></a> <span class="muted small">{{ b.entry.word }}</span></span>
+                  <span v-else-if="b.key !== 'unread'" class="muted small">· no project entry</span></div>
+                <ul class="notation-variants"><li v-for="(m, i) in b.items" :key="i"><math-text :text="m.meaning"/> <small><template v-for="(id, j) in m.facts.slice(0, 4)" :key="id"><a :href="link('facts', id)">{{ labels.get(id) || '#' + id }}</a>{{ j < Math.min(m.facts.length, 4) - 1 ? ', ' : '' }}</template><template v-if="m.facts.length > 4"> and {{ m.facts.length - 4 }} more</template></small></li></ul></div>
+              <footer v-if="!s.entry" class="nt-decide">
+                <select class="sm" v-model="sameTarget[s.symbol]" :aria-label="'The entry ' + s.symbol + ' is another spelling of'">
+                  <option :value="undefined" disabled>Same as which entry?</option>
+                  <optgroup v-if="s.related?.length" label="Same term"><option v-for="x in s.related" :key="x.id" :value="x.id">{{ plainSymbol(x.symbol) }} ({{ statusWord(x.status) }})</option></optgroup>
+                  <optgroup label="All entries"><option v-for="x in sameChoices" :key="x.id" :value="x.id">{{ plainSymbol(x.symbol) }} ({{ statusWord(x.status) }})</option></optgroup></select>
+                <button class="btn sm" :disabled="!sameTarget[s.symbol]" title="Records this symbol as another spelling of the chosen entry: the facts keep their wording, and are read with that entry's meaning. Undo: remove the spelling by editing the entry." @click="sameAs(s)">Same as this entry</button>
+                <span class="grow"></span>
+                <button class="btn sm" title="Keeps the symbol out of the project notation: each paper's facts keep defining it for themselves. It becomes a local entry, which any member can reopen." @click="keepLocal(s)">Keep local</button>
+                <button class="btn sm" title="Fills in the proposal form with this symbol and its most common wording: nothing changes until someone agrees on it." @click="fromShared(s)">Propose as global</button></footer>
             </article>
           </section>
           <section class="panel" data-nt="agreed">

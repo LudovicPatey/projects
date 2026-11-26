@@ -101,7 +101,7 @@ final class AiTaskController
     private static function pinRewrite(array $t): array
     {
         $fid = (int)$t['source_id'];
-        $snap = ['facts' => [[$fid, (int)Db::value('SELECT current_revision FROM facts WHERE id = ?', [$fid])]], 'hash' => NotationController::hash((int)$t['project_id'])];
+        $snap = ['facts' => [[$fid, (int)Db::value('SELECT current_revision FROM facts WHERE id = ?', [$fid])]], 'hash' => NotationController::hashFor((int)$t['project_id'], $fid)];
         Db::update('ai_tasks', ['snapshot_json' => json_encode($snap)], 'id = :id', ['id' => $t['id']]);
         return ['snapshot_json' => json_encode($snap)] + $t;
     }
@@ -1007,7 +1007,7 @@ final class AiTaskController
                 $ctx['symbols'][] = ['symbol' => $x['symbol'], 'spellings' => $x['spellings'], 'facts' => $x['facts'],
                     // Numbered as the groups of equivalent wordings name them.
                     'meanings' => array_map(fn($m, $i) => ['no' => $i + 1, 'meaning' => $m['meaning'], 'facts' => array_map($fact, array_slice($m['facts'], 0, 8))], $x['meanings'], array_keys($x['meanings'])),
-                    'entry' => isset($proposed[$k]) ? $entryOf($proposed[$k]) : null];
+                    'entry' => isset($proposed[$k]) ? $entryOf($proposed[$k]) : null, 'same_term' => NotationController::sameTerm($pid, (string)$x['symbol'])];
             }
             foreach (array_keys($want) as $k) {
                 if (!isset($proposed[$k])) continue;
@@ -1032,7 +1032,7 @@ final class AiTaskController
                     'statement' => Sanitizer::toText((string)$f['statement_html']), 'proof' => $f['proof_html'] ? Sanitizer::toText((string)$f['proof_html']) : null,
                     'glossary' => json_decode((string)$f['glossary_json'], true) ?: null,
                     // A rewrite of this notation found unfaithful: what changed in the meaning, not to do again.
-                    'earlier_rewrite_problem' => Db::value("SELECT check_note FROM fact_rephrasings WHERE fact_id = ? AND revision_no = ? AND notation_hash = ? AND check_verdict = 'unfaithful' ORDER BY id DESC LIMIT 1", [$fid, $f['current_revision'], NotationController::hash($pid)]) ?: null,
+                    'earlier_rewrite_problem' => Db::value("SELECT check_note FROM fact_rephrasings WHERE fact_id = ? AND revision_no = ? AND notation_hash = ? AND check_verdict = 'unfaithful' ORDER BY id DESC LIMIT 1", [$fid, $f['current_revision'], NotationController::hashFor($pid, (int)$fid)]) ?: null,
                     'sources' => array_values(array_map(fn($s) => ['label' => $s['label'] ?? $s['type'], 'quote' => $s['quote']], array_filter(FactController::presentSources($fid, (int)$f['current_revision']), fn($s) => !$s['hidden'] && $s['covers'] !== 'context')))];
             }
         }

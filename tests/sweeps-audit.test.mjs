@@ -74,7 +74,7 @@ test('a rewrite batch cut by its size limit carries on at once; one that took ev
   await app.call(ann, 'POST', `/api/notation/${e.id}/status`, { status: 'agreed' });
   // Proofs long enough that two do not fit in one batch.
   const long = 'x'.repeat(30000);
-  await batch(['l1', 'l2'].map((ref) => ({ ref, title: ref, kind: 'lemma', labels: ['conclusion'], method: 'deduced', statement_text: `S ${ref}.`, proof_text: long })));
+  await batch(['l1', 'l2'].map((ref) => ({ ref, title: ref, kind: 'lemma', labels: ['conclusion'], method: 'deduced', statement_text: `Every $X\\in\\mathrm{FIN}$ in ${ref}.`, proof_text: long })));
   const rewrite = async () => {
     const t = (await claim(['notation'])).data.task;
     if (!t) return null;
@@ -85,7 +85,7 @@ test('a rewrite batch cut by its size limit carries on at once; one that took ev
   const sizes = [];
   for (let n = await rewrite(); n !== null && sizes.length < 20; n = await rewrite()) sizes.push(n);
   assert.ok(sizes.length >= 2, `several batches without waiting an hour: ${sizes}`);
-  assert.equal(sizes.reduce((a, b) => a + b, 0), (await app.call(ann, 'GET', `/api/projects/${pid}/notation`)).data.progress.facts, 'every fact taken');
+  assert.equal(sizes.reduce((a, b) => a + b, 0), 2, 'every fact that uses FIN taken, each once; the others use no entry and need no rewrite');
 });
 
 test('a proof is never put in the batch of the model that wrote it: it waits for another model', async () => {

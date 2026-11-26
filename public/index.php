@@ -167,6 +167,7 @@ $routes = [
     ['POST',   '/api/projects/{id}/notation',             [NotationController::class, 'create']],
     ['POST',   '/api/projects/{id}/notation/rephrase-all', [NotationController::class, 'rephraseAll']],
     ['PATCH',  '/api/notation/{nid}',                     [NotationController::class, 'update']],
+    ['POST',   '/api/notation/{nid}/spellings',          [NotationController::class, 'spelling']],
     ['POST',   '/api/notation/{nid}/status',              [NotationController::class, 'decide']],
     ['DELETE', '/api/notation/{nid}',                     [NotationController::class, 'delete']],
     ['POST',   '/api/facts/{id}/rephrasings',             [NotationController::class, 'rephrase']],

@@ -61,7 +61,16 @@ Assume a newcomer who must understand each screen from what it says, without the
 - Before committing an interface change: the audit and a screenshot at each width, on realistic data (long names and labels, every
   state), not on a test page with short texts.
 
-## 6. Help follows the interface
+## 6. New information re-thinks the layout
+
+Adding a piece of information to a page is a moment to redesign the part it joins, not to append a block. Before adding one, list
+everything the card or panel already shows and give each its place in one structure: a header (what it is, its state, who decided it,
+the actions), the main content, then labelled rows or sections for the rest, each with a label that says what it is. Color is not a
+structure: it marks what color alone carries (a parameter's identity, a status with its word), never a block that would otherwise be
+lost among the others. The notation entry is the example: symbol, decision and actions in its header, the meaning, then one panel of
+labelled rows (Applies to, How sources differ, Other forms, Other meanings, Defined in), instead of boxes and colored notes stacked.
+
+## 7. Help follows the interface
 
 Each new notice, state or action has its explanation in the help center (`public/assets/js/help/content.js`), and the first-use tour
 and front page are updated when what they say becomes wrong.

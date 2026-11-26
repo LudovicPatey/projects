@@ -221,6 +221,9 @@ final class Db
         // The AI requests a person made, against their daily limit. Before, every task without a dedupe key counted, sweeps included:
         // the platform's own upkeep counted against whoever's client asked for work. The count starts afresh: the window is 24 hours.
         $migrations[] = 'ALTER TABLE ai_tasks ADD COLUMN counted TINYINT(1) NOT NULL DEFAULT 0';
+        // A question the AI asks the members about its rewrite or its check of a source: shown until a person answers it.
+        $migrations[] = 'ALTER TABLE fact_rephrasings ADD COLUMN doubt_text TEXT NULL';
+        $migrations[] = 'ALTER TABLE fact_source_checks ADD COLUMN doubt_text TEXT NULL';
         // One AI review per model, not per member: the new key first, so that the foreign key on fact_id always has an index.
         // SQLite cannot change a table's keys: an existing local database keeps one review per member (FactController::recordReview).
         if (!self::isSqlite()) {

@@ -324,7 +324,7 @@ export const FactsView = {
           <div class="fact-topics"><icon name="tag" :size="13"/>
             <template v-if="topicDraft === null"><a v-for="t in fact.topics" :key="t" class="topic-chip" :href="link('facts', null, {topic: t})">{{ t }}</a><span v-if="!fact.topics.length" class="muted small">No subject tag</span><button class="link-btn small" @click="topicDraft = fact.topics.join(', ')">{{ fact.topics.length ? 'Edit' : 'Add tags' }}</button></template>
             <template v-else><input v-model="topicDraft" class="topic-input" placeholder="Subjects, separated by commas" aria-label="Subject tags, separated by commas" @keydown.enter="saveTopics" @keydown.esc="topicDraft = null"><button class="btn xs primary" @click="saveTopics">Save</button><button class="btn xs ghost" @click="topicDraft = null">Cancel</button></template></div>
-          <ai-pending :items="fact.ai_pending"/>
+          <ai-pending :items="fact.ai_pending" :questions="fact.ai_questions"/>
           <div v-if="fact.worth_reading" class="notation-banner t-info worth-reading"><icon name="sparkles" :size="14"/><span><b>Worth reading.</b> <math-text :text="fact.worth_reading.reason"/> <ai-meta compact :model="fact.worth_reading.model"/></span></div>
           <div v-if="fact.merged_from" class="notation-banner t-info"><icon name="layers" :size="14"/><span>{{ fact.merged_from }} was merged into this fact, as the same result.</span></div>
           <div v-else-if="mergedHere.length" class="notation-banner t-info"><icon name="layers" :size="14"/><span>{{ mergedHere.map((h) => h.other_label).join(', ') }} {{ mergedHere.length > 1 ? 'were' : 'was' }} merged into this fact, as the same result.</span><button class="btn xs" @click="tab = 'trace'; loadTrace()">History</button></div>
