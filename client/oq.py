@@ -52,7 +52,7 @@ import webbrowser
 import zipfile
 import zlib
 
-VERSION = "1.22.5"
+VERSION = "1.22.6"
 API_LEVEL = 2  # raise with the server's AiTaskController::API_LEVEL when a client needs new server features
 GITHUB_REPO = "LudovicPatey/projects"
 KINDS = ["extract", "ask", "bib", "derive", "review", "lean", "notation", "consolidate"]
@@ -1108,13 +1108,13 @@ def fact_items(task, answer, source_text):
     for f in answer.get("facts") or []:
         if task["kind"] == "extract" and f.get("kind") == "definition":
             continue  # a convention: it belongs in the local notation of the facts that use it
-        ref = re.sub(r"[^\w:.-]+", "-", str(f.get("ref") or "")).strip("-")[:32]
+        ref = fact_ref(f.get("ref"))
         if not ref or not f.get("title") or not f.get("statement"):
             dropped.append((ref or "?", "incomplete"))
             continue
-        item = {"ref": ref, "external_id": f"oq-t{task['id']}-{ref}"[:64], "title": str(f["title"])[:250], "kind": f.get("kind") or "lemma",
+        item = {"ref": ref, "external_id": fact_external_id(task["id"], ref), "title": str(f["title"])[:250], "kind": f.get("kind") or "lemma",
                 "labels": [f["label"] if f.get("label") in EXTRACT_LABELS else "conclusion"], "statement_text": f["statement"], "tool": "oq-client",
-                "depends_on": [str(d) for d in f.get("depends_on") or []]}
+                "depends_on": [str(d) for d in f.get("depends_on") or []]}  # matched below against refs written the same way
         if f.get("proof"):
             item["proof_text"] = f["proof"]
         glossary = {str(x.get("symbol") or "").strip(): str(x.get("meaning") or "").strip() for x in f.get("local_notation") or [] if isinstance(x, dict)}
@@ -1147,8 +1147,21 @@ def fact_items(task, answer, source_text):
     known = {i["ref"] for i in items}
     existing = {str(x.get("label")) for x in task["context"].get("facts", [])} | {str(x.get("id")) for x in task["context"].get("facts", [])}
     for i in items:
-        i["depends_on"] = [d for d in i["depends_on"] if d in known or d in existing]
+        # A dependency names a new fact by the ref the model gave it, written as refs are (fact_ref), or an existing fact.
+        i["depends_on"] = list(dict.fromkeys(d if d in existing else fact_ref(d) for d in i["depends_on"] if d in existing or fact_ref(d) in known))
     return items, dropped
+
+
+def fact_ref(raw):
+    """A new fact's ref, as its dependencies name it. Long refs are kept whole up to 64 characters: cut shorter, a dependency
+    written in full no longer matched the fact it names, and was dropped."""
+    return re.sub(r"[^\w:.-]+", "-", str(raw or "")).strip("-")[:64]
+
+
+def fact_external_id(task_id, ref):
+    """At most 64 characters, and different for two refs that only differ past the cut."""
+    whole = f"oq-t{task_id}-{ref}"
+    return whole if len(whole) <= 64 else f"{whole[:55]}-{hashlib.sha1(ref.encode()).hexdigest()[:8]}"
 
 
 def valid_comment_links(task, links):

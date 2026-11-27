@@ -29,3 +29,23 @@ test('each extracted fact records its share of the measured time', () => {
   const src = (n) => spawnSync('grep', ['-n', n, CLIENT], { encoding: 'utf8' }).stdout;
   assert.match(src('it\\["generation_seconds"\\] = round(seconds / len(items), 1)'), /generation_seconds/);
 });
+
+test('a dependency on a new fact with a long ref is kept, as Prove new facts wrote it (live fact 1494)', () => {
+  const out = spawnSync('python3', ['-c', `
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("oq", sys.argv[1]); oq = importlib.util.module_from_spec(spec); spec.loader.exec_module(oq)
+task = {"id": 591, "kind": "derive", "context": {"facts": [{"id": 1484, "label": "thm:old"}]}}
+base = {"kind": "lemma", "statement": "S.", "proof": "P.", "quote": None, "page": None, "covers": None, "local_notation": []}
+answer = {"facts": [
+  dict(base, ref="lem:apart-refinement-with-divisibility", title="Apart refinement", depends_on=[]),
+  dict(base, ref="lem:apart-refinement-with-divisibility-two", title="Another", depends_on=[]),
+  dict(base, ref="lem:binary-support-pullback", title="Pullback", depends_on=["lem:apart-refinement-with-divisibility", "thm:old", "1484", "nowhere"])]}
+items, dropped = oq.fact_items(task, answer, None)
+print(json.dumps({"refs": [i["ref"] for i in items], "deps": items[2]["depends_on"], "ids": [i["external_id"] for i in items]}))
+`, CLIENT], { encoding: 'utf8' });
+  const r = JSON.parse(out.stdout || '{}');
+  assert.equal(r.refs[0], 'lem:apart-refinement-with-divisibility', out.stderr);
+  assert.deepEqual(r.deps, ['lem:apart-refinement-with-divisibility', 'thm:old', '1484'], 'the new fact, and existing ones by label or id');
+  assert.equal(new Set(r.ids).size, 3, 'two refs that share their beginning keep different ids');
+  assert.ok(r.ids.every((x) => x.length <= 64));
+});
