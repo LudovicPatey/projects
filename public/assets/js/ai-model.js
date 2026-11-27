@@ -38,6 +38,8 @@ export function usageView(u, now = Date.now()) {
 export const SWEEP_KINDS = {
   rewrite_check: { label: 'Check rewrites in the project notation', short: 'Rewrite check', icon: 'eye', hint: 'A second AI compares each rewrite with its original. One that changes the meaning is not shown. People can overrule it.' },
   notation_settle: { label: 'Settle the project notation', short: 'Notation sweep', icon: 'book', hint: 'Decides the symbols several facts define and the project notation does not have yet: global, local to their paper, or another spelling of an entry.' },
+  proof_repair: { label: 'Repair proofs a review found flawed', short: 'Proof repair', icon: 'edit', hint: 'An AI of another company than the reviewer repairs the proof, or says why the review is wrong or that the gap cannot be fixed. A repaired proof is added beside the original.' },
+  repair_check: { label: 'Check repaired proofs', short: 'Repair check', icon: 'check-circle', hint: 'An AI of the reviewer’s side checks each repair. Rounds go on until both sides agree on a proof or a gap, or three rounds have passed.' },
   proof_review: { label: 'Review proofs nobody reviewed', short: 'Proof review', icon: 'check-circle', hint: 'An independent AI referees each proof nobody reviewed, the facts others rely on first: correct, a gap or an error. It counts like any AI review, and people can review too.' },
   second_reading: { label: 'Second reading of proposals', short: 'Second reading', icon: 'eye', hint: 'Another AI reads again the consolidation proposals it was not sure of, applies those it agrees with and drops the others.' },
 };
@@ -53,6 +55,8 @@ export const PENDING_PASSES = {
   review: { name: 'Proof review', does: 'An AI referees the proof against the facts it relies on: correct, a gap or an error. It runs on clients with Review proofs turned on.', meanwhile: 'People can review it too.' },
   types: { name: 'Notation review', does: 'An AI says what the parameters of this entry stand for, and so what the entry applies to.', meanwhile: 'No need to type them by hand, though Edit lets you.' },
   second: { name: 'Second reading', does: 'Another AI reads this proposal again: it applies it if it agrees, and drops it otherwise.', meanwhile: 'You can still accept or reject it yourself.' },
+  repair: { name: 'Proof repair', does: 'A review found a flaw: an AI of another company repairs the proof, says why the review is wrong, or that the gap cannot be fixed.', meanwhile: 'No need to repair it by hand; you can still propose another proof.' },
+  recheck: { name: 'Check of the repair', does: 'An AI of the reviewer’s side checks the repaired proof, or the answer to the review. If it still finds a flaw, another round starts.', meanwhile: 'You can review the repaired proof yourself: your verdict counts like any review.' },
 };
 
 /** The notice for the passes an object waits for: [{sweep, open}] from the server. Empty when it is in its final state. */

@@ -158,7 +158,9 @@ final class FactController
              JOIN facts a ON a.id = d.fact_id JOIN facts b ON b.id = d.depends_on_id
              WHERE a.project_id = ? AND a.deleted_at IS NULL AND b.deleted_at IS NULL', [$pid]));
         $reviews = [];
-        foreach (Db::all('SELECT v.fact_id, v.verdict, v.statement_verdict, v.reviewer_id, v.reviewer_kind, v.ai_model, u.name AS reviewer_name FROM fact_reviews v
+        // A review whose objection a repair settled (both AI sides agreed on a proof) still shows, but no longer weighs on the status.
+        $resolved = \App\ProofRepair::resolvedReviews($pid);
+        foreach (Db::all('SELECT v.id, v.fact_id, v.verdict, v.statement_verdict, v.reviewer_id, v.reviewer_kind, v.ai_model, u.name AS reviewer_name FROM fact_reviews v
                           JOIN users u ON u.id = v.reviewer_id
                           JOIN facts f ON f.id = v.fact_id AND v.revision_no = f.current_revision WHERE f.project_id = ?', [$pid]) as $v) {
             $reviews[(int)$v['fact_id']][] = $v;
@@ -198,7 +200,7 @@ final class FactController
             $f['revision_author'] = (int)$f['revision_author'];
             $f['current_revision'] = (int)$f['current_revision'];
             $f['comment_count'] = (int)$f['comment_count'];
-            $f['status'] = self::status($f, $reviews[$id] ?? [], array_values($proofs[$id] ?? []));
+            $f['status'] = self::status($f, array_values(array_filter($reviews[$id] ?? [], fn($v) => !isset($resolved[(int)$v['id']]))), array_values($proofs[$id] ?? []));
             $f['proof_count'] = 1 + count($proofs[$id] ?? []);
             $f['stars'] = $stars[$id] ?? 0;
             $f['review_counts'] = array_count_values(array_column($reviews[$id] ?? [], 'verdict'));
@@ -247,6 +249,27 @@ final class FactController
         self::mark($byId, fn($f) => $f['status'] === 'proof_disputed', 'unproved');
         self::mark($byId, fn($f) => in_array($f['status'], ['disputed', 'retracted'], true), 'broken');
         return ['facts' => array_values($byId), 'edges' => $edges];
+    }
+
+    /**
+     * The meaning of the terms and symbols a fact uses, for an AI that judges or repairs its proof: what the fact defines for itself
+     * (its glossary), then the entries of the project notation its rewrite says it uses. Without them a referee reads "half-matches" or
+     * "NU" with no definition and reports a gap that is not one. @return list<array{symbol: string, meaning: string, from: string}>
+     */
+    public static function definitions(int $pid, int $fid, int $revision): array
+    {
+        $out = [];
+        $g = json_decode((string)Db::value('SELECT glossary_json FROM fact_revisions WHERE fact_id = ? AND revision_no = ?', [$fid, $revision]), true) ?: [];
+        foreach ($g as $sym => $meaning) $out[] = ['symbol' => (string)$sym, 'meaning' => is_string($meaning) ? $meaning : json_encode($meaning, JSON_UNESCAPED_UNICODE), 'from' => 'this fact'];
+        $uses = json_decode((string)Db::value('SELECT uses_json FROM fact_rephrasings WHERE fact_id = ? AND revision_no = ? AND unchanged = 0 ORDER BY id DESC LIMIT 1', [$fid, $revision]), true) ?: [];
+        $wanted = [];
+        foreach ($uses as $u) if (!empty($u['project_symbol'])) $wanted[NotationController::notionKey((string)$u['project_symbol'])] = true;
+        if ($wanted) {
+            foreach (Db::all("SELECT symbol, meaning_html, status FROM notations WHERE project_id = ? AND status IN ('agreed', 'local')", [$pid]) as $n) {
+                if (isset($wanted[NotationController::notionKey((string)$n['symbol'])])) $out[] = ['symbol' => $n['symbol'], 'meaning' => Sanitizer::toText((string)$n['meaning_html']), 'from' => 'project notation'];
+            }
+        }
+        return $out;
     }
 
     /** What a proof search on this computer may build on: established, its whole chain too. */
@@ -778,6 +801,8 @@ final class FactController
             }
         }
         Activity::touch((int)$f['project_id'], 'fact', (int)$f['id'], 'review', $rid);
+        // An AI found a flaw: an AI of another company tries to repair the proof, and the reviewer's side checks the repair.
+        if ($kind === 'agent' && $verdict !== 'correct') \App\ProofRepair::onReview($rid);
         if ($verdict !== 'correct') QuestionController::factChanged((int)$f['project_id'], (int)$f['id'], "{$f['label']} was " . ($statement === 'true' ? 'accepted with a disputed proof' : ($verdict === 'incorrect' ? 'denied' : 'reported with a gap')));
         $link = ['view' => 'facts', 'id' => (int)$f['id']];
         if ($body) Notify::mentions((int)$f['project_id'], 'fact_review', $rid, $body['mentions'], $link, $body['text'], null, !$old);
@@ -891,6 +916,19 @@ final class FactController
         Notify::mentions($pid, 'fact_proof', $id, $body['mentions'], $link, $body['text']);
         $author = (int)Db::value('SELECT author_id FROM fact_revisions WHERE fact_id = ? AND revision_no = ?', [$f['id'], $f['current_revision']]);
         if ($author !== Auth::id() && Access::isMember($pid, $author)) Notify::send($author, $pid, 'fact_proof', ['link' => $link, 'excerpt' => $f['label'] . ': ' . mb_substr($body['text'], 0, 150)]);
+        Response::json(self::present(Access::fact((int)$f['id'])), 201);
+    }
+
+    /**
+     * A member asks AIs to repair the proof, from the latest review of this revision that found a flaw, a person's included. People
+     * only: an AI's own reviews start a repair by themselves. Returns the fact, with its repair.
+     */
+    public static function askRepair(Request $r): never
+    {
+        if (Auth::isAi()) throw new HttpError(403, 'A repair starts by itself after an AI review that finds a flaw.');
+        $f = Access::fact($r->int('id'));
+        if ($f['retracted_at']) throw new HttpError(422, 'This fact is retracted.');
+        \App\ProofRepair::ask((int)$f['id'], Auth::id());
         Response::json(self::present(Access::fact((int)$f['id'])), 201);
     }
 
@@ -1586,6 +1624,7 @@ final class FactController
                     WHERE (s.fact_id = ? OR s.other_fact_id = ?) AND s.status IN ('accepted', 'undone') ORDER BY s.decided_at DESC, s.id DESC LIMIT 100", [$id, $id]));
         // The AI passes it still waits for: it is not in its final state, and people need not fix by hand what an AI is about to do.
         $out['ai_pending'] = \App\Sweeps::pendingForFact($pid, $id);
+        $out['repairs'] = \App\ProofRepair::forFact($id, (int)$out['current_revision']);
         // And what it waits for from a person: a question the AI asked about its rewrite or its check of the source.
         $out['ai_questions'] = self::aiQuestions($pid, $id);
         $out['worth_reading'] = $f['highlight_at'] ? ['reason' => $f['highlight_reason'], 'at' => $f['highlight_at'], 'model' => $f['highlight_model']] : null;

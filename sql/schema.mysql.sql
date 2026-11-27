@@ -438,6 +438,26 @@ CREATE TABLE IF NOT EXISTS fact_proof_reviews (
   FOREIGN KEY (reviewer_id) REFERENCES users(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- A proof that an AI review found flawed, repaired by an AI of another company and checked again by one of the reviewer's, in rounds,
+-- until both agree on a proof, both agree on a gap neither can fix, or the rounds run out (src/ProofRepair.php).
+CREATE TABLE IF NOT EXISTS proof_repairs (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  project_id INT UNSIGNED NOT NULL,
+  fact_id INT UNSIGNED NOT NULL,
+  revision_no INT UNSIGNED NOT NULL,      -- the revision whose proof is repaired
+  review_id INT UNSIGNED NOT NULL,        -- the review that started it (fact_reviews)
+  state VARCHAR(10) NOT NULL,             -- repair, check (an AI step is due); proof, gap, disagree (settled); closed
+  round INT UNSIGNED NOT NULL DEFAULT 1,
+  proof_id INT UNSIGNED NULL,             -- the last repaired proof (fact_proofs)
+  steps_json MEDIUMTEXT NOT NULL,         -- each step: who, what, and why
+  asked_by INT UNSIGNED NULL,             -- the member who asked for it, when a person's review started it
+  created_at DATETIME NOT NULL,
+  updated_at DATETIME NOT NULL,
+  KEY idx_proof_repair (project_id, state),
+  KEY idx_proof_repair_fact (fact_id, revision_no),
+  FOREIGN KEY (fact_id) REFERENCES facts(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS fact_lean (
   id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   fact_id INT UNSIGNED NOT NULL,

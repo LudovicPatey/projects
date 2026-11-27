@@ -27,7 +27,7 @@ use App\Controllers\NotationController;
 final class Sweeps
 {
     /** A sweep's kind of task. */
-    public const KINDS = ['rewrite' => 'notation', 'source' => 'source_check', 'check' => 'rewrite_check', 'second' => 'second_reading', 'symbols' => 'consolidate', 'review' => 'proof_review'];
+    public const KINDS = ['rewrite' => 'notation', 'source' => 'source_check', 'check' => 'rewrite_check', 'second' => 'second_reading', 'symbols' => 'consolidate', 'review' => 'proof_review', 'repair' => 'proof_repair', 'recheck' => 'repair_check'];
     /** At most this many facts in one session, and this much text to rewrite. */
     public const REWRITE_BATCH = 12;
     public const REWRITE_CHARS = 40000;
@@ -44,7 +44,7 @@ final class Sweeps
     public const REVIEW_CHARS = 50000;
     /** Entries whose parameters have no type yet, typed in the same session. */
     public const TYPES_BATCH = 30;
-    private const BATCH = ['rewrite' => self::REWRITE_BATCH, 'source' => self::SOURCE_BATCH, 'check' => self::CHECK_BATCH, 'second' => self::SECOND_BATCH, 'symbols' => self::SYMBOLS_BATCH, 'review' => self::REVIEW_BATCH];
+    private const BATCH = ['rewrite' => self::REWRITE_BATCH, 'source' => self::SOURCE_BATCH, 'check' => self::CHECK_BATCH, 'second' => self::SECOND_BATCH, 'symbols' => self::SYMBOLS_BATCH, 'review' => self::REVIEW_BATCH, 'repair' => 3, 'recheck' => 3];
 
     private static function setting(string $key, float $default): float
     {
@@ -61,6 +61,7 @@ final class Sweeps
         $checked = Db::value('SELECT sweeps_checked_at FROM projects WHERE id = ?', [$pid]);
         if ($checked && strtotime((string)$checked . ' UTC') > $now - 60 * self::setting('check_minutes', 5)) return [];
         Db::update('projects', ['sweeps_checked_at' => Db::now()], 'id = :id', ['id' => $pid]);
+        ProofRepair::ensure($pid); // flaws AI reviews found before repairs existed get theirs
         // Quiet: no fact for a while, and no extraction adding some. A large extraction then makes one sweep, not ten.
         $last = Db::value('SELECT MAX(created_at) FROM facts WHERE project_id = ?', [$pid]);
         if ($last && strtotime((string)$last . ' UTC') > $now - 60 * self::setting('quiet_minutes', 30)) return [];
@@ -110,6 +111,7 @@ final class Sweeps
             // are. A member who asks for the rewrites starts them at once all the same (NotationController::rephraseAll).
             'rewrite' => self::rewriteCandidates($pid) && !self::open($pid, 'symbols') && !self::symbolCandidates($pid), 'source' => self::sourceCandidates($pid),
             'check' => self::checkCandidates($pid), 'second' => self::secondCandidates($pid), 'review' => self::reviewCandidates($pid), 'symbols' => self::symbolCandidates($pid) || self::typeCandidates($pid),
+            'repair' => ProofRepair::due($pid, 'repair'), 'recheck' => ProofRepair::due($pid, 'check'),
         };
     }
 
@@ -152,6 +154,8 @@ final class Sweeps
         $graph = FactController::graph($pid); // read once: the project's graph is the costly part of this page
         foreach (self::sourceCandidates($pid, $graph) as $group) if (in_array($fid, array_column($group, 0), true)) { $out[] = 'source'; break; }
         if (in_array($fid, self::reviewCandidates($pid, $graph), true)) $out[] = 'review';
+        $step = ProofRepair::pendingStep($fid);
+        if ($step) $out[] = $step === 'repair' ? 'repair' : 'recheck';
         return array_map(fn($s) => ['sweep' => $s, 'open' => self::open($pid, $s) !== null], $out);
     }
 
@@ -245,6 +249,16 @@ final class Sweeps
     public static function reviewModel(int $pid, array $models): ?string
     {
         foreach ($models as $m) if (is_string($m) && $m !== '' && self::reviewBatch($pid, $m)[0]) return $m;
+        return null;
+    }
+
+    /** The same for any procedure that must run on a model independent of the work it answers. */
+    public static function modelFor(string $kind, int $pid, array $models): ?string
+    {
+        if ($kind === 'proof_review') return self::reviewModel($pid, $models);
+        $step = ['proof_repair' => 'repair', 'repair_check' => 'check'][$kind] ?? null;
+        if ($step === null) return null;
+        foreach ($models as $m) if (is_string($m) && $m !== '' && ProofRepair::batch($pid, $step, $m)[0]) return $m;
         return null;
     }
 
@@ -426,6 +440,15 @@ final class Sweeps
                 return null;
             }
             $snap = ['facts' => $batch, 'full' => $full];
+        } elseif (in_array($t['kind'], ['proof_repair', 'repair_check'], true)) {
+            $step = $t['kind'] === 'proof_repair' ? 'repair' : 'check';
+            [$batch, $full] = ProofRepair::batch($pid, $step, (string)($t['ai_model'] ?? ''));
+            if (!$batch && ProofRepair::due($pid, $step)) {
+                // Repairs are left, for a model of another company: the sweep waits for its client rather than ending.
+                Db::run("UPDATE ai_tasks SET status = 'pending', lease_hash = NULL, lease_until = NULL, claimed_by = NULL, client_name = NULL, ai_model = NULL, attempts = attempts - 1, started_at = NULL, updated_at = ? WHERE id = ?", [Db::now(), $t['id']]);
+                return null;
+            }
+            $snap = ['items' => $batch, 'full' => $full];
         } elseif ($t['kind'] === 'second_reading') {
             $all = self::secondCandidates($pid);
             $batch = array_slice($all, 0, self::SECOND_BATCH);

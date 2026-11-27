@@ -28,6 +28,8 @@ final class Procedures
             'consolidate' => ['label' => 'Consolidate the facts', 'description' => 'After extractions, read the whole facts database and propose merges of duplicates, links across sources, open questions, subject tags, the cited results behind the outside references of proofs, and the project\'s notation.', 'tier' => 'strong', 'capabilities' => []],
             'rewrite_check' => ['label' => 'Check rewrites', 'description' => 'Compare each fact an AI rewrote in the project notation with its original, and say whether it states exactly the same. A rewrite found unfaithful is not shown. People can overrule the verdict.', 'tier' => 'strong', 'capabilities' => []],
             'proof_review' => ['label' => 'Review proofs', 'description' => 'Referee the proofs nobody reviewed yet, a few at a time, as an independent reader: correct, a gap, or an error. Each review is shown with its model, like any AI review, and people can review the fact too. A client that can use another company\'s AI reviews with it: its check is the more independent.', 'tier' => 'strong', 'capabilities' => [], 'independent' => true],
+            'proof_repair' => ['label' => 'Repair proofs', 'description' => 'When an AI review finds a gap or an error, an AI of another company repairs the proof, says why the review is wrong, or that the gap cannot be fixed. A repaired proof is added as another proof: the reviewed text never changes.', 'tier' => 'strong', 'capabilities' => [], 'independent' => true],
+            'repair_check' => ['label' => 'Check repairs', 'description' => 'An AI of the reviewer\'s side checks a repaired proof, or the answer that the review was wrong. Rounds go on until both sides agree on a proof or on a gap, or ' . ProofRepair::ROUNDS . ' rounds have passed: then people decide, with both sides\' arguments.', 'tier' => 'strong', 'capabilities' => [], 'independent' => true],
             'second_reading' => ['label' => 'Second reading', 'description' => 'Read again the consolidation\'s proposals it was not sure enough to apply, and apply or drop each one, so that people decide only what needs them. Everything can be undone.', 'tier' => 'strong', 'capabilities' => []],
             'source_check' => ['label' => 'Check a cited result', 'description' => 'Read the source of a result cited without proof, and say whether it states the result as written. People still accept it.', 'tier' => 'fast', 'capabilities' => ['document', 'web_search']],
         ];
@@ -151,7 +153,9 @@ a rewrite you cannot judge, rather than guess. An unfaithful rewrite is not show
 TXT,
         'proof_review' => <<<'TXT'
 TASK: "facts" in task.json lists facts of the project whose proofs nobody reviewed yet. Act as a strict, independent referee of each one.
-Another AI wrote them, from papers or its own work, so assume nothing. Check the statement and every step of the proof, relative to its
+Another AI wrote them, from papers or its own work, so assume nothing. First read its "definitions": the meaning of its terms and
+symbols, from the fact itself and from the project notation. A term defined there is not a gap; a term used but defined nowhere, nor
+standard, is one. An empty list of "dependencies" means the proof relies only on standard facts. Check the statement and every step of the proof, relative to its
 "dependencies": assume that each dependency holds as stated, including a "cited" one, a result of another work that people check
 against its source, and check that the proof uses each one as stated. Do not search the web: a proof may rely only on its dependencies
 and on standard facts. If it uses a result of another work that is not among its dependencies, report a gap that names it.
@@ -161,6 +165,36 @@ Answer in "reviews", one entry per fact with its "fact_id". "verdict": "correct"
 error or gap; "gap" if a step is unjustified or uses a result that is not among its dependencies; "incorrect" if a step or the statement
 is false, with a counterexample if you can. In "explanation", name the exact location of each issue; for "correct", say what you checked.
 Do not repair the proofs. Leave out a fact you could not check carefully, rather than guess.
+TXT,
+        'proof_repair' => <<<'TXT'
+TASK: "repairs" in task.json lists proofs that a referee found flawed. For each one you get the statement of the fact, its
+"definitions" (the meaning of its terms and symbols, from the fact itself and the project notation: use them as given), its
+"original_proof", the "proof_under_discussion" (the last repaired version, or null when it is the original), the "dependencies" it may
+rely on (assume each holds as stated; "usable" says whether the project trusts it), and the "steps" so far: the review that found the
+flaw, then any earlier repair and the referee's answer to it. You are the other side, an independent mathematician: answer the latest
+objection, for the same statement. Never change or weaken the statement: a proof of a different statement is not a repair.
+Answer in "repairs", one entry per item with its "repair_id", and "outcome":
+- "repaired": the objection is right and you can fix it. In "proof", write the complete corrected proof, self-contained, in the notation
+  of the statement, with $...$ for formulas, relying only on the dependencies and standard facts; fill every gap the referee named, and do
+  not leave any step to the reader. In "explanation", say what you changed and why it answers each point.
+- "review_wrong": the objection is mistaken and the proof under discussion is correct as written. Set "proof" to null and, in
+  "explanation", show precisely why each point the referee raised holds, step by step.
+- "real_gap": the objection is right and you cannot fix it with these dependencies, or the statement looks false. Set "proof" to null and,
+  in "explanation", say what is missing (a result that is not among the dependencies, a counterexample) as exactly as you can.
+Be honest: a referee of another company checks your answer, and a confident repair that does not hold only costs a round.
+TXT,
+        'repair_check' => <<<'TXT'
+TASK: "repairs" in task.json lists proofs under discussion between a referee and a repairer. For each one you get the statement, its
+"definitions" (the meaning of its terms and symbols: a term defined there is not a gap), the
+"original_proof", the "proof_under_discussion" (the repaired version, or null when the repairer defends the original), the
+"dependencies" (assume each holds as stated), and the "steps" so far. The last step is the repairer's: either a repaired proof, or an
+explanation of why the review was wrong. You are the referee's side: check it strictly and independently, as a referee would.
+Answer in "checks", one entry per item with its "repair_id" and "verdict":
+- When the last step is a repaired proof, judge that proof as a whole: "correct" only if you checked every step and found no gap or
+  error, relative to the dependencies; "gap" if a step is still unjustified; "incorrect" if a step or the statement is false.
+- When the last step says the review was wrong, judge the original proof again in the light of that explanation: "correct" if you are
+  now convinced it holds; "gap" or "incorrect" if the objection stands.
+In "explanation", name the exact location of each remaining issue, or, for "correct", say what you checked. Do not write a proof yourself.
 TXT,
         'second_reading' => <<<'TXT'
 TASK: "proposals" in task.json lists changes that an AI proposed after reading the whole facts database of the project, but was not
@@ -292,6 +326,8 @@ TXT,
         'notation_rephrase_batch' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'facts'], "properties" => ["summary" => ["type" => 'string'], "facts" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['fact_id', 'unchanged', 'statement', 'proof', 'local_notation', 'uses', 'doubt'], "properties" => ["fact_id" => ["type" => 'integer'], "doubt" => ["type" => 'string'], "unchanged" => ["type" => 'boolean'], "statement" => ["type" => 'string'], "proof" => ["type" => ['string', 'null']], "local_notation" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'meaning'], "properties" => ["symbol" => ["type" => 'string'], "meaning" => ["type" => 'string']]]], "uses" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'meaning_here', 'project_symbol'], "properties" => ["symbol" => ["type" => 'string'], "meaning_here" => ["type" => 'string'], "project_symbol" => ["type" => 'string']]]]]]]]],
         'source_check_batch' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'checks'], "properties" => ["summary" => ["type" => 'string'], "checks" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['fact_id', 'verdict', 'where', 'explanation', 'doubt'], "properties" => ["fact_id" => ["type" => 'integer'], "doubt" => ["type" => 'string'], "verdict" => ["type" => 'string', "enum" => ['confirmed', 'differs', 'not_found', 'unreadable']], "where" => ["type" => 'string'], "explanation" => ["type" => 'string']]]]]],
         'rewrite_check' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'checks'], "properties" => ["summary" => ["type" => 'string'], "checks" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['rewrite_id', 'verdict', 'note'], "properties" => ["rewrite_id" => ["type" => 'integer'], "verdict" => ["type" => 'string', "enum" => ['faithful', 'unfaithful']], "note" => ["type" => 'string']]]]]],
+        'proof_repair' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'repairs'], "properties" => ["summary" => ["type" => 'string'], "repairs" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['repair_id', 'outcome', 'proof', 'explanation'], "properties" => ["repair_id" => ["type" => 'integer'], "outcome" => ["type" => 'string', "enum" => ['repaired', 'review_wrong', 'real_gap']], "proof" => ["type" => ['string', 'null']], "explanation" => ["type" => 'string']]]]]],
+        'repair_check' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'checks'], "properties" => ["summary" => ["type" => 'string'], "checks" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['repair_id', 'verdict', 'explanation'], "properties" => ["repair_id" => ["type" => 'integer'], "verdict" => ["type" => 'string', "enum" => ['correct', 'gap', 'incorrect']], "explanation" => ["type" => 'string']]]]]],
         'proof_review' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'reviews'], "properties" => ["summary" => ["type" => 'string'], "reviews" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['fact_id', 'verdict', 'explanation'], "properties" => ["fact_id" => ["type" => 'integer'], "verdict" => ["type" => 'string', "enum" => ['correct', 'gap', 'incorrect']], "explanation" => ["type" => 'string']]]]]],
         'second_reading' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'decisions'], "properties" => ["summary" => ["type" => 'string'], "decisions" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['suggestion_id', 'verdict', 'reason'], "properties" => ["suggestion_id" => ["type" => 'integer'], "verdict" => ["type" => 'string', "enum" => ['apply', 'drop', 'unsure']], "reason" => ["type" => 'string']]]]]],
         'consolidate_notation' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'decisions', 'types'], "properties" => ["summary" => ["type" => 'string'], "types" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['entry', 'params'], "properties" => ["entry" => ["type" => 'integer'], "params" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['name', 'type'], "properties" => ["name" => ["type" => 'string'], "type" => ["type" => 'string']]]]]]], "decisions" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'action', 'entry', 'project_symbol', 'meaning', 'note', 'variants', 'params', 'fact', 'reason', 'classes', 'class'], "properties" => ["symbol" => ["type" => 'string'], "class" => ["type" => ['integer', 'null']], "classes" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['meanings', 'label', 'entry', 'decided'], "properties" => ["meanings" => ["type" => 'array', "items" => ["type" => 'integer']], "label" => ["type" => 'string'], "entry" => ["type" => ['integer', 'null']], "decided" => ["type" => 'boolean']]]], "params" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['name', 'type'], "properties" => ["name" => ["type" => 'string'], "type" => ["type" => 'string']]]], "action" => ["type" => 'string', "enum" => ['adopt', 'local', 'same', 'reject']], "entry" => ["type" => ['integer', 'null']], "project_symbol" => ["type" => ['string', 'null']], "meaning" => ["type" => ['string', 'null']], "note" => ["type" => ['string', 'null']], "variants" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'meaning', 'where', 'relation'], "properties" => ["symbol" => ["type" => 'string'], "meaning" => ["type" => 'string'], "where" => ["type" => 'string'], "relation" => ["type" => 'string', "enum" => ['instance', 'clash']]]]], "fact" => ["type" => ['integer', 'null']], "reason" => ["type" => 'string']]]]]],
@@ -513,6 +549,10 @@ TXT,
                 $typed = NotationController::typeEntries($pid, json_decode((string)$t['snapshot_json'], true)['types'] ?? [], $answer['types'] ?? []);
                 $read = count($symbols) . ' symbol' . (count($symbols) === 1 ? '' : 's') . ' read' . ($done ? " ($done)" : '');
                 return ['summary' => trim($read . ($typed ? "; $typed entr" . ($typed === 1 ? 'y' : 'ies') . ' typed' : '') . ". $said"), 'suggestion_ids' => $r['created']];
+            case 'proof_repair':
+            case 'repair_check':
+                $r = $v === 'proof_repair' ? ProofRepair::applyRepairs($t, $answer['repairs'], $model, $seconds) : ProofRepair::applyChecks($t, $answer['checks'], $model, $seconds);
+                return ['summary' => trim($r['summary'] . ' ' . $said)] + $r;
             case 'proof_review':
                 // Only the facts of this batch, once each, at the revision it read. A model never reviews what it wrote: that one is skipped.
                 $mine = array_flip(AiTaskController::batchFacts($t)); $ids = []; $by = ['correct' => 0, 'gap' => 0, 'incorrect' => 0]; $refused = 0;

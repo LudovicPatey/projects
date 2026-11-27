@@ -3,6 +3,7 @@ import { store, go, link, attempt, toast, refreshMentionables, refreshProject, u
 import { timeAgo, fullDate } from '../util.js';
 import { FactGraph, STATUS, PROOF_LABEL } from '../factgraph.js';
 import { factBadges, quietLabels, statementAddsToTitle } from '../fact-badges.js';
+import { repairView } from '../repair-model.js';
 import { factTitle, formatFactHtml, kindCounts, kindLabel, kindOf, parseExternalRefs, texLine } from '../fact-format.js';
 import { PROOF_STATE, proofTally, resultOnlyBody, stance } from '../fact-proofs.js';
 import { asMath, checkedByAi, rephrasingState, shownRephrasing } from '../notation-model.js';
@@ -175,6 +176,11 @@ export const FactsView = {
     resultOnlyOn() { return stance(this.myReview)?.key === 'result_only'; },
     mainFlawed() { return this.fact ? this.currentReviews.some((v) => v.verdict !== 'correct') : false; },
     proofs() { return (this.fact?.proofs || []).filter((p) => p.revision_no === this.fact.current_revision); },
+    // The latest repair of the proof, as one exchange between the reviewer's side and the repairer's (src/ProofRepair.php).
+    repair() { const r = this.fact?.repairs?.[0]; return r ? repairView(r, (id) => { const i = this.proofs.findIndex((p) => p.id === id); return i < 0 ? null : i + 2; }) : null; },
+    repairedProofs() { return new Set((this.fact?.repairs || []).flatMap((r) => (r.steps || []).map((x) => x.proof_id).filter(Boolean))); },
+    // A member may ask for a repair when a review of this revision found a flaw and none runs.
+    canAskRepair() { return !!this.fact && !this.fact.retracted_at && !this.repair?.open && this.currentReviews.some((v) => v.verdict !== 'correct'); },
     oldProofs() { return (this.fact?.proofs || []).filter((p) => p.revision_no !== this.fact.current_revision); },
     banner() {
       const f = this.fact, by = f.ai_model, tool = f.tool ? ` with ${f.tool}` : '';
@@ -382,6 +388,7 @@ export const FactsView = {
               <ai-action menu kind="ask" source-type="fact" :source-id="fact.id" label="Ask a question"/>
               <ai-action v-if="!currentRephrasing && !notationState" menu kind="notation" source-type="fact" :source-id="fact.id" label="Write it in the project notation" title="Write this fact again in the notation agreed by the project"/>
               <ai-action menu kind="derive" source-type="fact" :source-id="fact.id" label="Prove new facts from it"/>
+              <button v-if="canAskRepair" class="menu-item" role="menuitem" title="An AI of another company than the reviewer repairs the proof, or answers the review; one of the reviewer's side checks it, for up to three rounds. A repaired proof is added beside the original, which stays as it is." @click="askRepair"><icon name="edit" :size="14"/><span><b>Repair the proof</b><small>Answers the latest review that found a flaw, a person's included.</small></span></button>
             </action-menu>
           </template>
           <action-menu icon="more" title="Cite, mark as unread, retract or delete">
@@ -439,6 +446,15 @@ export const FactsView = {
         <p v-if="cited && !shownRevision" class="fact-note t-info"><icon name="book" :size="13"/><span>Proofs that use this result rely on its source. <template v-if="fact.status === 'accepted'">A member who read the source accepted it.</template><template v-else>Nobody has accepted it yet: read the source, then click <b>Accept</b>. You can also propose a proof below.</template></span></p>
         <section class="fact-sec statement"><h4>Statement</h4><rich-content :html="shown(statementHtml)" :notation="notationMarks" :fact-refs="fact.text_refs"/></section>
         <section class="fact-sec" v-if="content.proof_html"><h4>Proof<span v-if="!shownRevision && mainFlawed" class="tag amber">Disputed</span><span v-if="!shownRevision && proofs.length" class="tag">1 of {{ proofs.length + 1 }}</span><span class="grow"></span><button v-if="!shownRevision && !fact.retracted_at && !proofs.length && !oldProofs.length && !mainFlawed && fact.status !== 'proof_disputed'" class="link-btn small" title="Propose a different argument, reviewed on its own: one accepted proof is enough for the fact to count as checked" @click="proposing = {proof: null}"><icon name="plus" :size="12"/> Another proof</button></h4><rich-content :html="shown(proofHtml)" :notation="notationMarks" :fact-refs="fact.text_refs"/></section>
+        <section v-if="!shownRevision && repair" class="fact-sec repair-sec">
+          <h4>Repair of the proof<span class="count">{{ repair.round }}</span><span class="grow"></span><span v-if="repair.asked" class="muted small">{{ repair.asked }}</span></h4>
+          <p class="repair-state" :class="'t-' + repair.tone"><icon :name="repair.icon" :size="14"/><span><b>{{ repair.head }}.</b> {{ repair.text }}</span></p>
+          <ol class="repair-steps">
+            <li v-for="(x, i) in repair.steps" :key="i" :class="'t-' + x.tone"><icon :name="x.icon" :size="13"/>
+              <div><span class="repair-who">{{ x.who }}</span> {{ x.what }}<button v-if="x.proof" class="link-btn small" @click="jumpProof(x.proof)">Read it</button>
+                <details v-if="x.text"><summary>Why</summary><math-text class="repair-why" :text="x.text"/></details></div></li>
+          </ol>
+        </section>
         <section v-if="!shownRevision && fact.outside_refs?.length" class="fact-sec outside-refs"><h4>Results used from other works<span class="count">{{ fact.outside_refs.length }}</span></h4>
           <p class="muted small">A proof relies only on facts of the database, so that it can be checked against them. Link each result the proof takes from another work to the fact that states it, usually a cited result. A consolidation proposes these links, and writes the cited results that are missing.</p>
           <div v-for="r in fact.outside_refs" :key="r.key" class="outside-ref" :class="{open: !r.resolved}">
@@ -466,7 +482,7 @@ export const FactsView = {
           <p v-if="!proofs.length && cited" class="muted small">With a proof here, this result no longer rests on its source: it becomes a proved fact, checked like the others.</p>
           <p v-else-if="!proofs.length" class="muted small">{{ mainFlawed || fact.status === 'proof_disputed' ? 'The proof above is disputed. A correct proof here is enough for the fact to count as checked.' : 'A different argument can be proposed here, by a person or an AI client, and reviewed on its own.' }}</p>
           <article v-for="p in proofs" :key="p.id" class="alt-proof" :class="{flash: +query?.proof === p.id}" :data-proof="p.id">
-            <header class="row-gap"><span class="tag" :class="proofStates[p.state].cls">{{ proofStates[p.state].label }}</span>
+            <header class="row-gap"><span class="tag" :class="proofStates[p.state].cls">{{ proofStates[p.state].label }}</span><span v-if="repairedProofs.has(p.id)" class="tag" title="Written by an AI to answer a review that found a flaw: see Repair of the proof">Repair</span>
               <by-line :name="p.author_name" :model="p.author_kind === 'agent' ? p.ai_model : null" :user="p.ai_user_name" :ms="p.ai_generation_ms"/>
               <span class="grow"></span><span class="muted small">{{ timeAgo(p.updated_at) }}</span>
               <template v-if="p.author_id === me && p.author_kind === 'human'"><button class="icon-btn xs" title="Edit your proof" aria-label="Edit your proof" @click="proposing = {proof: p}"><icon name="edit" :size="13"/></button></template>
@@ -480,7 +496,7 @@ export const FactsView = {
                 <button class="btn sm deny" :class="{on: myProofVerdict(p) === 'incorrect'}" :aria-pressed="myProofVerdict(p) === 'incorrect'" :title="explain('proof.error')" @click="checkProof(p, 'incorrect')">Error</button>
               </template>
             </footer>
-            <div v-for="v in p.reviews.filter((x) => x.body_html)" :key="v.id" class="alt-proof-review"><span class="tag" :class="verdicts[v.verdict].cls">{{ verdicts[v.verdict].label }}</span> <b>{{ v.reviewer_name }}</b><rich-content :html="v.body_html"/></div>
+            <div v-for="v in p.reviews.filter((x) => x.body_html)" :key="v.id" class="alt-proof-review"><span class="tag" :class="verdicts[v.verdict].cls">{{ verdicts[v.verdict].label }}</span> <b :title="v.reviewer_kind !== 'human' && v.ai_model ? 'An AI client of ' + v.reviewer_name : null">{{ v.reviewer_kind !== 'human' && v.ai_model ? v.ai_model : v.reviewer_name }}</b><rich-content :html="v.body_html"/></div>
           </article>
           <details v-if="oldProofs.length" class="old-proofs"><summary>{{ oldProofs.length }} proof{{ oldProofs.length > 1 ? 's' : '' }} of an earlier statement</summary>
             <article v-for="p in oldProofs" :key="p.id" class="alt-proof old"><header class="row-gap"><span class="tag">r{{ p.revision_no }}</span><by-line :name="p.author_name" :model="p.author_kind === 'agent' ? p.ai_model : null" :user="p.ai_user_name" :ms="p.ai_generation_ms"/></header><rich-content :html="shown(p.body_html)"/></article></details>
@@ -669,6 +685,11 @@ export const FactsView = {
   created() { this.graphViews = GRAPH_VIEWS; this.proofStates = PROOF_STATE; this.basis = BASIS; this.covers = COVERS; this.statuses = STATUS; this.verdicts = VERDICTS; this.leanLabels = LEAN; this.chainLabels = CHAIN; this.chainShort = { broken: 'Rests on a disputed fact', unproved: 'Rests on a disputed proof', unchecked: 'Rests on unchecked facts', incomplete: 'Rests on an outside result' }; this.sourceChecks = SOURCE_CHECK; this.confidenceLabels = CONFIDENCE; this.citedVerdicts = { correct: 'Source states it', gap: 'Not as written', incorrect: 'Result is false' }; },
   methods: {
     factTitle, texLine, kindOf, kindLabel, stance, asMath, checkedByAi,
+    jumpProof(id) { this.$el.querySelector?.(`[data-proof="${id}"]`)?.scrollIntoView({ block: 'start', behavior: 'smooth' }); },
+    async askRepair() {
+      const f = await attempt(() => api.post(`api/facts/${this.fact.id}/repair`, {}), 'Repair queued: an AI of another company will answer the review');
+      if (f) await this.refresh(f);
+    },
     setNotation(on) { this.projectNotation = on; this.refreshOutline(); try { localStorage.setItem('oq-fact-notation', on ? 'project' : 'source'); } catch { /* the choice lasts for this page only */ } },
     async checkRephrasing(verdict, note = '') {
       const f = await attempt(() => api.post(`api/fact-rephrasings/${this.currentRephrasing.id}/check`, { verdict, note }), verdict ? 'Thank you' : 'Undone');

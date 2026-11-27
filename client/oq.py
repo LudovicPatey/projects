@@ -52,7 +52,7 @@ import webbrowser
 import zipfile
 import zlib
 
-VERSION = "1.21.0"
+VERSION = "1.22.0"
 API_LEVEL = 2  # raise with the server's AiTaskController::API_LEVEL when a client needs new server features
 GITHUB_REPO = "LudovicPatey/projects"
 KINDS = ["extract", "ask", "bib", "derive", "review", "lean", "notation", "consolidate"]
@@ -277,7 +277,7 @@ def new_procedures(url=None):
     return [x for x in cached_procedures(url) if x["id"] not in KINDS]
 
 
-PROCEDURES_ON = ("source_check", "rewrite_check", "second_reading")  # procedures this release knows of, on until their user turns them off
+PROCEDURES_ON = ("source_check", "rewrite_check", "second_reading", "proof_repair", "repair_check")  # procedures this release knows of, on until their user turns them off
 
 
 def procedure_on(limits, pid):
@@ -999,7 +999,10 @@ Put the full answer in "reply" and one sentence in "summary".""",
 Use web search and only suggest works whose existence you confirmed. Give a DOI, an arXiv id or a stable address for each one,
 and in "reason" explain in one or two sentences why it matters here. Suggest at most 10 works. A person will validate them.""",
     "review": """TASK: act as a strict, independent referee of the mathematical fact in "fact" in task.json.
-Another AI wrote it, so assume nothing. Check the statement and every step of the proof, relative to its "dependencies":
+Another AI wrote it, so assume nothing. First read "definitions" in "fact": the meaning of its terms and symbols, from the fact itself
+and from the project notation. A term defined there is not a gap; a term used but defined nowhere, nor standard, is one.
+An empty list of "dependencies" means the proof relies only on standard facts ("dependencies_note" says so).
+Check the statement and every step of the proof, relative to its "dependencies":
 assume that each dependency holds as stated, including a "cited" one, a result of another work that people check against its source,
 and check that the proof uses each one as stated. Do not search the web: the proof may rely only on its dependencies and on standard facts.
 If it uses a result of another work that is not among its dependencies, report a gap that names it.

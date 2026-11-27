@@ -6,6 +6,8 @@
 //                                    [--second-provider codex] [--tasks 12] [--timeout 900]
 //
 // --second-provider runs the proof reviews again with another tool, as a second model would on the platform.
+// --repair (with --second-provider) then alternates the two tools on the repairs of proofs the reviews found flawed, as clients of
+// two companies would, until no step is due or 2 × ProofRepair::ROUNDS runs have passed.
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -66,15 +68,19 @@ const cfg = fs.mkdtempSync(path.join(os.tmpdir(), 'oq-bench-'));
 const env = { ...process.env, OQ_CONFIG_DIR: cfg, OQ_URL: app.base, OQ_KEY: key, PATH: `${path.join(os.homedir(), '.local/bin')}:${process.env.PATH}` };
 const client = (argv) => spawnSync('python3', [path.join(ROOT, 'client/oq.py'), ...argv], { env, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
 client(['procedures', '--on', 'proof_review']); client(['procedures', '--auto', 'on']);
-const run = (prov, limit) => {
+const run = (prov, limit, only = null) => {
   const started = Date.now();
-  const r = client(['run', '--once', '--project', String(pid), '--provider', prov, ...(model && prov === provider ? ['--model', model] : []), '--limit', String(limit), '--timeout', String(timeout), '--name', 'bench']);
-  fs.appendFileSync(path.join(out, 'client.log'), `\n===== ${prov} =====\n${r.stdout}\n${r.stderr}`);
-  log(`${prov}: client stopped with exit ${r.status} after ${Math.round((Date.now() - started) / 1000)} s.`);
+  const r = client(['run', '--once', '--project', String(pid), '--provider', prov, ...(model && prov === provider ? ['--model', model] : []), '--limit', String(limit), '--timeout', String(timeout), '--name', 'bench', ...(only ? ['--only', only] : [])]);
+  fs.appendFileSync(path.join(out, 'client.log'), `\n===== ${prov}${only ? ` (${only})` : ''} =====\n${r.stdout}\n${r.stderr}`);
+  log(`${prov}${only ? ` (${only})` : ''}: client stopped with exit ${r.status} after ${Math.round((Date.now() - started) / 1000)} s.`);
 };
 if (!args.includes('--seed-only')) {
   run(provider, maxTasks);
   if (second) run(second, 4);
+  if (second && args.includes('--repair')) {
+    const due = async () => (await Promise.all([...ids.values()].map(async (id) => (await app.call(ann, 'GET', `/api/facts/${id}`)).data.repairs?.[0]?.state))).filter((s) => s === 'repair' || s === 'check').length;
+    for (let i = 0; i < 6 && await due(); i++) run(i % 2 ? second : provider, 6, 'proof_repair,repair_check');
+  }
 }
 
 // ---- what came out -------------------------------------------------------------------------------------------------------------
@@ -97,6 +103,8 @@ flag(rewrites.every(({ x }) => x.check_verdict), `every rewrite checked (${rewri
 const reviews = detail.flatMap((f) => (f.reviews || []).filter((v) => v.reviewer_kind === 'agent').map((v) => ({ f, v })));
 flag(reviews.every(({ v }) => (v.body_text || v.body_html || '').trim() || v.verdict === 'correct'), `every gap or error explained (${reviews.length} AI reviews)`);
 flag(reviews.every(({ f, v }) => (v.ai_model || '').toLowerCase() !== (f.ai_model || '').toLowerCase()), 'no model reviewed a proof it wrote');
+const repairs = detail.flatMap((f) => f.repairs || []);
+flag(repairs.every((r) => !['repair', 'check'].includes(r.state)), `every repair settled (${repairs.map((r) => r.state).join(', ') || 'none started'})`);
 
 // ---- the report ------------------------------------------------------------------------------------------------------------------
 const md = [`# Procedure bench, ${new Date().toISOString().slice(0, 16)}`, '', `Facts ${ranges[0]}–${ranges.at(-1)} of ${exportDir}, run with ${provider}${model ? ` (${model})` : ''}${second ? ` then ${second} for proof reviews` : ''}.`, '',
@@ -116,6 +124,13 @@ md.push('', '## Rewrites in the project notation, with their check', '');
 for (const { f, x } of rewrites) md.push(`### ${f.label} — ${x.check_verdict || 'not checked'}${x.check_note ? `: ${x.check_note}` : ''}`, '', `Original: ${f.statement_text}`, '', `Rewrite: ${x.statement_text || x.statement_html}`, '');
 md.push('## Proof reviews', '');
 for (const { f, v } of reviews) md.push(`### ${f.label} — ${v.verdict} (${v.ai_model}; proof written by ${f.ai_model})`, '', (v.body_text || v.body_html || '').replace(/<[^>]+>/g, ''), '');
+md.push('## Repairs of proofs', '');
+for (const f of detail) for (const r of f.repairs || []) {
+  md.push(`### ${f.label} — ${r.state}, round ${r.round} of ${r.rounds}`, '');
+  for (const x of r.steps) md.push(`- **${x.step}** by ${x.model || x.person || '?'}: ${x.verdict || x.outcome || ''}${x.proof_id ? ` (proof ${x.proof_id})` : ''}`, '', `  ${String(x.text || '').replace(/\n/g, '\n  ')}`, '');
+  const p = (f.proofs || []).find((y) => y.id === r.proof_id);
+  if (p) md.push('Repaired proof:', '', (p.body_text || p.body_html || '').replace(/<[^>]+>/g, ''), '');
+}
 md.push('## Source checks', '');
 for (const f of detail) for (const c of f.source_checks || []) md.push(`- ${f.label}: ${c.verdict}${c.had_source ? ' (with the source)' : ' (without the source text)'} — ${(c.body_text || c.body_html || '').replace(/<[^>]+>/g, '').slice(0, 300)}`);
 fs.writeFileSync(path.join(out, 'report.md'), md.join('\n') + '\n');

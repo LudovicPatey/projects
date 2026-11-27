@@ -1886,3 +1886,16 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: non
 /* A card's subject tags: the first one, cut to fit, and how many more, all of them on hover. */
 .li-foot .topic-chip.sm { min-width: 0; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; }
 .topic-more { flex: none; font-size: 11px; font-weight: 600; color: var(--muted); cursor: help; }
+
+/* A repair of the proof: where it stands, then the exchange, one line per step, its reasons on demand. */
+.repair-state { display: flex; align-items: flex-start; gap: 8px; margin: 0 0 8px; font-size: 13px; background: none; color: var(--text); }
+.repair-state > svg { flex: none; margin-top: 2px; }
+.repair-state.t-ai > svg { color: #7c3aed; } .repair-state.t-good > svg { color: var(--good); } .repair-state.t-warn > svg { color: var(--warn); } .repair-state.t-bad > svg { color: var(--bad); } .repair-state.t-muted > svg { color: var(--muted); }
+.repair-steps { list-style: none; margin: 0; padding: 0 0 0 4px; display: grid; gap: 8px; border-left: 2px solid var(--line); }
+.repair-steps li { display: flex; gap: 8px; align-items: flex-start; padding-left: 10px; font-size: 13px; background: none; color: var(--text); }
+.repair-steps li > svg { flex: none; margin-top: 3px; }
+.repair-steps li.t-ai > svg { color: #7c3aed; } .repair-steps li.t-good > svg { color: var(--good); } .repair-steps li.t-warn > svg { color: var(--warn); }
+.repair-steps li > div { min-width: 0; flex: 1; }
+.repair-who { font-weight: 600; }
+.repair-steps details summary { cursor: pointer; color: var(--accent); font-size: 12.5px; width: fit-content; }
+.repair-why { display: block; margin-top: 4px; white-space: pre-wrap; color: #344054; font-size: 13px; line-height: 1.5; }

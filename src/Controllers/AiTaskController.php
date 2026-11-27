@@ -183,7 +183,7 @@ final class AiTaskController
         // A person's own client may record the Danus run they just launched, and nothing else.
         if (Auth::isAi() && !(Auth::isClient() && $kind === 'derive')) throw new HttpError(403, 'Only a person can do this.');
         if (!in_array($kind, self::kinds(), true)) throw new HttpError(422, 'Choose what the AI should do.');
-        if (in_array($kind, ['rewrite_check', 'second_reading', 'proof_review'], true)) throw new HttpError(422, 'The platform queues this on its own, whenever there is work for it.');
+        if (in_array($kind, ['rewrite_check', 'second_reading', 'proof_review', 'proof_repair', 'repair_check'], true)) throw new HttpError(422, 'The platform queues this on its own, whenever there is work for it.');
         $usage = self::usage((int)Auth::id());
         if ($usage['used'] >= $usage['limit']) {
             $wait = max(1, (int)ceil((strtotime((string)$usage['next_free_at']) - time()) / 60));
@@ -681,7 +681,7 @@ final class AiTaskController
                     if ($used === null) continue; // left for a model independent of its author
                 }
                 // A client that can review with several models, another company's first, takes the proofs the first one may review.
-                if ($c['kind'] === 'proof_review' && count($choices) > 1) $used = \App\Sweeps::reviewModel((int)$c['project_id'], $choices) ?? $used;
+                if (in_array($c['kind'], ['proof_review', 'proof_repair', 'repair_check'], true) && count($choices) > 1) $used = \App\Sweeps::modelFor($c['kind'], (int)$c['project_id'], $choices) ?? $used;
                 if (ModelOrder::covered(self::extractedBy($c), $used)) continue;
                 $lease = bin2hex(random_bytes(24));
                 $won = Db::run(
@@ -1065,6 +1065,7 @@ final class AiTaskController
             }
         }
         if ($t['kind'] === 'second_reading') $ctx += ConsolidationController::secondContext($pid, self::batchItems($t));
+        if (in_array($t['kind'], ['proof_repair', 'repair_check'], true)) $ctx += \App\ProofRepair::context($pid, self::batchItems($t));
         if ($t['kind'] === 'proof_review') {
             // Each proof with what it may rely on: its dependencies, assumed as stated, and the outside results it still uses.
             $graph = array_column(FactController::graph($pid)['facts'], null, 'id');
@@ -1074,6 +1075,7 @@ final class AiTaskController
                 if (!$f) continue;
                 $ctx['facts'][] = ['fact_id' => (int)$f['id'], 'label' => $f['label'], 'title' => $f['title'], 'kind' => $f['kind'],
                     'statement' => Sanitizer::toText((string)$f['statement_html']), 'proof' => Sanitizer::toText((string)$f['proof_html']),
+                    'definitions' => FactController::definitions($pid, (int)$f['id'], (int)$graph[$fid]['current_revision']),
                     'external_refs' => json_decode((string)$f['external_refs_json'], true),
                     'outside_refs' => array_values(array_map(fn($x) => ['label' => $x['label'], 'settled' => $x['resolved']], $graph[$fid]['outside_refs'] ?? [])),
                     'dependencies' => array_map(fn($d) => ['label' => $d['label'], 'title' => $d['title'], 'statement' => Sanitizer::toText((string)$d['statement_html']),
@@ -1159,6 +1161,9 @@ final class AiTaskController
                 $ctx['dependencies'] = array_map(fn($d) => ['label' => $d['label'], 'title' => $d['title'], 'statement' => Sanitizer::toText((string)$d['statement_html']),
                     'basis' => $graph[(int)$d['id']]['basis'] ?? null, 'status' => $graph[(int)$d['id']]['status'] ?? null], Db::all(
                     'SELECT f.id, f.label, f.title, r.statement_html FROM fact_deps d JOIN facts f ON f.id = d.depends_on_id JOIN fact_revisions r ON r.fact_id = f.id AND r.revision_no = f.current_revision WHERE d.fact_id = ? LIMIT 50', [$id]));
+                // The meaning of its terms, and what an empty list of dependencies means: a referee without them reports false gaps.
+                $ctx['fact']['definitions'] = FactController::definitions($pid, $id, (int)$ctx['fact']['current_revision']);
+                if (!$ctx['dependencies']) $ctx['dependencies_note'] = 'This proof relies on no other fact of the database: judge it on its own, with its definitions and standard facts.';
             }
         }
         if (isset($ctx['question']['body_html'])) { $ctx['question']['body'] = Sanitizer::toText((string)$ctx['question']['body_html']); unset($ctx['question']['body_html']); }
@@ -1311,13 +1316,19 @@ final class AiTaskController
             // A sweep takes its batch when a client takes it.
             $subject = ['notation' => 'facts not yet in the project notation', 'source_check' => 'cited results not yet checked',
                 'rewrite_check' => 'rewrites not yet compared with their original', 'second_reading' => 'proposals waiting for people', 'proof_review' => 'proofs nobody reviewed yet',
+                'proof_repair' => 'proofs a review found flawed', 'repair_check' => 'repaired proofs to check',
                 'consolidate' => 'symbols several facts define, not yet in the project notation'][$t['kind']] ?? null;
         } elseif ($t['source_type'] === 'sweep' && isset($snap['symbols'])) {
             $n = count($snap['symbols']); $m = count($snap['types'] ?? []);
             $subject = implode(' and ', array_filter([$n ? "$n symbol" . ($n === 1 ? '' : 's') : '', $m ? "$m entr" . ($m === 1 ? 'y' : 'ies') . ' to type' : ''])) ?: '0 symbols';
         } elseif ($t['source_type'] === 'sweep' && isset($snap['items'])) {
             $n = count($snap['items']);
-            $subject = $t['kind'] === 'rewrite_check' ? "$n rewrite" . ($n === 1 ? '' : 's') : "$n proposal" . ($n === 1 ? '' : 's');
+            $subject = match ($t['kind']) {
+                'rewrite_check' => "$n rewrite" . ($n === 1 ? '' : 's'),
+                'proof_repair' => "$n proof" . ($n === 1 ? '' : 's') . ' to repair',
+                'repair_check' => "$n repair" . ($n === 1 ? '' : 's') . ' to check',
+                default => "$n proposal" . ($n === 1 ? '' : 's'),
+            };
         } elseif ($t['kind'] === 'proof_review' && $t['source_type'] === 'sweep') {
             $n = count(json_decode((string)$t['snapshot_json'], true)['facts'] ?? []);
             $subject = "$n proof" . ($n === 1 ? '' : 's');
