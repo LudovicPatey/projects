@@ -52,7 +52,7 @@ import webbrowser
 import zipfile
 import zlib
 
-VERSION = "1.22.4"
+VERSION = "1.22.5"
 API_LEVEL = 2  # raise with the server's AiTaskController::API_LEVEL when a client needs new server features
 GITHUB_REPO = "LudovicPatey/projects"
 KINDS = ["extract", "ask", "bib", "derive", "review", "lean", "notation", "consolidate"]
@@ -2656,6 +2656,7 @@ import json
 import os
 import pathlib
 import pwd
+import re
 import shutil
 import signal
 import subprocess
@@ -2674,7 +2675,20 @@ The instructions above were written for Codex. Here:
 - Skills are folders with a SKILL.md under .agents/skills. Read the relevant SKILL.md with the Read tool.
 - You have no shell and must not try to run programs. Use Read, Glob, Grep, Write, Edit, WebSearch and the danus tools.
 - The danus tools are named mcp__danus__gm_add, mcp__danus__fact_submit, and so on.
+- Your notes in local memory are a working record for a reader: the steps you tried, the claims you checked, the branches you chose
+  and why. They are not a transcript of your private reasoning, which you never need to write out.
 """
+
+# Codex's contract asks for "raw thinking" in its notes. Claude's safeguards take a request to write out its own reasoning as an
+# attempt to extract it, and stop the agent ("reasoning_extraction"): the contract is read with these passages reworded.
+FOR_CLAUDE = (("raw thinking and\n  branch decisions into `notes`", "the steps you tried and\n  branch decisions into `notes`"),
+              ("Record your reasoning and branch decisions in local memory", "Record the steps you tried and your branch decisions in local memory"))
+
+
+def for_claude(contract):
+    for old, new in FOR_CLAUDE:
+        contract = contract.replace(old, new)
+    return contract
 
 
 class Refused(Exception):
@@ -2796,7 +2810,7 @@ def build(p, env, folder):
     mcp.write_text(json.dumps({"mcpServers": {"danus": {"type": "stdio", "command": p["mcp"]["command"], "args": p["mcp"].get("args") or [], "env": p["mcp"]["env"]}}}), encoding="utf-8")
     contract = pathlib.Path(p["cwd"]) / "AGENTS.md"
     system = folder / "system.md"
-    system.write_text((contract.read_text(encoding="utf-8") if contract.exists() else "") + NOTE, encoding="utf-8")
+    system.write_text(for_claude(contract.read_text(encoding="utf-8") if contract.exists() else "") + NOTE, encoding="utf-8")
     cmd = [binary, "-p", "--model", model, "--output-format", "stream-json", "--verbose", "--no-session-persistence", "--permission-mode", "dontAsk",
            "--setting-sources", "", "--disable-slash-commands", "--strict-mcp-config", "--mcp-config", str(mcp),
            "--append-system-prompt-file", str(system), "--tools", "Read,Write,Edit,Glob,Grep,WebSearch", "--allowedTools", *permissions(p, env)]
@@ -2858,7 +2872,11 @@ def main(argv):
             code = proc.wait()
             usage = (final or {}).get("modelUsage") or {}
             failed = bool(code) or final is None or bool(final.get("is_error"))
-            report(role=p["mcp"]["env"].get("DANUS_ROLE") or "", failed=failed, error=str((final or {}).get("result") or tail)[:400] if failed else "",
+            said = str((final or {}).get("result") or tail)
+            # A refusal by the safeguards ends with its category ("Details: `[reasoning_extraction]`"): kept, as the long text is cut.
+            kind = re.search(r"Details: `\[?([a-z_]+)", said)
+            error = said.strip().split("\n")[0][:300] + (f" (category: {kind.group(1)})" if kind else "") if kind else said[:400]
+            report(role=p["mcp"]["env"].get("DANUS_ROLE") or "", failed=failed, error=error if failed else "",
                    model=max(usage, key=lambda k: (usage[k] or {}).get("outputTokens", 0)) if usage else None,
                    tokens=sum(int((m or {}).get(k) or 0) for m in usage.values() for k in ("inputTokens", "outputTokens", "cacheCreationInputTokens")))
     except Refused as e:
@@ -3685,6 +3703,9 @@ class DanusRun:
             failures += 1
             if failures >= 3:
                 self.write(claude_failures=0)
+                if "safeguards flagged" in error:
+                    kind = re.search(r"(?:Details: `\[?|category: )([a-z_]+)", error)
+                    raise RuntimeError(f"Claude's safeguards stopped the agent three rounds in a row{f' ({kind.group(1)})' if kind else ''}. Nothing it found so far is lost.")
                 raise RuntimeError(f"Claude stopped with an error: {error[:300]}")
         self.write(claude_failures=failures)
 
@@ -5841,7 +5862,7 @@ const account=()=>{const t=n=>{const x=S.tools[n],j=S.jobs['install-'+n]?.runnin
  return`<h1>Accounts</h1><p class=sub>The app uses your own AI account, on this computer.</p><section class=panel><h2>1. Choose your AI</h2>${t('claude')}${t('codex')}</section><section class=panel><h2>2. Connect to the platform</h2>${S.connected?`<div class=row><div><b>Connected</b><small>${e(S.url)}</small></div><button class="btn danger" data-a=disconnect>Disconnect</button></div>`:`<label class=f>Platform address<input type=text id=url data-c=url value="${e(CF.url??(S.url||'https://projects.ludovicpatey.com'))}"></label><label class=f>Personal key<small>Create it on your profile page on the platform, then paste it here.</small><input type=password id=key data-c=key autocomplete=off placeholder="ouk_…" value="${e(CF.key||'')}"></label>${connectErr||S.error?`<div class=err id=cerr role=alert>${e(connectErr||S.error)}</div>`:''}<button class="btn primary" data-a=connect ${connecting?'disabled':''}>${connecting?'Connecting…':'Connect'}</button>`}</section><section class=panel><h2>3. How AI use is paid</h2><label class=check><input type=radio name=billing data-billing=subscription ${S.limits.ai_billing==='subscription'?'checked':''}> <span><b>My subscription only</b> (recommended). API keys on this computer are ignored.</span></label><label class=check><input type=radio name=billing data-billing=api ${S.limits.ai_billing==='api'?'checked':''}> <span><b>Allow a paid API key.</b> The provider charges each use.</span></label><div class=note>If you turned on <b>usage credits</b> in your Claude settings, background work can spend them after your plan limit. Keep them off, or set a monthly cap.</div></section>`};
 const fmtMin=m=>{m=Math.round(m);return m>=60?`${Math.floor(m/60)} h ${String(m%60).padStart(2,'0')}`:`${m} min`};
 const runLabels={starting:['Starting','warn'],running:['Running','good'],waiting:['Waiting for the reset','warn'],stopping:['Stopping','warn'],stopped:['Finished',''],failed:['Failed','bad'],cancelled:['Cancelled',''],interrupted:['Interrupted','warn']};
-const runStatus=r=>{if(!r.status||r.status==='idle')return'';const l=runLabels[r.status]||[r.status,''];const active=r.active;let h=`<section class="panel hero ${r.status==='running'?'on':active?'hold':''}"><span class=dot></span><div><b>Proof search: ${e(l[0])}</b><span>${r.status==='waiting'?e(r.wait_reason||'')+(r.retry_at?' · continues around '+e(when(r.retry_at)):''):active?'Your limits are checked continuously.':r.stop_reason?'Stopped at '+e(r.stop_reason)+'.':''}</span></div>${active?`<button class="btn danger" data-a=danusstop ${r.status==='stopping'?'disabled':''}>${r.status==='stopping'?'Stopping…':'Stop now'}</button>`:''}</section>`;
+const runStatus=r=>{if(!r.status||r.status==='idle')return'';const l=runLabels[r.status]||[r.status,''];const active=r.active;let h=`<section class="panel hero ${r.status==='running'?'on':active?'hold':''}"><span class=dot></span><div><b>Proof search: ${e(l[0])}</b><span>${r.status==='waiting'?e(r.wait_reason||'')+(r.retry_at?' · continues around '+e(when(r.retry_at)):''):active?'Your limits are checked continuously.':r.stop_reason?(r.status==='failed'?'Stopped: '+e(r.stop_reason):'Stopped at '+e(r.stop_reason)+'.'):''}</span></div>${active?`<button class="btn danger" data-a=danusstop ${r.status==='stopping'?'disabled':''}>${r.status==='stopping'?'Stopping…':'Stop now'}</button>`:''}</section>`;
  if(active){const sec=r.active_seconds||0;h+='<section class=panel><h2>This run</h2>'+(r.minutes?meter('Running time',sec/60,r.minutes,`${fmtMin(sec/60)} of ${fmtMin(r.minutes)}`):meter('Running time',0,0,`${fmtMin(sec/60)}, no time limit`));for(const w of S.windows||[]){const cap=w.name==='weekly'?Math.min(r.stop_weekly,S.limits.max_weekly_percent):Math.min(r.stop_session,S.limits.max_session_percent);h+=meter(`${w.name==='weekly'?'Weekly':'Session'} usage`,w.used,100,`${w.used}%, stops at ${cap}%`+(w.resets_at?' · resets '+when(w.resets_at):''),cap)}h+=`<div class=row><div><b>New facts</b><small>${r.on_limit==='resume'?'Continues automatically after each reset':'Ends at the first limit'}</small></div><span class="pill good">${r.fact_count}</span></div></section>`}
  else if(r.status&&r.status!=='idle')h+=`<section class=panel><div class=row><div><b>Last run</b><small>${fmtMin((r.active_seconds||0)/60)} of computing</small></div><span class="pill good">${r.fact_count} new fact(s)</span></div></section>`;return h};
 const runForm=()=>{const l=S.limits;if(!R||!S.projects.some(p=>p.id===R.project_id&&!p.paused)){R={project_id:(S.projects.find(p=>!p.paused)||{}).id||0,goal:'',prompt:R?.prompt||'',minutes:120,stop_session:Math.min(40,l.max_session_percent),stop_weekly:Math.min(50,l.max_weekly_percent),on_limit:'stop',workers:l.danus_workers};options()}
