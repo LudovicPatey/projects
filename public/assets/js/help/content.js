@@ -164,8 +164,33 @@ export const ARTICLES = [
     blocks: [
       steps('Open [your projects](app:projects).', 'Click **New project**.', 'Enter a **title** and state **the open question** precisely. LaTeX between `$…$` is rendered.', 'Click **Create project**. You become its owner.', 'Add your colleagues under [People](help:people).'),
       p('If you do not see **New project**, the administrator of this installation has limited who can create projects.'),
+      p('A new project is **private**: only its members see it. To let other researchers find it and ask to join, make it [public](help:join-projects).'),
     ],
     related: ['question', 'people'],
+  },
+
+  {
+    slug: 'join-projects', category: 'start', title: 'Public projects and requests to join', summary: 'Find a public project, ask to join it, and answer the requests to yours.',
+    keywords: 'public private visibility join ask request requests motivation accept decline withdraw open projects discover',
+    blocks: [
+      p('A project is **private** until an owner makes it **public**. A private project is seen only by its members. A public one shows its **card** to every researcher signed in to the platform: its title, its main question, its owners and how many members it has. Nothing inside it, files, facts, questions, conversations or the bibliography, can be read before an owner accepts you.'),
+      h('Ask to join a public project'),
+      steps('Open [your projects](app:projects) and scroll to **Public projects you can join**.', 'Click **Ask to join** on a card.', 'Explain in a short paragraph why you would like to join: what you work on, what you could bring. Between 20 and 1000 characters.', 'Click **Send the request**. Each owner is notified, and sees your name, ORCID iD, affiliation and your paragraph.'),
+      p('The card then says **Request sent**. While nobody has answered you can **Withdraw** it: the owners no longer see it, and you can ask again. When an owner answers you get an alert: accepted, the project appears among yours as a **member**; declined, with the owner\'s note if they wrote one. After a decline you can ask again a week later.'),
+      p('AI agents and personal API keys cannot ask to join: only a person can.'),
+      h('Open your project to requests (owners)'),
+      live((c) => [isOwner(c)
+        ? line(`This project is **${c.people.visibility === 'public' ? 'public' : 'private'}**${c.people.join_requests ? `, and ${n(c.people.join_requests, 'request')} to join ${c.people.join_requests === 1 ? 'waits' : 'wait'} for an answer` : ''}.`, [{ label: 'Open People', to: { view: 'members' } }])
+        : line(`This project is **${c.people.visibility === 'public' ? 'public' : 'private'}**. Only its owners change that and answer requests to join.`)]),
+      steps('Open [People](app:members). The panel **Who can join** is at the top.', 'Under **Visibility**, choose **Public** to show the card of the project to every signed-in researcher, or **Private** to hide it again.', 'Requests appear under **Requests to join**, with the motivation. Click **Accept** to make the researcher a member, or **Decline**, with a note if you wish.'),
+      table(['Action', 'What it changes', 'Undo'],
+        ['**Public**', 'Every signed-in researcher sees the card: title, main question, owners, member count. Nothing inside the project', 'Choose **Private** again'],
+        ['**Private**', 'The card disappears from the list. Members and requests already sent stay', 'Choose **Public** again'],
+        ['**Accept**', 'The researcher becomes a **member** (not an owner) and is notified', 'Remove them under People'],
+        ['**Decline**', 'The request is closed and the researcher is notified, with your note', 'They can ask again after a week']),
+      p('Pending requests also appear in **Needs your attention** on the overview, and as a badge on **People**. Adding a researcher by ORCID iD answers their pending request too.'),
+    ],
+    related: ['people', 'privacy', 'create-project'],
   },
 
   // ---------------------------------------------------------------- Your project
@@ -281,6 +306,7 @@ export const ARTICLES = [
       h('Add a researcher (owners)'),
       steps('Open [People](app:members).', 'Enter their **ORCID iD** or ORCID link.', 'Choose **Member** or **Owner**, and click **Add**.'),
       p('They do not need to have signed in before. Their public ORCID name is fetched automatically.'),
+      p('Researchers can also ask to join when the project is [public](help:join-projects): owners answer under **Who can join**, at the top of People.'),
       p('Each card says when the researcher became a member, and whether they use the platform: **created the project 3 d ago**, **added 2 d ago**, or **added 2 d ago, has not signed in yet** until their first sign-in. The overview reports **Ann added Bob** when an owner adds a member, or a member connects an AI agent.'),
       h('What each role can do'),
       table(['Action', 'Member', 'Owner'],
@@ -288,7 +314,8 @@ export const ARTICLES = [
         ['Delete what they added', 'Yes', 'Yes'],
         ['Delete what others added', 'No', 'Yes'],
         ['Edit the question and status', 'No', 'Yes'],
-        ['Manage members and AI agents', 'No', 'Yes']),
+        ['Manage members and AI agents', 'No', 'Yes'],
+        ['Make the project public or private, answer requests to join', 'No', 'Yes']),
       h('Leave a project'),
       p('Click **Leave** on your line in [People](app:members). A project must keep at least one owner.'),
     ],
@@ -940,7 +967,7 @@ export const ARTICLES = [
     keywords: 'alerts notifications bell mention reply notified',
     blocks: [
       p('**Alerts**, at the bottom of the left menu, lists what concerns you personally:'),
-      list('someone **@mentioned** you;', 'someone **replied** in a thread you took part in;', 'you were **added** to a project or a conversation;', 'someone **reviewed** a fact you entered;', 'a fact in **your dependency chain** was retracted.'),
+      list('someone **@mentioned** you;', 'someone **replied** in a thread you took part in;', 'you were **added** to a project or a conversation;', 'a researcher **asks to join** a project you own, or an owner **accepted** or **declined** your request;', 'someone **reviewed** a fact you entered;', 'a fact in **your dependency chain** was retracted.'),
       p('Click an alert to go to the item. **Mark all read** clears the list.'),
     ],
     related: ['unread', 'comments'],
@@ -951,7 +978,7 @@ export const ARTICLES = [
     slug: 'privacy', category: 'admin', title: 'Who can see what', summary: 'Visibility of your data within a project.',
     keywords: 'privacy private visibility security who can see access permissions confidential',
     blocks: [
-      table(['Content', 'Visible to'], ['Question, facts, files, bibliography and their comments', 'All project members, including AI agents'], ['Conversations and their comments', 'Their participants only'], ['Your email address', 'You only'], ['Your read state', 'You only'], ['Your API keys', 'You only, and only when created']),
+      table(['Content', 'Visible to'], ['Card of a public project: title, main question, owners, member count', 'Every signed-in researcher'], ['A request to join, with its motivation', 'You and the owners of the project'], ['Question, facts, files, bibliography and their comments', 'All project members, including AI agents'], ['Conversations and their comments', 'Their participants only'], ['Your email address', 'You only'], ['Your read state', 'You only'], ['Your API keys', 'You only, and only when created']),
       warn('A fact extracted from a private conversation is visible to all members. Its quote and link stay hidden from non-participants, and a participant must confirm before the extraction is queued.'),
       p('People outside a project cannot see anything in it. Your own AI client sees what you see.'),
     ],
@@ -992,7 +1019,7 @@ export const VIEW_HELP = { overview: 'question', questions: 'open-questions', co
 /** The article covering each server feature. Adding a controller without help makes the tests fail. */
 export const CONTROLLER_HELP = {
   AuthController: 'account', FeedbackController: 'feedback', ProjectController: 'question', DashboardController: 'question', ReferenceController: 'references', QuestionController: 'open-questions', AgentController: 'project-agents', KeyController: 'ai-client', AiTaskController: 'ai-work', BibController: 'bibliography',
-  DocumentController: 'files', FactController: 'facts-overview', NotationController: 'notation', ConsolidationController: 'consolidation', ProverController: 'native-prover', AdminController: 'administration', AuditController: 'administration', ConversationController: 'conversations', CommentController: 'comments',
+  DocumentController: 'files', FactController: 'facts-overview', NotationController: 'notation', ConsolidationController: 'consolidation', ProverController: 'native-prover', AdminController: 'administration', JoinController: 'join-projects', AuditController: 'administration', ConversationController: 'conversations', CommentController: 'comments',
   NotificationController: 'notifications', ExportController: 'download-project', SearchController: 'search', HelpController: 'welcome',
 };
 
@@ -1014,6 +1041,7 @@ export function nextSteps(c) {
   if (!c.files.total) out.push({ icon: 'upload', text: 'Upload a first paper', to: { view: 'files', query: { upload: 1 } }, help: 'files' });
   if (!c.bib.total) out.push({ icon: 'book', text: 'Add references', to: { view: 'bib' }, help: 'bibliography' });
   else if (c.bib.without_pdf.length) out.push({ icon: 'pdf', text: `Attach a PDF to ${n(c.bib.without_pdf_count, 'reference')}`, to: { view: 'bib', id: c.bib.without_pdf[0].id }, help: 'bibliography' });
+  if (c.people.join_requests) out.push({ icon: 'user-plus', text: `Answer ${n(c.people.join_requests, 'request')} to join`, to: { view: 'members' }, help: 'join-projects' });
   if (c.people.researchers < 2 && c.project.role === 'owner') out.push({ icon: 'user-plus', text: 'Invite a colleague', to: { view: 'members' }, help: 'people' });
   return out.slice(0, 5);
 }

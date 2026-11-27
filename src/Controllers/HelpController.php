@@ -161,6 +161,8 @@ final class HelpController
             'researchers' => count(array_filter($rows, fn($u) => $u['kind'] !== 'agent')),
             'owners' => array_map($brief, array_values(array_filter($rows, fn($u) => $u['role'] === 'owner'))),
             'agents' => array_map(fn($u) => $brief($u) + ['model' => $u['ai_model']], array_values(array_filter($rows, fn($u) => $u['kind'] === 'agent'))),
+            'visibility' => (string)Db::value('SELECT visibility FROM projects WHERE id = ?', [$pid]),
+            'join_requests' => JoinController::pendingFor($pid, Auth::id()),
         ];
     }
 }

@@ -14,8 +14,8 @@ export function buildSteps(kind, ctx = {}) {
   if (kind === 'home') {
     return [
       { id: 'welcome', target: null, title: 'Welcome to Open Questions', text: 'Each project gathers researchers and AI around open problems. This short tour shows you where things are.' },
-      { id: 'projects', target: 'nav-projects', side: 'right', title: 'Your projects', text: 'Every project you belong to is listed on this page. Open one and a second short tour will present its areas.' },
-      { id: 'new-project', target: 'new-project', side: 'bottom', title: 'Start a project', text: 'Create a project by stating an open question. You become its owner and can invite colleagues with their ORCID iD.' },
+      { id: 'projects', target: 'nav-projects', side: 'right', title: 'Your projects', text: 'Every project you belong to is listed on this page, and below them the public projects you can ask to join. Open one and a second short tour will present its areas.' },
+      { id: 'new-project', target: 'new-project', side: 'bottom', title: 'Start a project', text: 'Create a project by stating an open question. You become its owner and can invite colleagues with their ORCID iD. It stays private until you make it public under People.' },
       ...SHARED_END,
       { id: 'profile', target: 'profile', side: 'right', title: 'Your profile', text: 'Edit your details here, and create the personal API key that connects your own AI client.' },
       { id: 'help', target: 'help', side: 'right', title: 'Help is always here', text: 'The help center explains every feature. You can replay this tour from it at any time.' },
@@ -32,7 +32,7 @@ export function buildSteps(kind, ctx = {}) {
     { id: 'files', target: 'nav-files', side: 'right', title: 'Files', text: 'PDFs and LaTeX sources with their versions, clearly marked as written by a human or by AI. Select text in a PDF to comment on it.' },
     { id: 'bib', target: 'nav-bib', side: 'right', title: 'Bibliography', text: 'References added by DOI, arXiv or BibTeX, with PDFs and progress toward extracting all their facts.' },
     { id: 'ai', target: 'nav-ai', side: 'right', title: 'AI work', text: 'Requests wait here until a member runs their own AI client. It extracts facts, answers @AI and suggests references for you to validate. The AI clients panel shows who is online and the computing time spent.' },
-    { id: 'members', target: 'nav-members', side: 'right', title: 'People', text: owner ? 'Add researchers by ORCID iD and create AI agents for this project.' : 'The researchers and AI agents of this project.' },
+    { id: 'members', target: 'nav-members', side: 'right', title: 'People', text: owner ? 'Add researchers by ORCID iD, choose whether the project is public, answer requests to join and create AI agents for this project.' : 'The researchers and AI agents of this project.' },
     ...(owner ? [{ id: 'admin', target: 'nav-admin', side: 'right', title: 'Administration', text: 'For owners: maintenance of the project, such as emptying the facts database or resetting extraction, with a backup first.' }] : []),
     { id: 'badges', target: 'nav-conversations', side: 'right', title: 'Red badges', text: 'A red number counts what is new for you. Each person has their own read state.' },
     ...SHARED_END,

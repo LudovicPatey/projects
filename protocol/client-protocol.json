@@ -1,7 +1,7 @@
 {
  "min_version": "1.0.0",
  "client_version": "1.22.0",
- "fingerprint": "53ed05d1b17c081c171aae323fcd1e66ba7411214adb6debcde4ea04d13ac810",
+ "fingerprint": "87c5c700ab3f6286ae9a8ff5e1b5cfaf66c64cad0a78155afa46fb96375c3cb8",
  "routes": [
   "GET /api/ai/procedures AiTaskController::procedures",
   "GET /api/bib/{id}/pdf BibController::pdf",
@@ -413,10 +413,10 @@
   "Notify::mentions": "87e12b1918ae6b9f84992280147d662e5dc4a5fff01d5418c4f370b99106da23",
   "Notify::send": "49a37c414cc94840696f77cfb49f21cc9ee4bfed2c9785504b4ab0825b71d7fe",
   "Procedures::CAPABILITIES": "4dce42bbadf21b695afcf974783a43c20da9c3e58306e6347d7f13d1e61f5e30",
-  "Procedures::INSTRUCTIONS": "d6e9b403831e918ba235fd5686f6c95548437828934081a2a9edd6735d0d9096",
+  "Procedures::INSTRUCTIONS": "8a3c1051acf4c920deedfa18ae16efe73419d187ec3d3d1a13d65369c4f47e97",
   "Procedures::REQUEST_NOTE": "24b0a276d5999286c5ee3500049fb549cab02c47210fcc847ff3fd0c652e1b6a",
   "Procedures::SCHEMAS": "b7da5520af858b6440bea11f52914a2c904da5de5094cb1ec53a473ddf1fac33",
-  "Procedures::apply": "6463082dc8740699274aa7f20734b1967759d58f3ef601814d0a789d1b1bac42",
+  "Procedures::apply": "30b06e79c8c2461be59500d200337f87c2a41569c58d827537b5d12bdacfc5a3",
   "Procedures::capabilities": "0cd0fd2bbacd82074d877b676192b2e11c0b127be10e089ebd2c1de62a47729e",
   "Procedures::defs": "619f631055f4fdaabb0b5a643b6de2861cd972a067d7de2126fcb88471023569",
   "Procedures::has": "203dad6c3384cffbdd266434aa8286ddabbcbbed33b7a514a2bd53f87a93ef5d",
@@ -428,7 +428,7 @@
   "Procedures::variant": "63d2b798ce253327a8d0d7472961455fa896e7e93657eeedb2ae6f0adf4e7af0",
   "Procedures::version": "eb27a90773d55526e2d4aa6eb29d06d927ab1bdfb5954c3ef1a40b9a5f626583",
   "ProjectController::canCreate": "99b77ff6a28721afaf239e3383695c8357e9a929c17d2bb66d57386e200d0055",
-  "ProjectController::list": "39d5f05d12079b783fe44daa964873315f7ada8bd6aaa76dadd3401aa5dec3e8",
+  "ProjectController::list": "7501138eeee30d5565444f9b55938bcf01cd5b99402e7316cd75fe531ccfd60d",
   "ProjectController::members": "27c640e6421f19212b994739f5aff1e8d833e05ac0e07557b30b4aa7c044846b",
   "ProofRepair::BATCH": "46fdcb2516a92a832b780518e7a22bad7cedcbdf5bd4ce196742e76e4a07c17d",
   "ProofRepair::CHARS": "43dd88fbe8c63652398eba7f48aeb0df8d67cd7002bbe42a2ad0ff263b685e8f",
@@ -442,7 +442,7 @@
   "ProofRepair::ensure": "8056f3f5660152c6c48f7b1524ec4a6078e042a47336d49115c59854366c2afa",
   "ProofRepair::forFact": "9606666fb3f135cf74d6f3dcdda0f2a25ec03288a7f0fa0baa2daff4b2d83abb",
   "ProofRepair::lastBy": "e7b8f5a199af5075ffd25d9d4ceef805dda4d9f10b9bae9bba9ff4f1799f7a57",
-  "ProofRepair::mayTake": "8c024628db0279e1acadac1aecaaaa7fd04eeb8b138c0649422c4b7de21acedf",
+  "ProofRepair::mayTake": "e90e130a65500f1b889c38eb40c8ff26e5964a1278d6bf09217043c0919d307b",
   "ProofRepair::onReview": "829f3c4b14897915874498586251d37eeeaccbadbed809a27ed8e4907e293d2c",
   "ProofRepair::pendingStep": "50515e944165f63e6467709b62b02183aadd24d6a629b6f15bb65774ea0d82b7",
   "ProofRepair::queue": "93ae9917924821cca6903dbf98b4dab57ed42eacb0b2712672807f57ffb383b4",
@@ -564,8 +564,8 @@
   "Sweeps::pendingForFact": "fdc03d78c834450dec73bffc6eb46c1e734d3bb8fa12dfe70648cacffe8dae9c",
   "Sweeps::pendingItems": "2188dc62f5de49c18a219dc85cab268497b1e24875049a2879eacf430a085ddd",
   "Sweeps::rested": "084fbe29c1b6352592d57a85e5c08709d80e8a73d1a12ca6ca179cd4f4ef6656",
-  "Sweeps::reviewBatch": "248aa908800b464b8a9ea53c6afe376a58c798abdf82299ece99c86baff5da5f",
-  "Sweeps::reviewCandidates": "921dea56e8245794cbb2a271b957135947bf5f571080ed58d9a30e54a8e74ff7",
+  "Sweeps::reviewBatch": "bbdcaeea0f1b70321f7dc21a462943a5bb291da674197f79cf60c2d662f13844",
+  "Sweeps::reviewCandidates": "51a6cfc0e538a1203229a1a59264db89a8f0215f09a71d1132d7b1a2abd12d6a",
   "Sweeps::reviewModel": "914ac192c9beb2bf7a5860923a58d8014add2bdb24487b311a458670029b3fef",
   "Sweeps::reviewReaders": "f4fedf7cbfa15e89bd5c6c23807a7b0ce61df1ad3cf83e350b2dceca2d68547a",
   "Sweeps::rewriteCandidates": "41d4fda9b36028538c79c9bcbd8d622fa75dcacef735fb1ef13f4e66b2735f41",
@@ -578,13 +578,15 @@
   "Sweeps::take": "221b02390429d89f56c1855246019b4aecf0415c9c50e8e16ecf89c1512f0ed0",
   "Sweeps::tried": "379233f20904b6ec883922b9c905e46a9b43a2ccb32face2ca4bea57edadf391",
   "Sweeps::typeCandidates": "9ab42f8a496524c406252d22c849bda3940d7e47643c796bb0a697434a485e92",
+  "Verification::ALIASES": "412901cbbfe19e8b64ea46a7a2f689df341edca4f426d8f0fe90373ac280555b",
   "Verification::LEVELS": "19a02e05e84f2441622896a5c6e1b3acbef061cf2883de9a12c403aa7d029798",
   "Verification::OPEN": "26ce47d678e6ed90279e50234a048bf2b72e2d5e581a2cb07dd36765c91d7317",
   "Verification::brief": "7859321abc06f7c057656d20d2aa4ce2373954e5aaa932e6c29c1b343fba7d77",
   "Verification::companiesAround": "be61088b357d68c978d2eca66d597ce88b470cd67d3bd82f27d6208c82003962",
   "Verification::company": "249af4f744f120f33004697e4b830c6303e306b89dad1313e723adbea5cefc5a",
   "Verification::level": "85f1df4e666fb63b2893d5daef2e54b0ac373c1466cc8f5d12f7f6199d552cca",
-  "Verification::rank": "76d61c46fff9b4f97f9cfaecdd8327dd4baba0c569632e89a72c767623f15dce"
+  "Verification::rank": "76d61c46fff9b4f97f9cfaecdd8327dd4baba0c569632e89a72c767623f15dce",
+  "Verification::sameModel": "9fdbf90851bac049f37b10190a38135d8270b07dc92ef7da2ac64d9edbb758a2"
  },
  "history": [
   {
@@ -1651,6 +1653,32 @@
     "+ProofRepair::start",
     "+ProofRepair::taskItems",
     "+Sweeps::modelFor"
+   ]
+  },
+  {
+   "date": "2026-11-27",
+   "decision": "compatible",
+   "client_version": "1.22.0",
+   "min_version": "1.0.0",
+   "note": "GET /api/projects adds a visibility field to each project; clients ignore unknown fields, and the join-request routes are for people only",
+   "changed": [
+    "ProjectController::list"
+   ]
+  },
+  {
+   "date": "2026-11-27",
+   "decision": "compatible",
+   "client_version": "1.22.0",
+   "min_version": "1.0.0",
+   "note": "A model alias (opus, sonnet, haiku, fable) counts as the model it stands for when choosing whose proofs a model may review or repair; a model refused on its own proofs is not counted as having read them; a source check or rewrite check answer that checks none of its batch is refused (422) so that the task is tried again. Clients keep the same requests.",
+   "changed": [
+    "Procedures::INSTRUCTIONS",
+    "Procedures::apply",
+    "ProofRepair::mayTake",
+    "Sweeps::reviewBatch",
+    "Sweeps::reviewCandidates",
+    "+Verification::ALIASES",
+    "+Verification::sameModel"
    ]
   }
  ]

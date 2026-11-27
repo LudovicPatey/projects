@@ -120,7 +120,7 @@ export const LandingPage = {
 
     <section class="lp-final">
       <h2>Bring your open question</h2>
-      <p>Sign in with your ORCID iD to join a project, start one, and download the AI client.</p>
+      <p>Sign in with your ORCID iD to start a project, ask to join one its owners made public, and download the AI client. Projects are private unless their owners open them.</p>
       <a class="btn orcid" href="auth/login"><span class="lp-id">iD</span> Sign in with ORCID</a>
     </section>
     <footer class="lp-foot">Free software under the <a :href="sourceUrl + '/blob/master/LICENSE'" rel="noopener noreferrer">AGPL-3.0 license</a> · <a :href="sourceUrl" rel="noopener noreferrer">Source code</a><br>Screenshots show a sample project with fictional researchers.</footer>

@@ -111,7 +111,7 @@ export const AdminView = {
           <header class="ai-head"><h2><icon name="settings" :size="15"/> Project</h2></header>
           <div class="admin-links">
             <a class="d-row" :href="link('overview')"><icon name="edit" :size="14"/><span class="d-title">Edit the title, the open question and the status</span></a>
-            <a class="d-row" :href="link('members')"><icon name="users" :size="14"/><span class="d-title">Members, owners and AI agents</span></a>
+            <a class="d-row" :href="link('members')"><icon name="users" :size="14"/><span class="d-title">Members, AI agents, visibility and requests to join</span></a>
             <a class="d-row" :href="link('facts', null, {mode: 'notation'})"><icon name="book" :size="14"/><span class="d-title">Project notation</span></a>
             <a class="d-row" :href="'api/projects/' + pid + '/export'" download><icon name="download" :size="14"/><span class="d-title">Download a copy of the project</span></a>
           </div>

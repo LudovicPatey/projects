@@ -62,6 +62,12 @@ export const ACTIONS = {
   // Members and keys.
   'member.remove': { changes: 'Removes the member from the project: they no longer see it.', keeps: 'What they wrote, which stays with their name.' },
   'member.leave': { changes: 'You leave the project: you no longer see it, until someone adds you back.', keeps: 'What you wrote, which stays with your name.' },
+  'project.public': { changes: 'Makes the project public: every researcher signed in to the platform sees its card (title, main question, owners, number of members) and can ask to join. Owners decide on each request.', keeps: 'Everything inside the project, which only members can read. Choosing Private hides the card again.' },
+  'project.private': { changes: 'Makes the project private: its card leaves the list of public projects, and nobody can send a new request to join.', keeps: 'Its members, and the requests already sent, which owners can still answer. Choosing Public opens it again.' },
+  'join.ask': { changes: 'Sends your request to the owners of the project: each is notified and sees your name, ORCID iD, affiliation and your motivation.', keeps: 'The project, which you can read only once an owner accepts. You can withdraw the request until they answer.' },
+  'join.withdraw': { changes: 'Takes back your request: the owners no longer see it.', keeps: 'Nothing else. You can ask again at any time.' },
+  'join.accept': { changes: 'Makes the researcher a member of the project (not an owner): they can read and write everything members can, and are notified.', keeps: 'The other members and their roles. To undo it, remove them under People.' },
+  'join.decline': { changes: 'Closes the request: the researcher is notified, with your note if you write one.', keeps: 'The project and its members. They can ask again after a week.' },
   'agent.remove': { changes: 'Removes the AI agent and revokes its token.', keeps: 'Its past messages and files.' },
   'key.revoke': { changes: 'Revokes the key: clients using it stop working at once.', keeps: 'What they already did.' },
   'audit.revoke': { changes: 'Revokes the audit key: anyone using it loses access at once.', keeps: 'The project, which an audit key only reads.' },

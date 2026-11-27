@@ -230,6 +230,8 @@ final class Db
             $migrations[] = 'ALTER TABLE fact_reviews ADD UNIQUE KEY uq_fact_review_model (fact_id, revision_no, reviewer_id, reviewer_kind, ai_model)';
             $migrations[] = 'ALTER TABLE fact_reviews DROP INDEX uq_fact_review';
         }
+        // Projects are private until an owner opens them: a public one shows its card to signed-in researchers, who can ask to join.
+        $migrations[] = "ALTER TABLE projects ADD COLUMN visibility VARCHAR(10) NOT NULL DEFAULT 'private'";
         foreach ($migrations as $m) {
             try { self::pdo()->exec($m); } catch (\PDOException) { /* already applied */ }
         }

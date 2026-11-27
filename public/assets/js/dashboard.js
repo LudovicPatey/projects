@@ -16,6 +16,7 @@ export const refName = (r) => (r?.type === 'fact' ? r.title || r.label : r?.labe
 
 const ACTIONS = {
   at_risk: { icon: 'eye', tone: 'bad', label: 'Answer at risk', text: 'The fact behind this answer changed' },
+  join: { icon: 'user-plus', tone: 'warn', label: 'Asks to join', text: 'Read their motivation, then accept or decline under People' },
   ratify: { icon: 'check-circle', tone: 'warn', label: 'To ratify', text: 'An answer awaits a human decision' },
   disputed: { icon: 'x', tone: 'bad', label: 'Disputed', text: 'Settle this fact' },
   ai_question: { icon: 'comment', tone: 'warn', label: 'The AI asks', text: 'A choice it could not settle from the text' },

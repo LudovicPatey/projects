@@ -56,7 +56,7 @@ const App = {
         { view: 'files', icon: 'files', label: 'Files', badge: t.document },
         { view: 'bib', icon: 'book', label: 'Biblio', badge: t.bib },
         { view: 'ai', icon: 'sparkles', label: 'AI', badge: store.counters.ai_suggestions },
-        { view: 'members', icon: 'users', label: 'People', badge: t.member },
+        { view: 'members', icon: 'users', label: 'People', badge: (t.member || 0) + (store.counters.join_requests || 0) },
         ...(store.project?.my_role === 'owner' ? [{ view: 'admin', icon: 'settings', label: 'Admin' }] : []),
       ];
     },

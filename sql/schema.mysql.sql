@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS projects (
   status VARCHAR(20) NOT NULL DEFAULT 'open',
   consolidation_auto TINYINT(1) NOT NULL DEFAULT 1, -- the consolidation applies the changes it is confident about
   sweeps_checked_at DATETIME NULL,       -- when the server last looked for maintenance sweeps that are due (Sweeps)
+  visibility VARCHAR(10) NOT NULL DEFAULT 'private', -- 'public': signed-in researchers see its card and can ask to join (JoinController)
   created_by INT UNSIGNED NOT NULL,
   created_at DATETIME NOT NULL,
   updated_at DATETIME NOT NULL,
@@ -35,6 +36,24 @@ CREATE TABLE IF NOT EXISTS project_members (
   role VARCHAR(20) NOT NULL DEFAULT 'member',
   joined_at DATETIME NOT NULL,
   PRIMARY KEY (project_id, user_id),
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Requests to join a public project. One pending request per user and project (checked by JoinController);
+-- a declined or withdrawn one stays as a record, and the user may ask again later.
+CREATE TABLE IF NOT EXISTS join_requests (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  project_id INT UNSIGNED NOT NULL,
+  user_id INT UNSIGNED NOT NULL,
+  motivation TEXT NOT NULL,
+  status VARCHAR(10) NOT NULL DEFAULT 'pending', -- pending, accepted, declined, withdrawn
+  decision_note TEXT NULL,
+  decided_by INT UNSIGNED NULL,
+  created_at DATETIME NOT NULL,
+  decided_at DATETIME NULL,
+  KEY idx_join_project (project_id, status),
+  KEY idx_join_user (user_id, status),
   FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

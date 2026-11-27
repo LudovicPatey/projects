@@ -10,7 +10,7 @@ final class ProjectController
     public static function list(Request $r): never
     {
         $rows = Db::all(
-            'SELECT p.id, p.title, p.status, p.updated_at, pm.role,
+            'SELECT p.id, p.title, p.status, p.visibility, p.updated_at, pm.role,
                     (SELECT COUNT(*) FROM project_members m WHERE m.project_id = p.id) AS members
              FROM projects p JOIN project_members pm ON pm.project_id = p.id AND pm.user_id = ?
              ORDER BY p.updated_at DESC', [Auth::id()]);
@@ -103,9 +103,14 @@ final class ProjectController
             Notify::mentions($id, 'project', $id, $q['mentions'], ['view' => 'overview'], $q['text'], null, false);
         }
         if (in_array($r->str('status'), ['open', 'solved', 'archived'], true)) $data['status'] = $r->str('status');
+        if ($r->has('visibility')) {
+            if (Auth::isAi()) throw new HttpError(403, 'Only a person can change who can see the project.');
+            if (!in_array($r->str('visibility'), ['public', 'private'], true)) throw new HttpError(422, 'Visibility is public or private.');
+            $data['visibility'] = $r->str('visibility');
+        }
         Db::update('projects', $data, 'id = :id', ['id' => $id]);
         if (isset($data['title']) || isset($data['question_html']) || isset($data['status'])) Activity::touch($id, 'question', $id, 'updated');
-        Response::json(['ok' => true]);
+        Response::json(['ok' => true, 'visibility' => Db::value('SELECT visibility FROM projects WHERE id = ?', [$id])]);
     }
 
     public static function addMember(Request $r): never
@@ -126,6 +131,7 @@ final class ProjectController
             throw new HttpError(409, 'This researcher is already a member.');
         }
         Db::insert('project_members', ['project_id' => $id, 'user_id' => $uid, 'role' => $role, 'joined_at' => Db::now()]);
+        JoinController::settleByAdding($id, $uid);
         Activity::touch($id, 'member', $uid, 'joined');
         Activity::joined($id, $uid);
         Notify::send($uid, $id, 'added', ['link' => ['view' => 'overview'], 'excerpt' => 'You were added to the project.']);

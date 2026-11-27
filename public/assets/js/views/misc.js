@@ -5,16 +5,18 @@ import { timeAgo, fullDate, memberSince } from '../util.js';
 import { QUESTION_STATUS } from '../questions-model.js';
 import { aiTimeSummary, computeTime } from '../ai-model.js';
 import { FACT_SEGMENTS, PROOF_SEGMENTS, QUESTION_SEGMENTS, STRATEGY_SEGMENTS, dashboardComponents } from '../dashboard.js';
+import { JOIN_LIMITS, VISIBILITY, joinState, memberCount, motivationCheck, ownerNames, visibilityOf } from '../join-model.js';
 
 const first = (r) => (Array.isArray(r) ? r[0] : r);
 
 export const ProjectsView = {
-  data() { return { projects: [], canCreate: false, loaded: false, creating: false, title: '', busy: false }; },
+  data() { return { projects: [], canCreate: false, loaded: false, creating: false, title: '', busy: false, open: [], limits: JOIN_LIMITS, asking: null, motivation: '' }; },
   async mounted() {
     store.project = null;
     const r = await attempt(() => api.get('api/projects'));
     if (r) { this.projects = r.projects; this.canCreate = r.can_create; }
     this.loaded = true;
+    await this.loadOpen();
   },
   components: dashboardComponents,
   template: `<div class="page wide">
@@ -32,7 +34,8 @@ export const ProjectsView = {
       <a v-for="p in projects" :key="p.id" class="project-card" :href="'#/p/' + p.id">
         <b v-if="p.unread" class="ios-badge card-badge" :aria-label="p.unread + ' unread'">{{ p.unread > 99 ? '99+' : p.unread }}</b>
         <div class="pc-head"><span class="pc-mono" :style="{background: tint(p.id)}">{{ initials(p.title) }}</span>
-          <div><h3><math-text :text="p.title"/></h3><div class="pc-tags"><pill :status="p.status === 'solved' ? 'solved_project' : p.status"/><span class="pill t-neutral">{{ p.role === 'owner' ? 'Owner' : 'Member' }}</span></div></div></div>
+          <div><h3><math-text :text="p.title"/></h3><div class="pc-tags"><pill :status="p.status === 'solved' ? 'solved_project' : p.status"/><span class="pill t-neutral">{{ p.role === 'owner' ? 'Owner' : 'Member' }}</span>
+            <span class="pill t-neutral pc-vis" :title="vis[visibilityOf(p)].label + ': ' + vis[visibilityOf(p)].text"><icon :name="vis[visibilityOf(p)].icon" :size="11"/><span class="sr-only">{{ vis[visibilityOf(p)].label }}</span></span></div></div></div>
         <p class="pc-text"><math-text :text="p.question_text || 'No statement yet.'"/></p>
         <div class="pc-progress"><div><span>Questions settled</span><b>{{ p.counts.settled }}/{{ p.counts.questions }}</b></div><i><span :style="{width: (p.counts.questions ? 100 * p.counts.settled / p.counts.questions : 0) + '%'}"></span></i></div>
         <div class="pc-stats"><span title="Facts"><icon name="graph" :size="14"/> {{ p.counts.facts }}</span><span title="Files"><icon name="files" :size="14"/> {{ p.counts.files }}</span><span title="References"><icon name="book" :size="14"/> {{ p.counts.references }}</span><span v-if="p.ai_time" :title="'AI computing: ' + aiTimeSummary(p.ai_time)"><icon name="clock" :size="14"/> {{ computeTime(p.ai_time.standard.ms + p.ai_time.proving.ms) }}</span>
@@ -40,8 +43,35 @@ export const ProjectsView = {
         <footer>Updated {{ timeAgo(p.updated_at) }} · {{ p.members }} {{ p.members === 1 ? 'member' : 'members' }}</footer>
       </a>
       <div v-if="loaded && !projects.length" class="d-hero-empty"><span class="sh-icon"><icon name="target" :size="24"/></span><h3>No project yet</h3>
-        <p>Ask a project owner to add your ORCID iD <code>{{ store.user.orcid }}</code><template v-if="canCreate">, or create a new project</template>.</p></div>
+        <p>Ask a project owner to add your ORCID iD <code>{{ store.user.orcid }}</code><template v-if="open.length">, ask to join a public project below</template><template v-if="canCreate">, or create a new project</template>.</p></div>
     </div>
+    <template v-if="open.length">
+      <h2 class="group-title" data-tour="public-projects"><icon name="globe" :size="16"/> Public projects you can join <span>{{ open.length }}</span></h2>
+      <p class="muted small group-intro">Their owners made them public. You see only this card: the files, facts, questions and conversations open once an owner accepts your request.</p>
+      <div class="project-grid rich-grid">
+        <article v-for="p in open" :key="p.id" class="project-card join-card" :class="'j-' + st(p).state">
+          <div class="pc-head"><span class="pc-mono" :style="{background: tint(p.id)}">{{ initials(p.title) }}</span>
+            <div><h3><math-text :text="p.title"/></h3><div class="pc-tags"><pill :status="p.status === 'solved' ? 'solved_project' : p.status"/>
+              <span v-if="p.private_now" class="pill t-neutral" title="An owner made the project private after you asked: your request still waits for their answer."><icon name="lock" :size="11"/> Private now</span></div></div></div>
+          <p class="pc-text"><math-text :text="p.question_text || 'No statement yet.'"/></p>
+          <dl class="jc-rows"><div><dt>Owners</dt><dd :title="p.owners.length > 2 ? p.owners.map(o => o.name).join(', ') : null">{{ ownerNames(p.owners) || 'none' }}</dd></div>
+            <div v-if="st(p).note"><dt>Their note</dt><dd class="jc-note" :title="st(p).note">“{{ st(p).note }}”</dd></div>
+            <div v-if="p.request?.status === 'pending'"><dt>You wrote</dt><dd class="jc-note" :title="p.request.motivation">“{{ p.request.motivation }}”</dd></div></dl>
+          <footer class="jc-foot"><span class="jc-state" :title="st(p).title || (st(p).state === 'declined' ? (st(p).disabled || 'The owners declined an earlier request. You can ask again.') : memberCount(p).title)"><icon :name="st(p).state === 'pending' ? 'clock' : st(p).state === 'declined' ? 'x' : 'users'" :size="13"/>
+              {{ st(p).state === 'none' ? memberCount(p).text : st(p).text + (p.request && !st(p).disabled ? ' · ' + timeAgo(st(p).state === 'pending' ? p.request.created_at : p.request.decided_at) : '') }}</span>
+            <button v-if="st(p).action === 'withdraw'" class="btn sm" :title="explain('join.withdraw')" @click="withdraw(p)"><icon name="x" :size="13"/> Withdraw</button>
+            <button v-else class="btn sm primary" :disabled="!!st(p).disabled" :title="st(p).disabled || explain('join.ask')" @click="ask(p)"><icon name="user-plus" :size="13"/> Ask to join</button></footer>
+        </article>
+      </div>
+    </template>
+    <modal v-if="asking" :title="'Ask to join ' + asking.title" @close="asking = null">
+      <p class="muted small">{{ explain('join.ask') }}</p>
+      <label class="field"><span>Why would you like to join? What do you work on, what could you bring?</span>
+        <textarea v-model="motivation" rows="6" :maxlength="limits.motivation_max" autofocus placeholder="A few sentences for the owners"></textarea></label>
+      <p class="jc-count small" :class="{bad: motivation && !check.ok}" aria-live="polite">{{ check.hint }}</p>
+      <template #footer><button class="btn ghost" @click="asking = null">Cancel</button>
+        <button class="btn primary" :disabled="!check.ok || busy" :title="check.ok ? explain('join.ask') : 'Write at least ' + limits.motivation_min + ' characters first.'" @click="send">Send the request</button></template>
+    </modal>
     <modal v-if="creating" title="New research project" wide @close="creating=false">
       <label class="field"><span>Title</span><input v-model="title" placeholder="e.g. The union-closed sets conjecture" autofocus></label>
       <div class="field"><span>The open question</span>
@@ -54,10 +84,29 @@ export const ProjectsView = {
     store() { return store; },
     firstName() { return String(store.user.name || '').split(/\s+/)[0]; },
     totals() { return this.projects.reduce((t, p) => ({ questions: t.questions + p.counts.questions, facts: t.facts + p.counts.facts, files: t.files + p.counts.files, unread: t.unread + (p.unread || 0) }), { questions: 0, facts: 0, files: 0, unread: 0 }); },
+    check() { return motivationCheck(this.motivation, this.limits); },
+    vis() { return VISIBILITY; },
     summary() { const n = this.totals.unread; return n ? `${n} new ${n === 1 ? 'item awaits' : 'items await'} you across your projects.` : 'You are up to date across your projects.'; },
   },
   methods: {
-    timeAgo, computeTime, aiTimeSummary,
+    timeAgo, computeTime, aiTimeSummary, explain, ownerNames, memberCount, visibilityOf,
+    st(p) { return joinState(p.request); },
+    async loadOpen() {
+      try { const r = await api.get('api/projects/public'); this.open = r.projects; this.limits = r.limits || JOIN_LIMITS; } catch { this.open = []; }
+    },
+    ask(p) { this.asking = p; this.motivation = ''; },
+    async send() {
+      if (!this.check.ok) return;
+      this.busy = true;
+      const r = await attempt(() => api.post(`api/projects/${this.asking.id}/join-requests`, { motivation: this.motivation }), 'Request sent to the owners');
+      this.busy = false;
+      if (r) { this.asking = null; await this.loadOpen(); }
+    },
+    async withdraw(p) {
+      if (!confirm(`Withdraw your request to join “${p.title}”? ${explain('join.withdraw')}`)) return;
+      const r = await attempt(() => api.del(`api/join-requests/${p.request.id}`), 'Request withdrawn');
+      if (r) await this.loadOpen();
+    },
     initials(t) { return String(t).split(/[\s–—-]+/u).filter((w) => w.length > 2 && !['the', 'and', 'for', 'with'].includes(w.toLowerCase())).slice(0, 2).map((w) => w[0].toUpperCase()).join('') || '?'; },
     tint(id) { return ['#4338ca', '#0f766e', '#7c3aed', '#b45309', '#0369a1', '#be185d'][id % 6]; },
     async create() {
@@ -177,7 +226,7 @@ export const OverviewView = {
 
 export const MembersView = {
   props: { query: Object },
-  data() { return { orcid: '', role: 'member', busy: false, agents: [], agentForm: { name: '', ai_model: '' }, newToken: null, snippet: '', contrib: {} }; },
+  data() { return { orcid: '', role: 'member', busy: false, agents: [], agentForm: { name: '', ai_model: '' }, newToken: null, snippet: '', contrib: {}, requests: [], limits: JOIN_LIMITS, declining: null, note: '' }; },
   computed: {
     p() { return store.project; },
     isOwner() { return this.p.my_role === 'owner'; },
@@ -186,19 +235,49 @@ export const MembersView = {
     humans() { return this.p.members.filter((m) => m.kind !== 'agent'); },
     baseUrl() { return (location.origin + location.pathname).replace(/\/$/, ''); },
     newMembers() { return store.counters.totals?.member || 0; },
+    waiting() { return store.counters.join_requests || 0; },
+    visibility() { return visibilityOf(this.p); },
+    vis() { return VISIBILITY; },
+    highlightRequest() { return this.query?.request ? +this.query.request : null; },
   },
-  mounted() { this.loadAgents(); this.loadContrib(); },
+  mounted() { this.loadAgents(); this.loadContrib(); this.loadRequests(); },
   template: `<div class="page wide">
     <header class="page-title"><span class="sh-icon"><icon name="users" :size="22"/></span><div><h1>People</h1><p>Everyone here can see the files, facts, questions and bibliography, and the conversations they take part in.</p></div>
       <div class="title-kpis"><div><b>{{ humans.length }}</b><span>researchers</span></div><div><b>{{ agents.length }}</b><span>AI agents</span></div></div></header>
-    <form v-if="isOwner" class="panel add-member" @submit.prevent="add">
-      <header><h2><icon name="user-plus" :size="15"/> Add a researcher by ORCID iD</h2></header>
-      <div class="row-gap wrap-sm">
-        <input v-model="orcid" placeholder="0000-0000-0000-0000 or https://orcid.org/…" class="grow" aria-label="ORCID iD">
-        <select v-model="role" aria-label="Role"><option value="member">Member</option><option value="owner">Owner</option></select>
-        <button class="btn primary" :disabled="busy"><icon name="user-plus" :size="15"/> Add</button></div>
-      <p class="muted small">They do not need to have signed in before. Their public ORCID name is fetched automatically, and they gain access at their first ORCID sign-in.</p>
-    </form>
+    <section v-if="isOwner" class="panel join-panel" data-tour="who-can-join">
+      <header><h2><icon name="user-plus" :size="15"/> Who can join</h2>
+        <span v-if="requests.length" class="pill t-warn" :title="requests.length + ' researcher' + (requests.length === 1 ? ' waits' : 's wait') + ' for an owner’s answer'"><icon name="clock" :size="11"/> {{ requests.length }} waiting</span></header>
+      <div class="jp-row"><span class="jp-label">Visibility</span>
+        <div class="jp-body"><div class="seg vis-seg" role="radiogroup" aria-label="Visibility of the project">
+            <button v-for="v in ['private', 'public']" :key="v" type="button" role="radio" :aria-checked="visibility === v" :class="{on: visibility === v}" :title="explain('project.' + v)" @click="setVisibility(v)">
+              <icon :name="vis[v].icon" :size="13"/> {{ vis[v].label }}</button></div>
+          <p class="muted small">{{ vis[visibility].text }}</p></div></div>
+      <div v-if="requests.length || visibility === 'public'" class="jp-row"><span class="jp-label">Requests to join</span>
+        <div class="jp-body">
+          <p v-if="!requests.length" class="muted small">None waiting. Each owner is notified when a researcher asks.</p>
+          <article v-for="q in requests" :key="q.id" class="join-req" :class="{hl: q.id === highlightRequest}">
+            <header><avatar :name="q.name" :id="q.user_id" :size="34"/><div class="jr-who"><b>{{ q.name }}</b>
+                <small>{{ q.affiliation || 'No affiliation given' }} · <a :href="'https://orcid.org/' + q.orcid" target="_blank" rel="noopener">{{ q.orcid }}</a></small></div>
+              <time class="muted small" :title="fullDate(q.created_at)">{{ timeAgo(q.created_at) }}</time></header>
+            <p class="jr-text">{{ q.motivation }}</p>
+            <footer><span v-if="q.declined_before" class="muted small" :title="'Owners declined ' + q.declined_before + ' earlier request' + (q.declined_before > 1 ? 's' : '') + ' from this researcher'"><icon name="x" :size="12"/> declined {{ q.declined_before }}× before</span><span class="grow"></span>
+              <button class="btn sm" :title="explain('join.decline')" @click="declining = q; note = ''"><icon name="x" :size="13"/> Decline…</button>
+              <button class="btn sm primary" :title="explain('join.accept')" @click="accept(q)"><icon name="check" :size="13"/> Accept</button></footer>
+          </article></div></div>
+      <form class="jp-row" @submit.prevent="add"><span class="jp-label">Add by ORCID iD</span>
+        <div class="jp-body"><div class="row-gap wrap-sm">
+            <input v-model="orcid" placeholder="0000-0000-0000-0000 or https://orcid.org/…" class="grow" aria-label="ORCID iD">
+            <select v-model="role" aria-label="Role"><option value="member">Member</option><option value="owner">Owner</option></select>
+            <button class="btn primary" :disabled="busy"><icon name="user-plus" :size="15"/> Add</button></div>
+          <p class="muted small">They do not need to have signed in before. Their public ORCID name is fetched automatically, and they gain access at their first ORCID sign-in.</p></div></form>
+    </section>
+    <modal v-if="declining" :title="'Decline the request of ' + declining.name" @close="declining = null">
+      <p class="muted small">{{ explain('join.decline') }}</p>
+      <label class="field"><span>A note for them (optional)</span>
+        <textarea v-model="note" rows="4" :maxlength="limits.note_max" placeholder="e.g. The project is full for now; try again after the summer."></textarea></label>
+      <p class="jc-count small">{{ note.trim().length }}/{{ limits.note_max }}</p>
+      <template #footer><button class="btn ghost" @click="declining = null">Cancel</button><button class="btn danger" :disabled="busy" @click="decline">Decline the request</button></template>
+    </modal>
     <h2 class="group-title">Researchers <span>{{ humans.length }}</span></h2>
     <div class="people-grid">
       <article v-for="m in humans" :key="m.id" class="person" :class="{hl: m.id === highlight}">
@@ -244,7 +323,33 @@ export const MembersView = {
     </modal>
   </div>`,
   methods: {
-    timeAgo, fullDate, memberSince,
+    timeAgo, fullDate, memberSince, explain,
+    async loadRequests() {
+      if (!this.isOwner) return;
+      const r = await attempt(() => api.get(`api/projects/${this.p.id}/join-requests`));
+      if (r) { this.requests = r.requests; this.limits = r.limits || JOIN_LIMITS; }
+    },
+    async setVisibility(v) {
+      if (v === this.visibility) return;
+      if (!confirm(`Make “${this.p.title}” ${VISIBILITY[v].label.toLowerCase()}? ${explain('project.' + v)}`)) return;
+      const r = await attempt(() => api.patch(`api/projects/${this.p.id}`, { visibility: v }), v === 'public' ? 'The project is public' : 'The project is private');
+      if (r) { this.p.visibility = r.visibility; this.loadRequests(); }
+    },
+    async accept(q) {
+      if (!confirm(`Accept ${q.name} as a member? ${explain('join.accept')}`)) return;
+      this.busy = true;
+      const r = await attempt(() => api.post(`api/join-requests/${q.id}/accept`), `${q.name} is now a member`);
+      this.busy = false;
+      if (r) { this.requests = r.requests; this.p.members = r.members; refreshMentionables(); refreshCounters(); this.loadContrib(); }
+      else this.loadRequests();
+    },
+    async decline() {
+      this.busy = true;
+      const r = await attempt(() => api.post(`api/join-requests/${this.declining.id}/decline`, { note: this.note }), 'Request declined');
+      this.busy = false;
+      if (r) { this.requests = r.requests; this.declining = null; refreshCounters(); }
+      else this.loadRequests();
+    },
     c(m) { return this.contrib[m.id] || { questions: 0, strategies: 0, facts: 0, reviews: 0, files: 0 }; },
     async loadContrib() { try { this.contrib = (await api.get(`api/projects/${this.p.id}/dashboard`)).people; } catch { this.contrib = {}; } },
     async loadAgents() {
@@ -297,6 +402,7 @@ export const MembersView = {
     },
   },
   watch: {
+    waiting(n, before) { if (n !== before) this.loadRequests(); },
     newMembers: { immediate: true, handler(n) { if (n) { refreshProject(); this.loadAgents(); setTimeout(() => { if (store.route.view === 'members') markAllRead('member'); }, 1200); } } },
     newToken(v) {
       if (!v) return;
@@ -423,6 +529,7 @@ Do not mark anything as verified on my behalf. Humans and other models review th
 
 const KIND_LABEL = {
   mention: 'mentioned you', reply: 'replied to a thread you follow', added: 'added you to the project',
+  join_request: 'asks to join your project', join_accepted: 'accepted your request to join', join_declined: 'declined your request to join',
   added_to_conversation: 'added you to a conversation',
   ai_done: 'completed your AI request',
   conversation_extract: 'asked to share facts from a private conversation',
@@ -444,7 +551,7 @@ export const NotificationsDrawer = {
       <button v-for="n in items" :key="n.id" class="notif" :class="{unread: !n.read_at}" @click="open(n)">
         <avatar :name="n.payload.by?.name" :id="n.payload.by?.id" :size="30"/>
         <div><div><b>{{ n.payload.by?.name }}</b> {{ label(n.kind) }}</div>
-          <div class="notif-ex" v-if="n.payload.excerpt && n.kind !== 'added'">“{{ n.payload.excerpt }}”</div>
+          <div class="notif-ex" v-if="n.payload.excerpt && !['added', 'join_accepted'].includes(n.kind)">“{{ n.payload.excerpt }}”</div>
           <div class="muted small">{{ n.project_title }} · {{ timeAgo(n.created_at) }}</div></div>
       </button>
     </div></aside></div>`,
@@ -459,10 +566,12 @@ export const NotificationsDrawer = {
     async open(n) {
       if (!n.read_at) { await api.post('api/notifications/read', { ids: [n.id] }); refreshCounters(); }
       const l = n.payload.link || {};
+      if (l.to === 'projects') { go('/projects'); this.$emit('close'); return; }
       let path = `/p/${n.project_id}/${l.view || 'overview'}` + (l.id ? `/${l.id}` : '');
       const q = new URLSearchParams();
       if (l.strategy) q.set('strategy', l.strategy);
       if (l.comment) q.set('comment', l.comment);
+      if (l.request) q.set('request', l.request);
       if ([...q].length) path += `?${q}`;
       go(path);
       this.$emit('close');

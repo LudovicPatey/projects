@@ -132,6 +132,12 @@ final class DashboardController
         foreach ($questions as $q) {
             if ($q['answer_at_risk']) $out[] = ['kind' => 'at_risk', 'ref' => 'question:' . $q['id'], 'title' => $q['title'], 'link' => ['view' => 'questions', 'id' => $q['id']]];
         }
+        // Researchers waiting for an owner's answer to their request to join.
+        if (JoinController::pendingFor($pid, $me)) {
+            foreach (array_slice(JoinController::pending($pid), 0, 2) as $j) {
+                $out[] = ['kind' => 'join', 'ref' => 'join:' . $j['id'], 'title' => $j['name'], 'link' => ['view' => 'members']];
+            }
+        }
         foreach ($questions as $q) {
             if ($q['pending_answers']) $out[] = ['kind' => 'ratify', 'ref' => 'question:' . $q['id'], 'title' => $q['title'], 'link' => ['view' => 'questions', 'id' => $q['id']]];
         }

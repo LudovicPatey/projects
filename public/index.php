@@ -5,7 +5,7 @@ require __DIR__ . '/../src/bootstrap.php';
 
 use App\{Auth, Config, HttpError, Request, Response};
 use App\Controllers\{AgentController, AiTaskController, AuthController, BibController, CommentController, ConsolidationController, ConversationController, DashboardController,
-    DocumentController, ExportController, FactController, FeedbackController, HelpController, KeyController, AdminController, AuditController, NotationController, NotificationController, ProjectController, ProverController, QuestionController, ReferenceController, SearchController};
+    DocumentController, ExportController, FactController, FeedbackController, HelpController, KeyController, AdminController, AuditController, JoinController, NotationController, NotificationController, ProjectController, ProverController, QuestionController, ReferenceController, SearchController};
 
 $routes = [
     // auth
@@ -22,11 +22,17 @@ $routes = [
     // projects & members
     ['GET',    '/api/projects',                           [ProjectController::class, 'list']],
     ['POST',   '/api/projects',                           [ProjectController::class, 'create']],
+    ['GET',    '/api/projects/public',                    [JoinController::class, 'publicList']],
     ['GET',    '/api/projects/{id}',                      [ProjectController::class, 'show']],
     ['PATCH',  '/api/projects/{id}',                      [ProjectController::class, 'update']],
     ['POST',   '/api/projects/{id}/members',              [ProjectController::class, 'addMember']],
     ['PATCH',  '/api/projects/{id}/members/{uid}',        [ProjectController::class, 'updateMember']],
     ['DELETE', '/api/projects/{id}/members/{uid}',        [ProjectController::class, 'removeMember']],
+    ['POST',   '/api/projects/{id}/join-requests',        [JoinController::class, 'ask']],
+    ['GET',    '/api/projects/{id}/join-requests',        [JoinController::class, 'list']],
+    ['POST',   '/api/join-requests/{id}/accept',          [JoinController::class, 'accept']],
+    ['POST',   '/api/join-requests/{id}/decline',         [JoinController::class, 'decline']],
+    ['DELETE', '/api/join-requests/{id}',                 [JoinController::class, 'withdraw']],
     ['GET',    '/api/projects/{id}/mentionables',         [ProjectController::class, 'mentionables']],
     ['GET',    '/api/projects/{id}/help-context',         [HelpController::class, 'context']],
     ['GET',    '/api/projects/{id}/export',               [ExportController::class, 'project']],

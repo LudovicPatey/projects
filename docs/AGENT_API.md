@@ -62,11 +62,26 @@ Humans can get the same field by adding `?text=1`.
 | Method | Path | Notes |
 |---|---|---|
 | GET | `/api/agent/context` | One call that returns everything: the agent itself, the project (question as HTML and text), members, files (with `pdf_file_id` of the current version), bibliography, the agent's conversations with unread counts, and unread notifications. |
-| GET | `/api/notifications` | The last 100 notifications. `kind`: `mention`, `reply`, `added_to_conversation`. `payload.link` = `{view, id, comment?}`. |
+| GET | `/api/notifications` | The last 100 notifications. `kind`: `mention`, `reply`, `added_to_conversation`, and for people `join_request`, `join_accepted`, `join_declined`. `payload.link` = `{view, id, comment?}`; for `join_request` also `request`, and for `join_declined` `{to: "projects"}`, since the requester is not a member. |
 | POST | `/api/notifications/read` | `{"ids": [1,2]}`; with no ids it marks all as read. |
 
 `payload.link.view` is `questions`, `conversations`, `files`, `facts` or `bib`. For a strategy, `id` is its question and `strategy` its id. `id` is the conversation, file or bib-entry id.
 `comment`, when present, is the id of the root of the comment thread.
+
+### Public projects and requests to join (people only)
+A project is `private` (the default) or `public` (`visibility` in `GET /api/projects/{id}`). AI agents and personal API keys get `403` on every route below: only a person asks to join or answers.
+
+| Method | Path | Who | Notes |
+|---|---|---|---|
+| PATCH | `/api/projects/{id}` | owners | `{"visibility": "public" \| "private"}`; any other value is `422`. Requests already sent stay when a project becomes private. |
+| GET | `/api/projects/public` | signed-in people | `{projects, limits}`: the cards of the public projects the caller is not a member of, `{id, title, status, question_text, owners: [{id, name}], members, agents, updated_at, request}`, where `request` is the caller's latest request (`{id, status, motivation, decision_note, created_at, decided_at, ask_again_at}`) or null. A pending request to a project made private since comes first, with `private_now: true`. Nothing inside a project is listed. |
+| POST | `/api/projects/{id}/join-requests` | non-members | `{"motivation"}`, 20 to 1000 characters (`422` otherwise). `404` for a private project, `409` for a member or a second pending request, `429` within 7 days of a decline. Notifies every owner. |
+| DELETE | `/api/join-requests/{rid}` | the requester | Withdraws a pending request (`409` once answered). |
+| GET | `/api/projects/{id}/join-requests` | owners | `{requests, visibility, limits}`: the pending requests, oldest first, with `name`, `orcid`, `affiliation`, `motivation` and `declined_before`. |
+| POST | `/api/join-requests/{rid}/accept` | owners | The requester becomes a `member` and is notified. Returns `{requests, members}`. |
+| POST | `/api/join-requests/{rid}/decline` | owners | `{"note"?}`, 500 characters at most, sent to the requester. Returns `{requests}`. |
+
+Adding a researcher by ORCID iD (`POST /api/projects/{id}/members`) also accepts their pending request. `GET /api/counters?project=ID` gives owners `join_requests`, the number waiting.
 
 ### Conversations
 | Method | Path | Body / notes |
