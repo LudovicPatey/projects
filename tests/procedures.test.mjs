@@ -28,7 +28,7 @@ after(() => { app?.stop(); if (tmp) { try { fs.rmSync(tmp, { recursive: true, fo
 test('the platform lists its procedures, for clients to offer them', async () => {
   const r = await app.call(key, 'GET', '/api/ai/procedures');
   assert.equal(r.status, 200);
-  assert.deepEqual(r.data.procedures.map((p) => p.id), ['ask', 'notation', 'consolidate', 'rewrite_check', 'proof_review', 'proof_repair', 'repair_check', 'statement_fix', 'fix_check', 'relink', 'relink_check', 'second_reading', 'source_check']);
+  assert.deepEqual(r.data.procedures.map((p) => p.id), ['ask', 'instruct', 'notation', 'consolidate', 'rewrite_check', 'proof_review', 'proof_repair', 'repair_check', 'statement_fix', 'fix_check', 'relink', 'relink_check', 'second_reading', 'source_check']);
   for (const p of r.data.procedures) { assert.ok(p.label && p.description && ['strong', 'fast'].includes(p.tier)); assert.match(p.version, /^[0-9a-f]{12}$/); }
   assert.deepEqual(r.data.capabilities, ['web_search', 'document']);
   assert.equal((await app.call({ token: 'nope' }, 'GET', '/api/ai/procedures')).status, 401);

@@ -120,6 +120,8 @@ final class AiTaskController
     public static function queueMention(int $pid, string $type, int $id, string $html, ?int $conversationId): void
     {
         if (Auth::isAi() || !self::mentionsAi($html)) return;
+        // In a comment, @AI may also ask for work on what it is about (Instructions): a client that follows instructions takes it as one
+        // (claim), and a client from before them answers it as a question, as it always did.
         self::insertTask($pid, 'ask', $type, $id, null, $conversationId, mb_substr(Sanitizer::toText($html), 0, 4000), "ask:$type:$id");
     }
 
@@ -183,7 +185,7 @@ final class AiTaskController
         // A person's own client may record the Danus run they just launched, and nothing else.
         if (Auth::isAi() && !(Auth::isClient() && $kind === 'derive')) throw new HttpError(403, 'Only a person can do this.');
         if (!in_array($kind, self::kinds(), true)) throw new HttpError(422, 'Choose what the AI should do.');
-        if (in_array($kind, ['rewrite_check', 'second_reading', 'proof_review', 'proof_repair', 'repair_check', 'statement_fix', 'fix_check', 'relink', 'relink_check'], true)) throw new HttpError(422, 'The platform queues this on its own, whenever there is work for it.');
+        if (in_array($kind, ['rewrite_check', 'second_reading', 'proof_review', 'proof_repair', 'repair_check', 'statement_fix', 'fix_check', 'relink', 'relink_check', 'instruct'], true)) throw new HttpError(422, 'The platform queues this on its own, whenever there is work for it.');
         $usage = self::usage((int)Auth::id());
         if ($usage['used'] >= $usage['limit']) {
             $wait = max(1, (int)ceil((strtotime((string)$usage['next_free_at']) - time()) / 60));
@@ -205,11 +207,7 @@ final class AiTaskController
         if ($kind === 'notation' && $sourceType === 'fact' && NotationController::hash($pid) === sha1('')) throw new HttpError(422, 'Agree on at least one notation entry first.');
         if (in_array($kind, ['review', 'lean', 'source_check'], true)) {
             if ($sourceType !== 'fact') throw new HttpError(422, 'Choose the fact to check.');
-            if (Db::value('SELECT retracted_at FROM facts WHERE id = ?', [$sourceId])) throw new HttpError(422, 'This fact is retracted.');
-            // A cited result has no proof here: an AI can only say whether its source states it, and a person accepts it.
-            $basis = FactController::graphFact($pid, (int)$sourceId)['basis'] ?? null;
-            if ($kind === 'review' && $basis === 'cited') throw new HttpError(422, 'A cited result has no proof to review. Ask the AI to check its source instead.');
-            if ($kind === 'source_check' && $basis !== 'cited') throw new HttpError(422, 'Only a result cited without proof has a source to check.');
+            self::checkFactRequest($pid, $kind, (int)$sourceId);
         }
         if ($sourceType === 'bib' && !Db::value('SELECT pdf_blob_id FROM bib_entries WHERE id = ?', [$sourceId])) throw new HttpError(422, 'This reference has no PDF.');
         if ($kind === 'ask' && $prompt === '') throw new HttpError(422, 'Write your question for the AI.');
@@ -236,6 +234,56 @@ final class AiTaskController
             }
         }
         Response::json(self::present(self::row($id)) + ['usage' => self::usage((int)Auth::id())], 201);
+    }
+
+    /** Whether a review, Lean proof or source check of this fact makes sense. */
+    private static function checkFactRequest(int $pid, string $kind, int $fid): void
+    {
+        if (Db::value('SELECT retracted_at FROM facts WHERE id = ?', [$fid])) throw new HttpError(422, 'This fact is retracted.');
+        // A cited result has no proof here: an AI can only say whether its source states it, and a person accepts it.
+        $basis = FactController::graphFact($pid, $fid)['basis'] ?? null;
+        if ($kind === 'review' && $basis === 'cited') throw new HttpError(422, 'A cited result has no proof to review. Ask the AI to check its source instead.');
+        if ($kind === 'source_check' && $basis !== 'cited') throw new HttpError(422, 'Only a result cited without proof has a source to check.');
+    }
+
+    /**
+     * Work on one object asked through an @AI instruction (src/Instructions.php), as the comment's author: the same checks as a request
+     * from the object's page, counted as one of that member's requests. $type is the subject (fact, question, strategy, document, bib,
+     * conversation). @return string what was queued, for the reply
+     */
+    public static function queueFor(int $pid, string $kind, string $type, int $id, int $by, string $note): string
+    {
+        $names = ['review' => 'Independent review', 'lean' => 'Lean proof', 'source_check' => 'Source check', 'notation' => 'Rewrite in the project notation',
+            'extract' => 'Extraction of facts', 'derive' => 'Search for new facts', 'bib' => 'Search for references'];
+        if (!isset($names[$kind])) throw new HttpError(422, 'Unknown action.');
+        $versionId = null; $blobId = null; $snapshot = null;
+        if ($type === 'fact') {
+            if ($kind === 'notation') {
+                if (NotationController::hash($pid) === sha1('')) throw new HttpError(422, 'the project has no agreed notation yet.');
+                if (Db::value('SELECT retracted_at FROM facts WHERE id = ?', [$id])) throw new HttpError(422, 'This fact is retracted.');
+            } elseif (in_array($kind, ['review', 'lean', 'source_check'], true)) self::checkFactRequest($pid, $kind, $id);
+            else throw new HttpError(422, 'Not an action on a fact.');
+        } elseif ($kind === 'extract') {
+            if ($type === 'document') $versionId = (int)Db::value('SELECT current_version_id FROM documents WHERE id = ?', [$id]) ?: null;
+            elseif ($type === 'bib') { $blobId = (int)Db::value('SELECT pdf_blob_id FROM bib_entries WHERE id = ?', [$id]) ?: null; if (!$blobId) throw new HttpError(422, 'This reference has no PDF.'); }
+            elseif ($type === 'conversation') {
+                // Every member sees facts: a private conversation's participants confirm the sharing on its page, not in a comment.
+                if (self::outsideMembers($pid, $id) > 0) throw new HttpError(422, 'this conversation is private: ask for the extraction on its page, where you confirm that its results may be shared with the project.');
+                $snapshot = self::conversationSnapshot($pid, $id, false);
+            } else throw new HttpError(422, 'Only a file, a reference or a conversation has facts to extract.');
+        } elseif ($kind === 'derive' && !in_array($type, ['question', 'strategy'], true)) throw new HttpError(422, 'A search for new facts works toward a question or a strategy.');
+        elseif ($kind === 'bib' && !in_array($type, ['question', 'strategy', 'bib'], true)) throw new HttpError(422, 'Not an action here.');
+        $usage = self::usage($by);
+        if ($usage['used'] >= $usage['limit']) throw new HttpError(429, "the member has used their {$usage['limit']} AI requests of the last 24 hours.");
+        // A reference search about a reference reads it as its subject's context; the queue knows it as a search for the project.
+        [$st, $sid] = $kind === 'bib' && $type === 'bib' ? [null, null] : [$type, $id];
+        $note = mb_substr(trim($note), 0, 4000);
+        if ($kind === 'bib' && $type === 'bib') $note = trim('Works related to the reference ' . Db::value('SELECT title FROM bib_entries WHERE id = ?', [$id]) . ". $note");
+        if (Db::value("SELECT 1 FROM ai_tasks WHERE project_id = ? AND kind = ? AND status IN ('pending', 'running') AND " . ($st === null ? 'source_type IS NULL' : 'source_type = ? AND source_id = ?') . " AND COALESCE(prompt_text, '') = ?",
+            array_merge([$pid, $kind], $st === null ? [] : [$st, $sid], [$note]))) return "{$names[$kind]}: the same request is already waiting";
+        $taskId = self::insertTask($pid, $kind, $st, $sid, $versionId, $type === 'conversation' ? $id : null, $note !== '' ? $note : null, null, $blobId, $snapshot, true);
+        Db::update('ai_tasks', ['counted' => 1, 'requested_by' => $by], 'id = :id', ['id' => $taskId]);
+        return "{$names[$kind]} queued" . ($note !== '' ? ', with your instruction' : '');
     }
 
     /** Queues every reference whose current PDF has no finished or waiting extraction. */
@@ -636,7 +684,12 @@ final class AiTaskController
         self::seen($me, $name, $model);
         $kinds = array_values(array_intersect((array)$r->input('kinds', self::kinds()), self::kinds()));
         if (!$kinds) throw new HttpError(422, 'No valid task kind.');
-        [$in, $params] = Db::in($kinds);
+        $features = (array)$r->input('features', []);
+        $caps = array_values(array_filter((array)$r->input('capabilities', []), 'is_string'));
+        // A client that follows @AI instructions takes an @AI comment as one: it is stored as a question, so that older clients answer it.
+        $instructs = in_array('instruct', $kinds, true) && in_array('procedures', $features, true) && !array_diff(Procedures::capabilities('instruct'), $caps);
+        $asks = in_array('ask', $kinds, true);
+        [$in, $params] = Db::in($instructs && !$asks ? [...$kinds, 'ask'] : $kinds);
         $project = (int)$r->input('project_id');
         // Upkeep that is due is queued now, when someone can do it.
         foreach ($project ? [$project] : array_map('intval', array_column(Db::all('SELECT project_id FROM project_members WHERE user_id = ?', [$me]), 'project_id')) as $p) {
@@ -647,12 +700,10 @@ final class AiTaskController
         // A client from before this feature would fail these tasks and use up their attempts.
         if (!in_array('extract_bib', (array)$r->input('features', []), true)) $where .= " AND (t.kind <> 'extract' OR t.source_type IS NULL OR t.source_type <> 'bib')";
         if (!in_array('extract_conversation', (array)$r->input('features', []), true)) $where .= " AND (t.kind <> 'extract' OR t.source_type IS NULL OR t.source_type <> 'conversation')";
-        $features = (array)$r->input('features', []);
         foreach (['review', 'lean'] as $newKind) if (!in_array($newKind, $features, true)) $where .= " AND t.kind <> '$newKind'";
         // A procedure goes to a client that runs recipes and has what it needs, or to one with its own code for it.
         $generic = in_array('procedures', $features, true);
         if (!$generic) $where .= " AND (t.source_type IS NULL OR t.source_type <> 'sweep')"; // a sweep is a recipe
-        $caps = array_values(array_filter((array)$r->input('capabilities', []), 'is_string'));
         foreach (Procedures::ids() as $p) {
             $byRecipe = $generic && !array_diff(Procedures::capabilities($p), $caps);
             $own = array_key_exists($p, self::BUILT_IN) && (self::BUILT_IN[$p] === null || in_array(self::BUILT_IN[$p], $features, true));
@@ -669,11 +720,13 @@ final class AiTaskController
                 array_merge([$me], $params, [$now, $now, $me], $project ? [$project] : [], $only ? [$only] : []));
             foreach ($candidates as $c) {
                 if (self::waitingFor($c)) continue; // after the tasks it depends on
+                $instruction = $c['kind'] === 'ask' && $c['source_type'] === 'comment' && $instructs && \App\Instructions::handles((string)Db::value('SELECT target_type FROM comments WHERE id = ?', [$c['source_id']]));
+                if ($c['kind'] === 'ask' && !$asks && !$instruction) continue; // a question this client did not ask for
                 if ($c['kind'] === 'extract' && $c['source_type'] === 'conversation' && ($why = self::conversationBlocked($c))) {
                     Db::run("UPDATE ai_tasks SET status = 'failed', lease_hash = NULL, lease_until = NULL, error_text = ?, finished_at = ?, updated_at = ? WHERE id = ? AND status IN ('pending', 'running')", [$why, $now, $now, $c['id']]);
                     continue;
                 }
-                $choices = array_values(array_filter(array_map(fn($x) => is_string($x) ? mb_substr($x, 0, 120) : '', (array)($perKind[$c['kind']] ?? [])))) ?: [$model];
+                $choices = array_values(array_filter(array_map(fn($x) => is_string($x) ? mb_substr($x, 0, 120) : '', (array)($perKind[$instruction ? 'instruct' : $c['kind']] ?? [])))) ?: [$model];
                 $used = $choices[0];
                 if ($c['kind'] === 'review') {
                     $used = null;
@@ -689,6 +742,7 @@ final class AiTaskController
                      WHERE id = ? AND (status = 'pending' OR (status = 'running' AND lease_until < ?))",
                     [hash('sha256', $lease), gmdate('Y-m-d H:i:s', time() + self::LEASE_SECONDS), $me, $name, $used, $now, $now, $c['id'], $now])->rowCount();
                 if ($won === 1) {
+                    if ($instruction) Db::update('ai_tasks', ['kind' => 'instruct'], 'id = :id', ['id' => $c['id']]);
                     // An older client ignores comments: its extraction must not count as having read them.
                     $reads = in_array('extract_comments', (array)$r->input('features', []), true);
                     if ($c['kind'] === 'extract') Db::update('ai_tasks', ['comments_hash' => $c['source_type'] === 'conversation' ? self::snapshotHash($c) : ($reads ? self::commentsHash(self::extractComments($c)) : null)], 'id = :id', ['id' => $c['id']]);
@@ -1126,6 +1180,7 @@ final class AiTaskController
             }
         }
         if ($t['kind'] === 'ask') self::askFacts($t, $ctx);
+        if ($t['kind'] === 'instruct' && $type === 'comment') $ctx += \App\Instructions::context($pid, $id);
         if ($type === 'question') $ctx['question'] = Db::one('SELECT id, title, statement_html AS body_html, status FROM open_questions WHERE id = ?', [$id]);
         if ($type === 'strategy') {
             $ctx['strategy'] = Db::one('SELECT id, question_id, title, status FROM proof_strategies WHERE id = ?', [$id]);
@@ -1380,7 +1435,7 @@ final class AiTaskController
     // Light work someone waits for goes before heavy background work: an @AI question before the extraction of a long paper.
 
     /** Lower runs sooner. */
-    private const PRIORITY = ['ask' => 10, 'review' => 20, 'source_check' => 30, 'bib' => 30, 'consolidate' => 40, 'notation' => 40, 'lean' => 40,
+    private const PRIORITY = ['ask' => 10, 'instruct' => 10, 'review' => 20, 'source_check' => 30, 'bib' => 30, 'consolidate' => 40, 'notation' => 40, 'lean' => 40,
         'second_reading' => 45, 'notation_settle' => 45, 'derive' => 50, 'source_sweep' => 55, 'notation_rephrase' => 60, 'rewrite_check' => 65, 'proof_review' => 68, 'extract' => 70];
     /** A member's own request goes before the same work queued by the platform. */
     private const ASKED_BOOST = 10;

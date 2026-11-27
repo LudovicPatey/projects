@@ -38,6 +38,7 @@ export function usageView(u, now = Date.now()) {
 export const SWEEP_KINDS = {
   rewrite_check: { label: 'Check rewrites in the project notation', short: 'Rewrite check', icon: 'eye', hint: 'A second AI compares each rewrite with its original. One that changes the meaning is not shown. People can overrule it.' },
   notation_settle: { label: 'Settle the project notation', short: 'Notation sweep', icon: 'book', hint: 'Decides the symbols several facts define and the project notation does not have yet: global, local to their paper, or another spelling of an entry.' },
+  instruct: { label: 'Follow an @AI instruction on a fact', short: 'Instruction', icon: 'comment', hint: 'An AI reads a member\'s @AI comment on a fact, replies in the thread, and starts what it asks: a variant, a correction, a repair, a review. Each goes through its own checks.' },
   statement_fix: { label: 'Correct statements members flagged', short: 'Correction', icon: 'edit', hint: 'An AI proposes corrected statements a member asked for, each with a proof, checking the source; or says the statement is right as it is.' },
   fix_check: { label: 'Check corrected statements', short: 'Correction check', icon: 'check-circle', hint: 'An AI of another company checks each proposed statement against the request, the source and its proof. A member then chooses which replace the fact.' },
   relink: { label: 'Check facts after a correction', short: 'Relink', icon: 'link', hint: 'An AI reads each fact that relied on a superseded fact: does its proof work with a corrected statement?' },
@@ -278,3 +279,23 @@ export const privateExtractionNotice = (outside) => `This conversation is privat
 
 /** "@AI" is offered first in the @ menu when the text typed so far can still become it. */
 export const offersAskAi = (query) => ['', 'a', 'ai'].includes(String(query).toLowerCase());
+
+/**
+ * What "@AI" in a comment can ask for on each kind of object (src/Instructions.php), for the line under the comment box. Each action
+ * goes through its own checks; a question gets an answer.
+ */
+export const AI_INSTRUCTIONS = {
+  fact: 'a variant of this fact, a correction of its statement, a repair of its proof, a review, a Lean proof, a check of its source',
+  oquestion: 'a strategy, sub-questions, a search for new facts or for references, a check of the proposed answers',
+  strategy: 'a search for new facts that develop it, or for references',
+  document: 'a new extraction of its facts, following what you say',
+  bib: 'an extraction of facts from its PDF, a search for related works',
+  notation: 'a change of this entry, proposed beside it; a rewrite of the facts in the agreed notation',
+  conversation: 'an extraction of its facts, when every member can read it',
+};
+
+/** The line under a comment box: what @AI can do on this object, and that nothing changes without its checks. */
+export function aiInstructionHint(targetType) {
+  const can = AI_INSTRUCTIONS[targetType];
+  return can ? `Write @AI to ask a question, or for ${can}. An AI replies here; what it starts goes through its usual checks.` : 'Write @AI to ask the AI: it replies here.';
+}

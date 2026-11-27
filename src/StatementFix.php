@@ -48,6 +48,36 @@ final class StatementFix
         return $id;
     }
 
+    /**
+     * A variant of the fact a member asked for in an @AI instruction (src/Instructions.php): the instructed AI already proposed it, so
+     * it goes straight to the other company's check, then to a member, and becomes a new fact beside this one, which stays.
+     * @param list<array{title: string, statement: string, proof: string, why: string}> $proposals @return int the correction
+     */
+    public static function startVariant(int $fid, int $by, string $request, array $proposals, ?string $model, mixed $seconds): int
+    {
+        $f = Db::one('SELECT * FROM facts WHERE id = ? AND deleted_at IS NULL AND retracted_at IS NULL', [$fid]);
+        if (!$f) throw new HttpError(422, 'This fact is retracted.');
+        if (Db::value("SELECT 1 FROM proof_repairs WHERE kind = 'statement' AND fact_id = ? AND state IN ('revise', 'verify', 'decide')", [$fid])) {
+            throw new HttpError(409, 'A correction or a variant of this statement is already under way.');
+        }
+        $list = [];
+        foreach (array_slice($proposals, 0, self::PROPOSALS) as $x) {
+            $st = trim((string)($x['statement'] ?? '')); $pr = trim((string)($x['proof'] ?? ''));
+            if ($st !== '' && $pr !== '') $list[] = ['title' => mb_substr(trim((string)($x['title'] ?? '')), 0, 240), 'statement' => mb_substr($st, 0, 20000), 'proof' => mb_substr($pr, 0, 60000), 'from_source' => false, 'why' => mb_substr(trim((string)($x['why'] ?? '')), 0, 2000)];
+        }
+        if (!$list) throw new HttpError(422, 'A variant needs its statement and a proof.');
+        $who = (string)Db::value('SELECT name FROM users WHERE id = ?', [$by]);
+        $now = Db::now();
+        $steps = [['step' => 'request', 'person' => $who, 'text' => mb_substr($request, 0, 4000), 'at' => $now],
+            ['step' => 'revise', 'model' => $model, 'outcome' => 'corrected', 'text' => 'Proposed from the instruction.', 'count' => count($list), 'at' => $now]];
+        $id = Db::insert('proof_repairs', ['kind' => 'statement', 'project_id' => $f['project_id'], 'fact_id' => $fid, 'revision_no' => $f['current_revision'], 'review_id' => 0,
+            'state' => 'verify', 'round' => 1, 'steps_json' => json_encode($steps), 'asked_by' => $by, 'created_at' => $now, 'updated_at' => $now,
+            'proposal_json' => json_encode(['mode' => 'variant', 'proposals' => $list, 'model' => $model, 'user' => Auth::id(), 'seconds' => $seconds])]);
+        Activity::touch((int)$f['project_id'], 'fact', $fid, 'correction', $id);
+        self::queue((int)$f['project_id'], 'verify');
+        return $id;
+    }
+
     private static function queue(int $pid, string $step): void
     {
         AiTaskController::queueSweep($pid, $step === 'revise' ? 'fix' : 'fixcheck', true);
@@ -99,7 +129,7 @@ final class StatementFix
                 array_filter(FactController::presentSources((int)$r['fact_id'], (int)$r['revision_no']), fn($s) => !$s['hidden'] && $s['covers'] !== 'context')));
             $p = json_decode((string)$r['proposal_json'], true) ?: [];
             $text = fn($h) => Sanitizer::toText((string)$h);
-            $out[] = ['correction_id' => (int)$r['id'], 'round' => (int)$r['round'], 'rounds_at_most' => self::ROUNDS, 'proposals_at_most' => self::PROPOSALS,
+            $out[] = ['correction_id' => (int)$r['id'], 'mode' => $p['mode'] ?? 'correction', 'round' => (int)$r['round'], 'rounds_at_most' => self::ROUNDS, 'proposals_at_most' => self::PROPOSALS,
                 'fact' => ['fact_id' => (int)$f['id'], 'label' => $f['label'], 'title' => $f['title'], 'kind' => $f['kind'], 'statement' => $text($f['statement_html']), 'proof' => $text($f['proof_html']),
                     'definitions' => FactController::definitions($pid, (int)$f['id'], (int)$r['revision_no']), 'sources' => $sources],
                 'dependencies' => array_map(fn($d) => ['label' => $d['label'], 'title' => $d['title'], 'statement' => $text($d['statement_html'])], $deps),
@@ -136,7 +166,7 @@ final class StatementFix
             $steps[] = ['step' => 'revise', 'model' => $model, 'outcome' => $outcome, 'text' => $text, 'count' => count($proposals), 'at' => Db::now()];
             $state = $outcome === 'impossible' ? 'gap' : 'verify';
             Db::update('proof_repairs', ['state' => $state, 'steps_json' => json_encode($steps), 'updated_at' => Db::now(),
-                'proposal_json' => json_encode(['proposals' => $outcome === 'corrected' ? $proposals : [], 'model' => $model, 'user' => Auth::id(), 'seconds' => $seconds])], 'id = :id', ['id' => $id]);
+                'proposal_json' => json_encode(['mode' => (json_decode((string)$r['proposal_json'], true) ?: [])['mode'] ?? 'correction', 'proposals' => $outcome === 'corrected' ? $proposals : [], 'model' => $model, 'user' => Auth::id(), 'seconds' => $seconds])], 'id = :id', ['id' => $id]);
             Activity::touch((int)$r['project_id'], 'fact', (int)$r['fact_id'], 'correction', $id);
             if ($state === 'verify') self::queue((int)$r['project_id'], 'verify');
             $facts[] = (int)$r['fact_id'];
@@ -214,12 +244,13 @@ final class StatementFix
         if (!$variants) throw new HttpError(422, 'Choose at least one statement.');
         usort($variants, fn($a, $b) => $b['from_source'] <=> $a['from_source']); // the source's statement first
         $request = json_decode((string)$r['steps_json'], true)[0]['text'] ?? '';
-        $ids = FactController::supersede((int)$r['fact_id'], $variants, $id, $request);
+        $variant = ($p['mode'] ?? '') === 'variant';
+        $ids = FactController::supersede((int)$r['fact_id'], $variants, $id, $request, !$variant);
         $who = (string)Db::value('SELECT name FROM users WHERE id = ?', [$by]);
         $steps = json_decode((string)$r['steps_json'], true) ?: [];
-        $steps[] = ['step' => 'decide', 'person' => $who, 'text' => count($ids) . ' new fact' . (count($ids) === 1 ? '' : 's') . ' replace this one.', 'facts' => $ids, 'at' => Db::now()];
+        $steps[] = ['step' => 'decide', 'person' => $who, 'text' => $variant ? count($ids) . ' variant' . (count($ids) === 1 ? '' : 's') . ' added beside this fact.' : count($ids) . ' new fact' . (count($ids) === 1 ? '' : 's') . ' replace this one.', 'facts' => $ids, 'at' => Db::now()];
         Db::update('proof_repairs', ['state' => 'applied', 'steps_json' => json_encode($steps), 'updated_at' => Db::now()], 'id = :id', ['id' => $id]);
-        Relink::start((int)$r['fact_id'], $ids);
+        if (!$variant) Relink::start((int)$r['fact_id'], $ids); // a variant leaves this fact, and what relies on it, as they are
         return $ids;
     }
 
@@ -233,8 +264,9 @@ final class StatementFix
         $who = (string)Db::value('SELECT name FROM users WHERE id = ?', [$by]);
         FactController::undoSupersede($id, $who);
         Relink::closeFor((int)$r['fact_id']);
+        $variant = ((json_decode((string)$r['proposal_json'], true) ?: [])['mode'] ?? '') === 'variant';
         $steps = json_decode((string)$r['steps_json'], true) ?: [];
-        $steps[] = ['step' => 'undo', 'person' => $who, 'text' => 'The new facts were retracted and this one is back.', 'at' => Db::now()];
+        $steps[] = ['step' => 'undo', 'person' => $who, 'text' => $variant ? 'The variants were retracted.' : 'The new facts were retracted and this one is back.', 'at' => Db::now()];
         Db::update('proof_repairs', ['state' => 'undone', 'steps_json' => json_encode($steps), 'updated_at' => Db::now()], 'id = :id', ['id' => $id]);
     }
 
@@ -246,7 +278,7 @@ final class StatementFix
             return ['id' => (int)$r['id'], 'state' => $r['state'], 'round' => (int)$r['round'], 'rounds' => self::ROUNDS, 'revision_no' => (int)$r['revision_no'],
                 'asked_by' => $r['asked_by'] ? (string)Db::value('SELECT name FROM users WHERE id = ?', [$r['asked_by']]) : null,
                 'proposals' => array_map(fn($x) => array_intersect_key($x, array_flip(['title', 'statement', 'proof', 'from_source', 'why', 'verdict', 'check', 'checked_by'])), $p['proposals'] ?? []),
-                'by' => $p['model'] ?? null, 'steps' => json_decode((string)$r['steps_json'], true) ?: [], 'updated_at' => $r['updated_at']];
+                'mode' => $p['mode'] ?? 'correction', 'by' => $p['model'] ?? null, 'steps' => json_decode((string)$r['steps_json'], true) ?: [], 'updated_at' => $r['updated_at']];
         }, Db::all("SELECT * FROM proof_repairs WHERE kind = 'statement' AND fact_id = ? ORDER BY id DESC LIMIT 5", [$fid]));
     }
 

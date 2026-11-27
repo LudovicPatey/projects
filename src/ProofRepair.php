@@ -45,6 +45,24 @@ final class ProofRepair
         return self::start($v, $by);
     }
 
+    /**
+     * A member's objection, written in an @AI instruction rather than in a review (src/Instructions.php), starts a repair as a review
+     * would: its text is the objection the repairing AI answers. @return int the repair, new or already running
+     */
+    public static function fromObjection(int $fid, int $by, string $text): int
+    {
+        $f = Db::one('SELECT id, project_id, current_revision FROM facts WHERE id = ? AND deleted_at IS NULL AND retracted_at IS NULL', [$fid]);
+        if (!$f) throw new HttpError(422, 'This fact is retracted.');
+        $open = Db::value("SELECT id FROM proof_repairs WHERE kind = 'proof' AND fact_id = ? AND revision_no = ? AND state IN ('repair', 'check')", [$fid, $f['current_revision']]);
+        if ($open) return (int)$open;
+        $now = Db::now();
+        $first = ['step' => 'review', 'model' => null, 'person' => (string)Db::value('SELECT name FROM users WHERE id = ?', [$by]), 'verdict' => 'gap', 'text' => mb_substr(trim($text), 0, 4000), 'at' => $now];
+        $id = Db::insert('proof_repairs', ['project_id' => $f['project_id'], 'fact_id' => $fid, 'revision_no' => $f['current_revision'], 'review_id' => 0,
+            'state' => 'repair', 'round' => 1, 'steps_json' => json_encode([$first]), 'asked_by' => $by, 'created_at' => $now, 'updated_at' => $now]);
+        self::queue((int)$f['project_id'], 'repair');
+        return $id;
+    }
+
     private static function start(array $v, ?int $by): int
     {
         $open = Db::value("SELECT id FROM proof_repairs WHERE kind = 'proof' AND fact_id = ? AND revision_no = ? AND state IN ('repair', 'check')", [$v['fact_id'], $v['revision_no']]);

@@ -3,6 +3,7 @@
 import { api } from './api.js';
 import { store, attempt } from './store.js';
 import { timeAgo, fullDate } from './util.js';
+import { aiInstructionHint } from './ai-model.js';
 
 const first = (r) => (Array.isArray(r) ? r[0] : r);
 
@@ -29,6 +30,7 @@ export const CommentsPanel = {
     },
     shown() { return this.visible.filter((t) => this.showResolved || !t.resolved || t.id === this.activeId); },
     resolvedCount() { return this.visible.filter((t) => t.resolved).length; },
+    aiHint() { return aiInstructionHint(this.targetType); },
   },
   watch: {
     targetId() { this.composing = false; this.replyTo = null; this.freshIds = []; this.lastActivity = null; this.load(); },
@@ -54,11 +56,13 @@ export const CommentsPanel = {
         <div class="t-anchor"><span class="t-anchor-label">{{ pending.label }}</span>
           <blockquote v-if="pending.anchor.quote">{{ pending.anchor.quote }}</blockquote></div>
         <rich-editor ref="newEd" compact autofocus placeholder="Comment on this passage…" @submit="create" @cancel="$emit('cancel-pending')"/>
+        <p class="ai-hint"><icon name="sparkles" :size="12"/><span>{{ aiHint }}</span></p>
         <div class="row-end"><button class="btn ghost sm" @click="$emit('cancel-pending')">Cancel</button>
           <button class="btn primary sm" :disabled="busy" @click="create">Comment</button></div>
       </div>
       <div v-else-if="composing" class="thread composing">
         <rich-editor ref="newEd" compact autofocus placeholder="General comment…" @submit="create" @cancel="composing=false"/>
+        <p class="ai-hint"><icon name="sparkles" :size="12"/><span>{{ aiHint }}</span></p>
         <div class="row-end"><button class="btn ghost sm" @click="composing=false">Cancel</button>
           <button class="btn primary sm" :disabled="busy" @click="create">Comment</button></div>
       </div>
@@ -101,6 +105,7 @@ export const CommentsPanel = {
         </div>
         <div v-if="replyTo === t.id" class="reply-box" @click.stop>
           <rich-editor ref="replyEd" compact autofocus placeholder="Reply…" @submit="reply(t)" @cancel="replyTo=null"/>
+        <p class="ai-hint"><icon name="sparkles" :size="12"/><span>{{ aiHint }}</span></p>
           <div class="row-end"><button class="btn ghost sm" @click="replyTo=null">Cancel</button>
             <button class="btn primary sm" :disabled="busy" @click="reply(t)">Reply</button></div>
         </div>

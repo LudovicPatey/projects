@@ -138,3 +138,10 @@ test('a rewrite of one fact is not called a review of the notation', () => {
   assert.equal(taskTitle({ kind: 'notation', source_type: 'fact', subject: 'Lemma 2' }), 'Rewrite in the project notation: Lemma 2');
   assert.equal(taskTitle({ kind: 'notation', source_type: null }), 'Review the notation');
 });
+
+test('the line under a comment box names what @AI can do there', async () => {
+  const { aiInstructionHint, AI_INSTRUCTIONS } = await import('../public/assets/js/ai-model.js');
+  assert.match(aiInstructionHint('fact'), /a variant of this fact/);
+  assert.match(aiInstructionHint('oquestion'), /sub-questions/);
+  assert.deepEqual(Object.keys(AI_INSTRUCTIONS).sort(), ['bib', 'conversation', 'document', 'fact', 'notation', 'oquestion', 'strategy'], 'every object a comment can be on (Instructions::ACTIONS)');
+});

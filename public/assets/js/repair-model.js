@@ -47,13 +47,23 @@ export const CORRECTION_STATE = {
   closed: { icon: 'archive', tone: 'muted', head: 'Closed', text: 'The fact changed since: this correction no longer applies.' },
 };
 
-/** One step of a correction: the request, the proposals, the checks, the decision, or the undo. */
-export function correctionStep(s) {
+/** A variant a member asked for in an @AI instruction (src/Instructions.php): the new facts join this one, which stays. */
+const VARIANT_STATE = {
+  verify: { text: 'An AI of another company checks each variant and its proof. Nothing is added yet.' },
+  decide: { text: 'Both AIs accept the variants below. Choose which to add: each becomes a new fact beside this one, marked as its variant. This fact stays as it is.' },
+  applied: { head: 'Variants added', text: 'The chosen variants are new facts, marked as variants of this one, which stays as it is.' },
+  disagree: { text: 'The rounds ran out with no variant both AIs accept. Their arguments and the last variants are below.' },
+  undone: { text: 'A member undid it: the variants were retracted.' },
+};
+
+/** One step of a correction or a variant: the request, the proposals, the checks, the decision, or the undo. */
+export function correctionStep(s, variant = false) {
   const who = s.model || s.person || 'A member';
-  if (s.step === 'request') return { icon: 'comment', tone: 'warn', who, what: 'Asked for a correction', text: s.text || '' };
-  if (s.step === 'revise') return { icon: 'edit', tone: 'ai', who, what: { corrected: `Proposed ${s.count || ''} corrected statement${s.count === 1 ? '' : 's'}`.replace('  ', ' '), keep: 'Answered that the statement is right as it is', impossible: 'Found no correct statement' }[s.outcome] || 'Answered', text: s.text || '' };
-  if (s.step === 'decide') return { icon: 'check-circle', tone: 'good', who, what: 'Chose the statements that replace this fact', text: s.text || '' };
-  if (s.step === 'undo') return { icon: 'restore', tone: 'muted', who, what: 'Undid the correction', text: s.text || '' };
+  const noun = variant ? 'variant' : 'corrected statement';
+  if (s.step === 'request') return { icon: 'comment', tone: 'warn', who, what: variant ? 'Asked for a variant' : 'Asked for a correction', text: s.text || '' };
+  if (s.step === 'revise') return { icon: 'edit', tone: 'ai', who, what: { corrected: `Proposed ${s.count || ''} ${noun}${s.count === 1 ? '' : 's'}`.replace('  ', ' '), keep: 'Answered that the statement is right as it is', impossible: variant ? 'Found no variant it could prove' : 'Found no correct statement' }[s.outcome] || 'Answered', text: s.text || '' };
+  if (s.step === 'decide') return { icon: 'check-circle', tone: 'good', who, what: variant ? 'Chose the variants to add' : 'Chose the statements that replace this fact', text: s.text || '' };
+  if (s.step === 'undo') return { icon: 'restore', tone: 'muted', who, what: variant ? 'Undid the variants' : 'Undid the correction', text: s.text || '' };
   const ok = (s.verdicts || []).filter((v) => v.verdict === 'correct').length;
   return { icon: ok ? 'check' : 'x', tone: ok ? 'good' : 'warn', who, what: s.verdicts?.length > 1 || s.verdicts?.[0]?.proposal != null ? `Checked the proposals: ${ok} of ${(s.verdicts || []).length} accepted` : `Checked it and ${VERDICT[s.verdicts?.[0]?.verdict] || 'answered'}`, text: s.text || '' };
 }
@@ -61,14 +71,18 @@ export function correctionStep(s) {
 const PROPOSAL_VERDICT = { correct: ['Accepted', 'good'], gap: ['Gap in its proof', 'warn'], incorrect: ['Rejected', 'bad'] };
 
 export function correctionView(c) {
-  const st = CORRECTION_STATE[c?.state];
+  const variant = c?.mode === 'variant';
+  const st = CORRECTION_STATE[c?.state] && { ...CORRECTION_STATE[c.state], ...(variant ? VARIANT_STATE[c.state] : {}) };
   if (!st) return null;
   const open = c.state === 'revise' || c.state === 'verify';
   const showProposals = ['verify', 'decide', 'disagree'].includes(c.state);
   return { ...st, open, waitsForMember: c.state === 'decide', round: open || c.state === 'decide' ? `Round ${c.round} of ${c.rounds}` : `${c.round} round${c.round === 1 ? '' : 's'}`, asked: c.asked_by ? `Asked by ${c.asked_by}` : null,
     proposals: showProposals ? (c.proposals || []).map((x, i) => ({ index: i, title: x.title || '', statement: x.statement, fromSource: !!x.from_source, why: x.why || '', check: x.check || '', checkedBy: x.checked_by || null,
       verdict: x.verdict ? { label: PROPOSAL_VERDICT[x.verdict][0], tone: PROPOSAL_VERDICT[x.verdict][1] } : null, accepted: x.verdict === 'correct' })) : [],
-    applied: c.state === 'applied', steps: (c.steps || []).map(correctionStep) };
+    applied: c.state === 'applied', steps: (c.steps || []).map((x) => correctionStep(x, variant)), variant,
+    title: variant ? 'Variant of the statement' : 'Correction of the statement',
+    decide: variant ? { label: 'Add as variants', hint: 'Each chosen variant becomes a new fact with its proof, marked as a variant of this one. This fact stays as it is. You can undo it.' }
+      : { label: 'Replace this fact', hint: 'Each chosen statement becomes a new fact with its proof; this fact is retracted as superseded, and the facts that relied on it are checked again by AIs. You can undo it.' } };
 }
 
 /** Where the check of a fact that relied on a superseded one stands (src/Relink.php). */

@@ -23,7 +23,8 @@ final class Procedures
     private static function defs(): array
     {
         return [
-            'ask' => ['label' => 'Answer @AI', 'description' => 'Answer a question asked to the AI in a conversation or a comment.', 'tier' => 'fast', 'capabilities' => ['document']],
+            'ask' => ['label' => 'Answer @AI', 'description' => 'Answer a question asked to the AI in a conversation. In a comment, @AI is an instruction (Follow @AI instructions).', 'tier' => 'fast', 'capabilities' => ['document']],
+            'instruct' => ['label' => 'Follow @AI instructions', 'description' => 'When a member writes @AI in a comment, read the instruction, reply in the thread with what was understood, and start what it asks among the actions possible on what the comment is on: a variant, a correction or a repair of a fact; a strategy, sub-questions or a search toward a question; a new extraction of a file; a change of a notation entry. Each goes through its own checks: another company\'s AI, and a member for any new result.', 'tier' => 'strong', 'capabilities' => ['document']],
             'notation' => ['label' => 'Project notation', 'description' => 'Propose a common notation for the project, and write facts again in it, when a member asks.', 'tier' => 'strong', 'capabilities' => []],
             'consolidate' => ['label' => 'Consolidate the facts', 'description' => 'After extractions, read the whole facts database and propose merges of duplicates, links across sources, open questions, subject tags, the cited results behind the outside references of proofs, and the project\'s notation.', 'tier' => 'strong', 'capabilities' => []],
             'rewrite_check' => ['label' => 'Check rewrites', 'description' => 'Compare each fact an AI rewrote in the project notation with its original, and say whether it states exactly the same. A rewrite found unfaithful is not shown. People can overrule the verdict.', 'tier' => 'strong', 'capabilities' => []],
@@ -46,6 +47,27 @@ Be precise and concise, separate what is proved from what is your opinion, and s
 "facts" gives the start of each fact's statement, and "cited_facts" the whole statement and proof of the facts the question cites.
 You may cite project objects as @{fact:ID}, @{question:ID} or @{bib:ID}, using only ids listed in task.json.
 Put the full answer in "reply" and one sentence in "summary".
+TXT,
+        'instruct' => <<<'TXT'
+TASK: a member wrote a comment addressed to the AI: it is the last comment of the "thread" in task.json ("quote" is the passage it
+points at, if any). "commented_on" says what the comment is on: a fact, a question ("oquestion"), a strategy, a file ("document"), a
+reference ("bib"), a notation entry or a conversation. task.json describes that object and what surrounds it: for a fact its statement,
+proof, definitions, sources, "dependencies" and "used_by"; for a question its statement, sub-questions, strategies, proposed answers and
+the project's "facts"; and so on.
+Read the instruction, and turn it into actions from "actions_allowed", and only those: they are the actions possible on this object,
+each with what it does. You cannot change anything yourself: every action goes through its own checks. Put in "actions" one entry per
+action, at most 4, with "action" (its name), "text" and "items":
+- "text" carries what the action needs in words: the member's request for a correction, the objection for a repair, what to try or
+  look for in a search, what an extraction should attend to. "" when it needs nothing.
+- "items" carries what you write for the action, when it asks for it: variants of a fact (a "title", a "statement" in the style of the
+  fact, LaTeX in $...$ with its base system first, a complete "proof" a referee would accept using only the fact, its dependencies and
+  standard results, and "why": what differs), strategies or sub-questions of a question ("title" and "statement"; "proof" is ""), a
+  changed notation entry ("title" is the symbol in LaTeX without dollars, "statement" its meaning, "why" the reason). At most 3. Never
+  propose a variant you cannot prove: say so in "reply" instead. "items" is [] for every other action.
+In "reply", address the member in a few sentences: what you understood, and what you start. The platform adds a line per action with
+what became of it. When the instruction is unclear, ambiguous, or asks for something outside "actions_allowed" (deleting or editing the
+object directly, changing other objects), start nothing: say in "reply" what you understood and what the member could write instead. A
+question with no action is answered in "reply", precisely, separating what is proved from your opinion. "summary" is one sentence.
 TXT,
         'notation_propose' => <<<'TXT'
 TASK: review the notation of the whole project, and help the team agree on it. Each fact defines its own symbols:
@@ -229,7 +251,9 @@ Answer in "corrections", one entry per item, with its "correction_id" and "outco
 A checker of another company reads each proposal against the source: propose nothing the source and the proofs do not support.
 TXT,
         'fix_check' => <<<'TXT'
-TASK: "corrections" in task.json lists corrections of statements, each between a member's request and an AI's "proposals". For each one
+TASK: "corrections" in task.json lists corrections of statements, each between a member's request and an AI's "proposals". When an item's
+"mode" is "variant", the member asked for a variant of the fact, which will be added beside it, not a correction: then "correct" means
+the statement is true, is the variant the request asks for, and its proof is complete; "from_source" plays no part. For each one
 you get the fact as it stands, its definitions, sources and dependencies, the facts that use it, the proposals (each with its "index"),
 and the "steps" so far. When "document" is in task.json, it is the source: read the passage. You are an independent referee.
 Answer in "checks", one entry per proposal, with the "correction_id", the "proposal" index and a "verdict":
@@ -382,6 +406,10 @@ TXT,
 
     private const SCHEMAS = [
         'ask' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'reply'], "properties" => ["summary" => ["type" => 'string'], "reply" => ["type" => 'string']]],
+        'instruct' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'reply', 'actions'], "properties" => ["summary" => ["type" => 'string'], "reply" => ["type" => 'string'],
+            "actions" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['action', 'text', 'items'], "properties" => [
+                "action" => ["type" => 'string', "enum" => Instructions::NAMES], "text" => ["type" => 'string'],
+                "items" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['title', 'statement', 'proof', 'why'], "properties" => ["title" => ["type" => 'string'], "statement" => ["type" => 'string'], "proof" => ["type" => 'string'], "why" => ["type" => 'string']]]]]]]]],
         'notation_propose' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'entries'], "properties" => ["summary" => ["type" => 'string'], "entries" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'meaning', 'note', 'variants', 'params', 'definition_fact_id', 'facts'], "properties" => ["symbol" => ["type" => 'string'], "params" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['name', 'type'], "properties" => ["name" => ["type" => 'string'], "type" => ["type" => 'string']]]], "meaning" => ["type" => 'string'], "note" => ["type" => ['string', 'null']], "variants" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'meaning', 'where', 'relation'], "properties" => ["symbol" => ["type" => 'string'], "meaning" => ["type" => 'string'], "where" => ["type" => 'string'], "relation" => ["type" => 'string', "enum" => ['instance', 'clash']]]]], "definition_fact_id" => ["type" => ['integer', 'null']], "facts" => ["type" => 'array', "items" => ["type" => 'integer']]]]]]],
         'notation_rephrase' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'unchanged', 'statement', 'proof', 'local_notation', 'uses', 'doubt'], "properties" => ["summary" => ["type" => 'string'], "doubt" => ["type" => 'string'], "unchanged" => ["type" => 'boolean'], "statement" => ["type" => 'string'], "proof" => ["type" => ['string', 'null']], "local_notation" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'meaning'], "properties" => ["symbol" => ["type" => 'string'], "meaning" => ["type" => 'string']]]], "uses" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'meaning_here', 'project_symbol'], "properties" => ["symbol" => ["type" => 'string'], "meaning_here" => ["type" => 'string'], "project_symbol" => ["type" => 'string']]]]]],
         'consolidate' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'suggestions'], "properties" => ["summary" => ["type" => 'string'], "suggestions" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['kind', 'fact', 'other_fact', 'new_kind', 'title', 'topics', 'ref', 'statement', 'notation', 'reason', 'confidence'], "properties" => ["kind" => ["type" => 'string', "enum" => ['same', 'depends', 'kind', 'question', 'topics', 'cite', 'progress', 'notation']], "notation" => ["type" => ['object', 'null'], "additionalProperties" => false, "required" => ['action', 'entry', 'symbol', 'meaning', 'note', 'variants', 'params'], "properties" => ["params" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['name', 'type'], "properties" => ["name" => ["type" => 'string'], "type" => ["type" => 'string']]]], "action" => ["type" => 'string', "enum" => ['adopt', 'local', 'reject']], "entry" => ["type" => ['integer', 'null']], "symbol" => ["type" => ['string', 'null']], "meaning" => ["type" => ['string', 'null']], "note" => ["type" => ['string', 'null']], "variants" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'meaning', 'where', 'relation'], "properties" => ["symbol" => ["type" => 'string'], "meaning" => ["type" => 'string'], "where" => ["type" => 'string'], "relation" => ["type" => 'string', "enum" => ['instance', 'clash']]]]]]], "ref" => ["type" => ['string', 'null']], "statement" => ["type" => ['string', 'null']], "confidence" => ["type" => 'string', "enum" => ['high', 'medium', 'low']], "fact" => ["type" => 'string'], "other_fact" => ["type" => ['string', 'null']], "new_kind" => ["type" => ['string', 'null'], "enum" => ['definition', 'lemma', 'proposition', 'theorem', 'corollary', 'conjecture', 'remark', null]], "title" => ["type" => ['string', 'null']], "topics" => ["type" => 'array', "items" => ["type" => 'string']], "reason" => ["type" => 'string']]]]]],
@@ -453,7 +481,7 @@ TXT,
         // A batch of rewrites follows the rules of one rewrite, for each fact.
         $instructions = self::INSTRUCTIONS[$v] . ($v === 'notation_rephrase_batch' ? self::INSTRUCTIONS['notation_rephrase'] : '');
         $prompt = trim((string)($t['prompt_text'] ?? ''));
-        if ($prompt !== '' && $t['kind'] !== 'ask') $instructions .= self::REQUEST_NOTE . $prompt;
+        if ($prompt !== '' && !in_array($t['kind'], ['ask', 'instruct'], true)) $instructions .= self::REQUEST_NOTE . $prompt;
         $caps = array_values(array_filter(self::capabilities($t['kind']), fn($c) => $c !== 'document' || !empty($context['document'])));
         return ['procedure' => $t['kind'], 'variant' => $v, 'version' => self::version((string)$t['kind']), 'instructions' => $instructions,
             'schema' => self::SCHEMAS[$v], 'capabilities' => $caps, 'tier' => self::defs()[$t['kind']]['tier'],
@@ -492,6 +520,8 @@ TXT,
             case 'ask':
                 if (trim((string)$answer['reply']) === '') throw new HttpError(422, 'The answer has no reply.');
                 return ['summary' => $said, 'reply_text' => (string)$answer['reply']];
+            case 'instruct':
+                return Instructions::apply($t, $answer, $model, $seconds);
             case 'notation_rephrase':
                 // Written for the revision and the notation of when it was taken: a fact edited since is not given an old rewrite.
                 $snap = json_decode((string)($t['snapshot_json'] ?? ''), true) ?: [];

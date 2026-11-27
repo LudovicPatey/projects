@@ -344,6 +344,27 @@ final class NotationController
         return $rest === '';
     }
 
+    /**
+     * A change of an entry that a member asked for in an @AI instruction: a new proposed entry beside it, which says what it would
+     * replace. Members agree on it or reject it; agreeing needs the old entry changed or rejected first, so nothing changes on its own.
+     * @return int the new entry
+     */
+    public static function proposeChange(int $pid, int $nid, string $symbol, string $meaning, string $why, ?string $model, mixed $seconds): int
+    {
+        $old = Db::one("SELECT * FROM notations WHERE id = ? AND project_id = ?", [$nid, $pid]);
+        if (!$old) throw new HttpError(422, 'This entry was deleted.');
+        $symbol = trim(preg_replace('/^\$+|\$+$/', '', $symbol) ?? '');
+        $meaning = trim($meaning);
+        if ($symbol === '' || mb_strlen($symbol) > 160 || $meaning === '' || mb_strlen($meaning) > 4000) throw new HttpError(422, 'A change needs its symbol and its meaning.');
+        if (self::key($symbol) === $old['symbol_key'] && self::sameText($meaning, Sanitizer::toText((string)$old['meaning_html']))) throw new HttpError(422, 'the proposed entry is the same as this one.');
+        $note = trim('Proposed to replace ' . $old['symbol'] . ', from a member\'s instruction. ' . $why);
+        $now = Db::now();
+        return Db::insert('notations', Provenance::stamp($model, $seconds) + ['project_id' => $pid, 'symbol' => $symbol, 'symbol_key' => self::key($symbol),
+            'meaning_html' => Sanitizer::clean(Sanitizer::textToHtml($meaning, $pid))['html'], 'note_html' => Sanitizer::clean(Sanitizer::textToHtml(mb_substr($note, 0, 4000), $pid))['html'],
+            'params_json' => $old['params_json'], 'definition_fact_id' => $old['definition_fact_id'],
+            'status' => 'proposed', 'author_id' => Auth::id(), 'author_kind' => 'agent', 'ai_model' => $model, 'created_at' => $now, 'updated_at' => $now]);
+    }
+
     /** Records another spelling of an entry, with the same meaning, as an "instance" variant. @return bool recorded */
     public static function addSpelling(int $pid, int $id, string $symbol, string $meaning, string $why): bool
     {

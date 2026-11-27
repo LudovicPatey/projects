@@ -466,6 +466,7 @@ CREATE TABLE IF NOT EXISTS fact_supersessions (
   new_fact_id INT UNSIGNED NOT NULL,
   correction_id INT UNSIGNED NULL,        -- the correction that decided it (proof_repairs, kind 'statement')
   from_source TINYINT NOT NULL DEFAULT 0, -- the statement its source states, rather than a variant
+  relation VARCHAR(10) NOT NULL DEFAULT 'supersedes', -- supersedes: the old fact is retracted; variant: a variant a member asked for, the old one stays
   created_by INT UNSIGNED NOT NULL,
   created_at DATETIME NOT NULL,
   undone_at DATETIME NULL,

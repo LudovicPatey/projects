@@ -1,7 +1,7 @@
 # Backup and restoration
 
 A backup is one `.zip` archive containing **all platform data**: every application table (projects, users,
-conversations, comments, facts, reviews, other proofs of facts and their reviews, repairs of proofs, corrections of statements and the facts they superseded, the project notation and facts rewritten in it, consolidation proposals and subject tags of facts, links from proofs to the cited results they use, AI source checks of cited results, native prover campaigns with their rounds and notes, audit keys (hashes only), questions, strategies, requests to join public projects with their motivation, feedback reports, API key hashes, read state…) and every uploaded file.
+conversations, comments, facts, reviews, other proofs of facts and their reviews, repairs of proofs, corrections of statements and the facts they superseded, variants of facts asked by members (`fact_supersessions.relation`), the project notation and facts rewritten in it, consolidation proposals and subject tags of facts, links from proofs to the cited results they use, AI source checks of cited results, native prover campaigns with their rounds and notes, audit keys (hashes only), questions, strategies, requests to join public projects with their motivation, feedback reports, API key hashes, read state…) and every uploaded file.
 Each table and file is checked by SHA-256, and each new archive is fully verified before it is kept.
 
 An archive does **not** contain `config/config.php`, which holds your database password and ORCID secret.

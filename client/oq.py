@@ -52,7 +52,7 @@ import webbrowser
 import zipfile
 import zlib
 
-VERSION = "1.22.3"
+VERSION = "1.22.4"
 API_LEVEL = 2  # raise with the server's AiTaskController::API_LEVEL when a client needs new server features
 GITHUB_REPO = "LudovicPatey/projects"
 KINDS = ["extract", "ask", "bib", "derive", "review", "lean", "notation", "consolidate"]
@@ -277,7 +277,7 @@ def new_procedures(url=None):
     return [x for x in cached_procedures(url) if x["id"] not in KINDS]
 
 
-PROCEDURES_ON = ("source_check", "rewrite_check", "second_reading", "proof_repair", "repair_check", "statement_fix", "fix_check", "relink", "relink_check")  # procedures this release knows of, on until their user turns them off
+PROCEDURES_ON = ("source_check", "rewrite_check", "second_reading", "proof_repair", "repair_check", "statement_fix", "fix_check", "relink", "relink_check", "instruct")  # procedures this release knows of, on until their user turns them off
 
 
 def procedure_on(limits, pid):
@@ -2787,8 +2787,10 @@ def build(p, env, folder):
     binary = conf.get("bin") or shutil.which("claude")
     if not binary:
         raise Refused("Claude Code is not installed")
+    # The model chosen in the client wins: a project's Danus campaign keeps the model it was created with, and would otherwise run
+    # every later search on it, whatever the member chose since.
     wanted = str(p["model"] or "")
-    model = wanted if wanted in ("fable", "opus", "sonnet", "haiku") or wanted.startswith("claude-") else conf.get("model") or "opus"
+    model = conf.get("model") or (wanted if wanted in ("fable", "opus", "sonnet", "haiku") or wanted.startswith("claude-") else "opus")
     effort = conf.get("effort") or p["effort"]
     mcp = folder / "mcp.json"
     mcp.write_text(json.dumps({"mcpServers": {"danus": {"type": "stdio", "command": p["mcp"]["command"], "args": p["mcp"].get("args") or [], "env": p["mcp"]["env"]}}}), encoding="utf-8")
@@ -3085,8 +3087,9 @@ class DanusManager:
                 self.choose_mode("native", True)
         self.save(engine=engine, error=None, login=None)
 
-    def apply_engine(self, vm):
-        """Points Danus at the chosen engine. Returns True when its services must restart."""
+    def apply_engine(self, vm, model=None):
+        """Points Danus at the chosen engine, and at `model`: the run's, else the one chosen on the Work page. Returns True when its
+        services must restart."""
         if not getattr(vm, "native", False):
             if danus_engine() == "claude":
                 raise Stop("Proving with Claude runs directly on a Mac.")
@@ -3105,7 +3108,7 @@ class DanusManager:
             binary = shutil.which("claude")
             if not binary:
                 raise Stop("Claude Code is not installed.")
-            model = load_prefs().get("danus_claude_model") or MODEL_AUTO["claude"]["derive"]
+            model = model or load_prefs().get("danus_claude_model") or MODEL_AUTO["claude"]["derive"]
             vm.tools.mkdir(parents=True, exist_ok=True)
             adapter = vm.tools / "danus-claude"
             adapter.write_text(f"#!{vm.tools / 'python3'}\n" + DANUS_CLAUDE_ADAPTER, encoding="utf-8")
@@ -3516,7 +3519,7 @@ class DanusRun:
         q = shlex.quote
         vm.start(say)
         dm.assert_isolated(vm)
-        if dm.apply_engine(vm):
+        if dm.apply_engine(vm, s.get("model") if danus_engine() == "claude" else None):
             vm.stop()  # the verifier must restart on the chosen engine
         p = dm.sh(vm, f"cd {DANUS_HOME} && bash scripts/services.sh up verify", timeout=300)
         if p.returncode != 0:

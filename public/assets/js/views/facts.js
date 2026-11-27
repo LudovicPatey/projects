@@ -362,6 +362,8 @@ export const FactsView = {
         </div>
         <p v-if="fact.worth_reading" class="fact-note t-info" :title="fact.worth_reading.model ? 'Marked by ' + fact.worth_reading.model + ', in a consolidation' : 'Marked by a member'"><icon name="eye" :size="13"/><span><b>Worth reading.</b> <math-text :text="fact.worth_reading.reason"/></span></p>
         <p v-if="fact.superseded_by?.length" class="fact-note t-info"><icon name="link" :size="13"/><span><b>Superseded by</b> <template v-for="(x, i) in fact.superseded_by" :key="x.id"><a :href="factLink(x.id)" :title="x.label + (x.from_source ? ': as its source states it' : ': a variant')"><math-text :text="x.title"/></a><template v-if="i < fact.superseded_by.length - 1">, </template></template>: its statement was wrong, and it is kept for the record.</span></p>
+        <p v-if="fact.variant_of?.length" class="fact-note"><icon name="link" :size="13"/><span>A variant of <template v-for="(x, i) in fact.variant_of" :key="x.id"><a :href="factLink(x.id)" :title="x.label"><math-text :text="x.title"/></a><template v-if="i < fact.variant_of.length - 1">, </template></template>, asked by a member.</span></p>
+        <p v-if="fact.variants?.length" class="fact-note"><icon name="link" :size="13"/><span>Variants: <template v-for="(x, i) in fact.variants" :key="x.id"><a :href="factLink(x.id)" :title="x.label"><math-text :text="x.title"/></a><template v-if="i < fact.variants.length - 1">, </template></template>.</span></p>
         <p v-if="fact.supersedes?.length" class="fact-note"><icon name="link" :size="13"/><span>Corrects <template v-for="(x, i) in fact.supersedes" :key="x.id"><a :href="factLink(x.id)" :title="x.label"><math-text :text="x.title"/></a><template v-if="i < fact.supersedes.length - 1">, </template></template>, whose statement was wrong.</span></p>
         <p v-if="fact.merged_from" class="fact-note"><icon name="layers" :size="13"/><span>{{ fact.merged_from }} was merged into this fact, as the same result.</span></p>
         <p v-else-if="mergedHere.length" class="fact-note"><icon name="layers" :size="13"/><span>{{ mergedHere.map((h) => h.other_label).join(', ') }} {{ mergedHere.length > 1 ? 'were' : 'was' }} merged into this fact, as the same result. <button class="link-btn" @click="openTab('trace')">History</button></span></p>
@@ -458,8 +460,8 @@ export const FactsView = {
         <p v-if="cited && !shownRevision" class="fact-note t-info"><icon name="book" :size="13"/><span>Proofs that use this result rely on its source. <template v-if="fact.status === 'accepted'">A member who read the source accepted it.</template><template v-else>Nobody has accepted it yet: read the source, then click <b>Accept</b>. You can also propose a proof below.</template></span></p>
         <section class="fact-sec statement"><h4>Statement</h4><rich-content :html="shown(statementHtml)" :notation="notationMarks" :fact-refs="fact.text_refs"/></section>
         <section v-if="!shownRevision && correction" class="fact-sec repair-sec">
-          <h4>Correction of the statement<span class="count">{{ correction.round }}</span><span class="grow"></span><span v-if="correction.asked" class="muted small">{{ correction.asked }}</span>
-            <button v-if="correction.applied" class="btn xs" title="Retracts the new facts and brings this one back: nothing is deleted" @click="undoCorrection"><icon name="restore" :size="12"/> Undo</button></h4>
+          <h4>{{ correction.title }}<span class="count">{{ correction.round }}</span><span class="grow"></span><span v-if="correction.asked" class="muted small">{{ correction.asked }}</span>
+            <button v-if="correction.applied" class="btn xs" :title="correction.variant ? 'Retracts the variants: this fact is not touched, and nothing is deleted' : 'Retracts the new facts and brings this one back: nothing is deleted'" @click="undoCorrection"><icon name="restore" :size="12"/> Undo</button></h4>
           <p class="repair-state" :class="'t-' + correction.tone"><icon :name="correction.icon" :size="14"/><span><b>{{ correction.head }}.</b> {{ correction.text }}</span></p>
           <div v-if="correction.proposals.length" class="proposals">
             <article v-for="x in correction.proposals" :key="x.index" class="proposal" :class="{off: !x.accepted}">
@@ -470,7 +472,7 @@ export const FactsView = {
               <math-text class="proposal-statement" :text="x.statement"/>
               <details v-if="x.why || x.check"><summary>Why</summary><math-text v-if="x.why" class="repair-why" :text="x.why"/><math-text v-if="x.check" class="repair-why" :text="'Check: ' + x.check"/></details>
             </article>
-            <div v-if="correction.waitsForMember" class="row-end"><button class="btn primary sm" :disabled="!correction.proposals.some((x) => x.accepted && isChosen(x.index))" title="Each chosen statement becomes a new fact with its proof; this fact is retracted as superseded, and the facts that relied on it are checked again by AIs. You can undo it." @click="applyCorrection">Replace this fact</button></div>
+            <div v-if="correction.waitsForMember" class="row-end"><button class="btn primary sm" :disabled="!correction.proposals.some((x) => x.accepted && isChosen(x.index))" :title="correction.decide.hint" @click="applyCorrection">{{ correction.decide.label }}</button></div>
           </div>
           <ol class="repair-steps">
             <li v-for="(x, i) in correction.steps" :key="i" :class="'t-' + x.tone"><icon :name="x.icon" :size="13"/>
@@ -735,13 +737,17 @@ export const FactsView = {
     toggleChosen(i) { const now = this.correction.proposals.filter((x) => x.accepted && this.isChosen(x.index)).map((x) => x.index); this.chosen = now.includes(i) ? now.filter((x) => x !== i) : [...now, i]; },
     async applyCorrection() {
       const chosen = this.correction.proposals.filter((x) => x.accepted && this.isChosen(x.index)).map((x) => x.index);
-      if (!confirm(`Replace this fact by ${chosen.length} new fact${chosen.length === 1 ? '' : 's'}? This fact is retracted as superseded and kept for the record, and each fact that relied on it is checked again by AIs. You can undo it.`)) return;
-      const f = await attempt(() => api.post(`api/corrections/${this.correction.id}/apply`, { chosen }), 'Replaced: the new facts are in the list, and the facts that relied on this one are being checked');
+      const n = `${chosen.length} new fact${chosen.length === 1 ? '' : 's'}`;
+      const variant = this.correction.variant;
+      if (!confirm(variant ? `Add ${n} as variants of this fact? This fact stays as it is, and the facts that rely on it are not touched. You can undo it.`
+        : `Replace this fact by ${n}? This fact is retracted as superseded and kept for the record, and each fact that relied on it is checked again by AIs. You can undo it.`)) return;
+      const f = await attempt(() => api.post(`api/corrections/${this.correction.id}/apply`, { chosen }), variant ? 'Added: the variants are in the list, linked to this fact' : 'Replaced: the new facts are in the list, and the facts that relied on this one are being checked');
       if (f) { this.chosen = null; await this.refresh(f); }
     },
     async undoCorrection() {
-      if (!confirm('Undo this correction? The new facts are retracted and this fact comes back; nothing is deleted.')) return;
-      const f = await attempt(() => api.post(`api/corrections/${this.correction.id}/undo`, {}), 'Correction undone: this fact is back');
+      const variant = this.correction.variant;
+      if (!confirm(variant ? 'Undo these variants? They are retracted; this fact is not touched, and nothing is deleted.' : 'Undo this correction? The new facts are retracted and this fact comes back; nothing is deleted.')) return;
+      const f = await attempt(() => api.post(`api/corrections/${this.correction.id}/undo`, {}), variant ? 'Variants undone: they are retracted' : 'Correction undone: this fact is back');
       if (f) await this.refresh(f);
     },
     async askRepair() {

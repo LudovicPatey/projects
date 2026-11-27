@@ -698,10 +698,11 @@ final class FactController
      * @param list<array{title: string, statement: string, proof: string, model: ?string, user: ?int, seconds: mixed, from_source: bool}> $variants
      * @return list<int> the new facts
      */
-    public static function supersede(int $oldId, array $variants, ?int $correctionId, string $why): array
+    public static function supersede(int $oldId, array $variants, ?int $correctionId, string $why, bool $retire = true): array
     {
         $f = Db::one('SELECT * FROM facts WHERE id = ? AND deleted_at IS NULL', [$oldId]);
         if (!$f || $f['retracted_at'] !== null) throw new HttpError(422, 'This fact is retracted already.');
+        $relation = $retire ? 'supersedes' : 'variant'; // a variant a member asked for adds a fact and leaves this one as it is
         $pid = (int)$f['project_id'];
         $cur = Db::one('SELECT * FROM fact_revisions WHERE fact_id = ? AND revision_no = ?', [$oldId, $f['current_revision']]);
         $deps = array_map('intval', array_column(Db::all('SELECT depends_on_id FROM fact_deps WHERE fact_id = ?', [$oldId]), 'depends_on_id'));
@@ -710,7 +711,7 @@ final class FactController
                             FROM fact_sources WHERE fact_id = ? AND revision_no = ?', [$oldId, $f['current_revision']]);
         $extra = ['glossary_json' => $cur['glossary_json'], 'external_refs_json' => $cur['external_refs_json']];
         $ids = [];
-        Db::tx(function () use ($f, $oldId, $pid, $variants, $deps, $sources, $extra, $correctionId, $why, &$ids) {
+        Db::tx(function () use ($f, $oldId, $pid, $variants, $deps, $sources, $extra, $correctionId, $why, $relation, &$ids) {
             $n = 0;
             foreach ($variants as $v) {
                 $n++;
@@ -727,15 +728,16 @@ final class FactController
                 $id = Db::insert('facts', ['project_id' => $pid, 'label' => self::label($pid, '', $f['kind'], $title, null), 'kind' => $f['kind'], 'title' => $title,
                     'origin' => $prov['origin'], 'proof_origin' => $prov['proof_origin'], 'labels_json' => $f['labels_json'], 'method' => $method, 'tool' => $f['tool'],
                     'ai_model' => $v['model'], 'topics_json' => $f['topics_json'], 'created_by' => Auth::id(), 'created_at' => $now, 'updated_at' => $now]);
-                self::insertRevision($id, 1, $content, $deps, $prov, "Supersedes {$f['label']}, whose statement was wrong: " . mb_substr($why, 0, 1000), $extra, $srcs);
+                self::insertRevision($id, 1, $content, $deps, $prov, ($relation === 'variant' ? "A variant of {$f['label']}, asked by a member: " : "Supersedes {$f['label']}, whose statement was wrong: ") . mb_substr($why, 0, 1000), $extra, $srcs);
                 self::setDeps($id, $deps);
                 self::notifyMentions($pid, $id, $content);
                 Activity::touch($pid, 'fact', $id, 'created');
                 Db::insert('fact_supersessions', ['project_id' => $pid, 'old_fact_id' => $oldId, 'new_fact_id' => $id, 'correction_id' => $correctionId,
-                    'from_source' => $v['from_source'] ? 1 : 0, 'created_by' => Auth::id(), 'created_at' => $now]);
+                    'from_source' => $v['from_source'] ? 1 : 0, 'relation' => $relation, 'created_by' => Auth::id(), 'created_at' => $now]);
                 $ids[] = $id;
             }
         });
+        if (!$retire) return $ids;
         // The reason says why; the fact's page links the new facts by their titles ("Superseded by").
         self::retractFact($f, (count($ids) === 1 ? 'Superseded by a corrected statement: ' : 'Superseded by ' . count($ids) . ' corrected statements: ') . mb_substr($why, 0, 3000));
         return $ids;
@@ -751,17 +753,23 @@ final class FactController
             if ($new && $new['retracted_at'] === null) self::retractFact($new, "The correction that made it was undone by $who: the fact it superseded is back.");
         }
         $old = (int)$rows[0]['old_fact_id'];
-        Db::update('facts', ['retracted_at' => null, 'retracted_by' => null, 'retract_reason' => null, 'updated_at' => Db::now()], 'id = :id', ['id' => $old]);
-        Activity::touch((int)$rows[0]['project_id'], 'fact', $old, 'reinstated');
+        if ($rows[0]['relation'] === 'supersedes') {
+            Db::update('facts', ['retracted_at' => null, 'retracted_by' => null, 'retract_reason' => null, 'updated_at' => Db::now()], 'id = :id', ['id' => $old]);
+            Activity::touch((int)$rows[0]['project_id'], 'fact', $old, 'reinstated');
+        }
         Db::run('UPDATE fact_supersessions SET undone_at = ? WHERE correction_id = ? AND undone_at IS NULL', [Db::now(), $correctionId]);
     }
 
-    /** What superseded a fact, and what it superseded: {superseded_by: [...], supersedes: [...]}, each {id, label, title, from_source}. */
+    /**
+     * What superseded a fact and what it superseded, and its variants and what it is a variant of: {superseded_by, supersedes, variants,
+     * variant_of}, each a list of {id, label, title, from_source, retracted}.
+     */
     public static function supersessions(int $fid): array
     {
-        $q = fn(string $mine, string $other) => array_map(fn($x) => ['id' => (int)$x['id'], 'label' => $x['label'], 'title' => $x['title'], 'from_source' => (bool)$x['from_source'], 'retracted' => $x['retracted_at'] !== null],
-            Db::all("SELECT f.id, f.label, f.title, f.retracted_at, s.from_source FROM fact_supersessions s JOIN facts f ON f.id = s.$other WHERE s.$mine = ? AND s.undone_at IS NULL ORDER BY s.from_source DESC, s.id", [$fid]));
-        return ['superseded_by' => $q('old_fact_id', 'new_fact_id'), 'supersedes' => $q('new_fact_id', 'old_fact_id')];
+        $q = fn(string $mine, string $other, string $relation) => array_map(fn($x) => ['id' => (int)$x['id'], 'label' => $x['label'], 'title' => $x['title'], 'from_source' => (bool)$x['from_source'], 'retracted' => $x['retracted_at'] !== null],
+            Db::all("SELECT f.id, f.label, f.title, f.retracted_at, s.from_source FROM fact_supersessions s JOIN facts f ON f.id = s.$other WHERE s.$mine = ? AND s.relation = ? AND s.undone_at IS NULL ORDER BY s.from_source DESC, s.id", [$fid, $relation]));
+        return ['superseded_by' => $q('old_fact_id', 'new_fact_id', 'supersedes'), 'supersedes' => $q('new_fact_id', 'old_fact_id', 'supersedes'),
+            'variants' => $q('old_fact_id', 'new_fact_id', 'variant'), 'variant_of' => $q('new_fact_id', 'old_fact_id', 'variant')];
     }
 
     public static function delete(Request $r): never
