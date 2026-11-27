@@ -115,3 +115,21 @@ test('a reviewer convinced that its review was wrong checks the fact: its review
   assert.equal(f.reviews.length, 1); assert.equal(f.reviews[0].verdict, 'correct', 'the reviewer\'s verdict replaced its gap');
   assert.equal(f.status, 'ai_checked', 'checked by another company, as it says');
 });
+
+test('the overview lists the disputed facts that wait for people, not those an AI is repairing, and counts the rest', async () => {
+  const pid = await project('Overview');
+  const id = await facts(pid, [F('a'), F('b'), F('c'), F('d'), F('e')]);
+  // Disputed by people, whose reviews start no repair: they wait for people.
+  for (const k of ['a', 'b', 'c', 'd']) await app.call(ann, 'POST', `/api/facts/${id[k]}/reviews`, { verdict: 'incorrect', statement: 'false', body_text: 'The result is false: take n = 0.' });
+  // Disputed by an AI's review that found an error: an AI repair starts at once.
+  await review(id.e, 'gpt-5.5', 'incorrect');
+  const e = await fact(id.e);
+  assert.equal(e.status, 'disputed'); assert.equal(e.repairs[0]?.state, 'repair');
+  const actions = (await app.call(ann, 'GET', `/api/projects/${pid}/dashboard`)).data.actions;
+  const named = actions.filter((x) => x.kind === 'disputed').map((x) => x.link.id);
+  assert.equal(named.length, 2, 'two by name');
+  assert.ok(!named.includes(id.e), 'not the one an AI is repairing');
+  const more = actions.find((x) => x.kind === 'disputed_more');
+  assert.equal(more.title, '2 other disputed facts no AI is repairing');
+  assert.deepEqual(more.link, { view: 'facts', query: { status: 'disputed' } });
+});

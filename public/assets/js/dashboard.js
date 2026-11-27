@@ -18,7 +18,8 @@ const ACTIONS = {
   at_risk: { icon: 'eye', tone: 'bad', label: 'Answer at risk', text: 'The fact behind this answer changed' },
   join: { icon: 'user-plus', tone: 'warn', label: 'Asks to join', text: 'Read their motivation, then accept or decline under People' },
   ratify: { icon: 'check-circle', tone: 'warn', label: 'To ratify', text: 'An answer awaits a human decision' },
-  disputed: { icon: 'x', tone: 'bad', label: 'Disputed', text: 'Settle this fact' },
+  disputed: { icon: 'x', tone: 'bad', label: 'Disputed', text: 'No AI is repairing it: settle it' },
+  disputed_more: { icon: 'x', tone: 'bad', label: 'Disputed', text: 'Opens the list of disputed facts; those an AI is repairing say so on their page' },
   ai_question: { icon: 'comment', tone: 'warn', label: 'The AI asks', text: 'A choice it could not settle from the text' },
   review: { icon: 'graph', tone: 'info', label: 'To verify', text: 'No check from you yet' },
   decide: { icon: 'users', tone: 'warn', label: 'To decide', text: 'Both AIs accept corrected statements: choose which replace this fact' },
@@ -74,7 +75,7 @@ export const ActionList = {
   props: { actions: Array },
   created() { this.meta = ACTIONS; },
   methods: { link, plainTex },
-  template: `<div class="actions"><a v-for="a in actions" :key="a.kind + a.ref" class="action" :href="link(a.link.view, a.link.id)" :title="a.code || null">
+  template: `<div class="actions"><a v-for="a in actions" :key="a.kind + a.ref" class="action" :href="link(a.link.view, a.link.id, a.link.query)" :title="a.code || null">
     <span class="action-icon" :class="'t-' + meta[a.kind].tone"><icon :name="meta[a.kind].icon" :size="15"/></span>
     <span class="action-text"><span class="action-kind" :title="a.why_title ? plainTex(a.why_title) : null">{{ meta[a.kind].label }} · {{ a.why || meta[a.kind].text }}</span><b><math-text :text="a.title"/></b></span><span class="chev" aria-hidden="true">›</span></a>
     <div v-if="!actions.length" class="d-empty"><icon name="check-circle" :size="20"/> Nothing is waiting for you.</div></div>`,

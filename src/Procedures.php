@@ -36,7 +36,7 @@ final class Procedures
             'relink' => ['label' => 'Check facts after a correction', 'description' => 'When a fact is superseded by corrected statements, an AI reads each fact that relied on it: does its proof work with a corrected statement, or did it need the old one?', 'tier' => 'strong', 'capabilities' => [], 'independent' => true],
             'relink_check' => ['label' => 'Check those answers', 'description' => 'An AI of another company checks each answer. Agreed, the fact relies on the corrected statement, its text unchanged; or a review records the gap, which starts a repair of its proof.', 'tier' => 'strong', 'capabilities' => [], 'independent' => true],
             'second_reading' => ['label' => 'Second reading', 'description' => 'Read again the consolidation\'s proposals it was not sure enough to apply, and apply or drop each one, so that people decide only what needs them. Everything can be undone.', 'tier' => 'strong', 'capabilities' => []],
-            'source_check' => ['label' => 'Check a cited result', 'description' => 'Read the source of a result cited without proof, and say whether it states the result as written. People still accept it.', 'tier' => 'fast', 'capabilities' => ['document', 'web_search']],
+            'source_check' => ['label' => 'Check a cited result', 'description' => 'Read the source of a result cited without proof, and say whether it states the result as written. People still accept it.', 'tier' => 'strong', 'capabilities' => ['document', 'web_search']],
         ];
     }
 

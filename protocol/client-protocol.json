@@ -1,7 +1,7 @@
 {
  "min_version": "1.0.0",
- "client_version": "1.22.9",
- "fingerprint": "8cfafa60fa125d6be9f099003117aa16a27b4c1a5594cc4b14f865af48ae5390",
+ "client_version": "1.22.10",
+ "fingerprint": "18bc203e049e6c0bb1c261a2286992c6978f119ca0370348f95fff92c4b4ff56",
  "routes": [
   "GET /api/ai/procedures AiTaskController::procedures",
   "GET /api/bib/{id}/pdf BibController::pdf",
@@ -441,7 +441,7 @@
   "Procedures::SCHEMAS": "f158d7b7be5b00cd029b6dc8f845ab21d92b2939d0b81d70b913a83226df49d9",
   "Procedures::apply": "12951c4e0672872b0c2c8db6e2585199d23de2a52a2dcef367418e2524309920",
   "Procedures::capabilities": "0cd0fd2bbacd82074d877b676192b2e11c0b127be10e089ebd2c1de62a47729e",
-  "Procedures::defs": "a2f8cb61474b9475b26a96a50e85597e07ce2f85e82cfea30be2aafadc9d6a86",
+  "Procedures::defs": "93227ae4016b43f38e20a8fca7c371d2c2c47f377b243d61563023b31cb7b4c8",
   "Procedures::has": "203dad6c3384cffbdd266434aa8286ddabbcbbed33b7a514a2bd53f87a93ef5d",
   "Procedures::ids": "32ebb86ef9b9aa387c5021d813c1a40a06409b331d8b9c4badeb5ac4115d82b3",
   "Procedures::list": "efac72852dccd84d345784b36a1763d4b83b4ac38e5eddcd1f530b8ff22e68e2",
@@ -1981,6 +1981,16 @@
     "FactController::replaceDependency",
     "Relink::context",
     "+FactController::acceptedOtherProof"
+   ]
+  },
+  {
+   "date": "2026-11-27",
+   "decision": "compatible",
+   "client_version": "1.22.10",
+   "min_version": "1.0.0",
+   "note": "Source checks run on the strong tier and the overview lists fewer disputed facts: clients run recipes as before.",
+   "changed": [
+    "Procedures::defs"
    ]
   }
  ]

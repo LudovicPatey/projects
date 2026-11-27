@@ -145,12 +145,21 @@ final class DashboardController
         foreach (Db::all("SELECT f.id, f.title, f.label FROM proof_repairs r JOIN facts f ON f.id = r.fact_id AND f.deleted_at IS NULL AND f.retracted_at IS NULL WHERE r.project_id = ? AND r.kind = 'statement' AND r.state = 'decide' ORDER BY r.id LIMIT 3", [$pid]) as $c) {
             $out[] = ['kind' => 'decide', 'ref' => 'fact:' . $c['id'], 'title' => $c['title'], 'code' => $c['label'], 'link' => ['view' => 'facts', 'id' => (int)$c['id']]];
         }
-        foreach ($facts as $f) {
-            if ($f['status'] === 'disputed') $out[] = ['kind' => 'disputed', 'ref' => 'fact:' . $f['id'], 'title' => $f['title'], 'code' => $f['label'], 'link' => ['view' => 'facts', 'id' => $f['id']]];
-        }
         // Questions an AI asked people: a choice it could not settle from the text. Two at most, the latest first.
         foreach (array_slice(FactController::aiQuestions($pid), 0, 2) as $q) {
             $out[] = ['kind' => 'ai_question', 'ref' => 'fact:' . $q['fact_id'], 'title' => $q['title'], 'code' => $q['label'], 'link' => ['view' => 'facts', 'id' => $q['fact_id']]];
+        }
+        // Disputed facts that wait for people: not those an AI is repairing or correcting, which say so on their page. Two by name,
+        // and the rest as one line that opens the list, so that they never crowd out the other things to do.
+        $busy = array_flip(array_map('intval', array_column(Db::all("SELECT r.fact_id FROM proof_repairs r JOIN facts f ON f.id = r.fact_id AND f.current_revision = r.revision_no
+            WHERE r.project_id = ? AND ((r.kind = 'proof' AND r.state IN ('repair', 'check')) OR (r.kind = 'statement' AND r.state IN ('revise', 'verify')))", [$pid]), 'fact_id')));
+        $disputed = array_values(array_filter($facts, fn($f) => $f['status'] === 'disputed' && !isset($busy[(int)$f['id']])));
+        foreach (array_slice($disputed, 0, 2) as $f) {
+            $out[] = ['kind' => 'disputed', 'ref' => 'fact:' . $f['id'], 'title' => $f['title'], 'code' => $f['label'], 'link' => ['view' => 'facts', 'id' => $f['id']]];
+        }
+        if (count($disputed) > 2) {
+            $more = count($disputed) - 2;
+            $out[] = ['kind' => 'disputed_more', 'ref' => 'facts:disputed', 'title' => "$more other disputed fact" . ($more === 1 ? '' : 's') . ' no AI is repairing', 'link' => ['view' => 'facts', 'query' => ['status' => 'disputed']]];
         }
         $reviewed = array_flip(array_map('intval', array_column(Db::all(
             "SELECT v.fact_id FROM fact_reviews v JOIN facts f ON f.id = v.fact_id AND v.revision_no = f.current_revision
@@ -173,7 +182,7 @@ final class DashboardController
                 break;
             }
         }
-        return array_slice($out, 0, 7);
+        return array_slice($out, 0, 8);
     }
 
     /**

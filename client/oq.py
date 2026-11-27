@@ -52,7 +52,7 @@ import webbrowser
 import zipfile
 import zlib
 
-VERSION = "1.22.9"
+VERSION = "1.22.10"
 API_LEVEL = 2  # raise with the server's AiTaskController::API_LEVEL when a client needs new server features
 GITHUB_REPO = "LudovicPatey/projects"
 KINDS = ["extract", "ask", "bib", "derive", "review", "lean", "notation", "consolidate"]
@@ -803,13 +803,25 @@ def run_ai(provider, prompt, schema, workdir, model, web, timeout):
             answer = parse_json(outer.get("result") or "")
         usage = list((outer.get("modelUsage") or {}).keys())
         # What actually ran: a requested alias such as "sonnet" must not be recorded as the model.
-        used = max(usage, key=lambda k: (outer["modelUsage"][k] or {}).get("outputTokens", 0)) if usage else used
+        used = model_that_ran(model, outer.get("modelUsage") or {}) or used
     else:
         if not out_path.exists():
             raise RuntimeError("Codex did not write an answer.")
         answer = parse_json(out_path.read_text(encoding="utf-8"))
         used = used or codex_default_model()
     return answer, used or f"{provider} (default model)", seconds
+
+
+def model_that_ran(requested, usage):
+    """The model Claude Code ran for a request: the requested one when it appears in its usage, as an alias ("sonnet" in
+    claude-sonnet-5-5) or a full id. Claude Code also runs a small model of its own (Haiku, to read web pages), which can write
+    more tokens than the model doing the work: taken by its tokens alone, it was recorded as the author, and as what "sonnet" means."""
+    if not usage:
+        return None
+    want = str(requested or "").lower()
+    match = [k for k in usage if want and (k.lower() == want or (want in MODEL_ALIASES and f"-{want}-" in f"-{k.lower()}-"))]
+    pool = match or list(usage)
+    return max(pool, key=lambda k: (usage[k] or {}).get("outputTokens", 0))
 
 
 def count_tokens(provider, stdout):
@@ -2046,12 +2058,19 @@ def next_clock(text, now):
     return base + 86400 if base <= now else base
 
 
-LIMIT_TEXT = re.compile(r"hit your [\w ]*limit|usage limit (?:reached|exceeded)|rate.?limit(?:ed| reached| exceeded)|quota exceeded|insufficient_quota", re.I)
+# Claude Code's own error is JSON: "api_error_status":429,"api_error_type":"rate_limit_error". Read as a failure, it used up the
+# task's attempts and failed it for good, instead of holding the work until the limit resets.
+LIMIT_TEXT = re.compile(r"hit your [\w ]*limit|usage limit (?:reached|exceeded)|rate.?limit(?:ed| reached| exceeded|_error)|quota exceeded|insufficient_quota|"
+                        r"\"api_error_status\":\s*429|\b429 too many requests", re.I)
+# An overloaded service (529) is not a limit of the subscription: the work waits a few minutes and takes the task again.
+BUSY_TEXT = re.compile(r"overloaded_error|\"api_error_status\":\s*529|\b529\b[^\n]{0,40}overloaded", re.I)
 
 
 def check_limit_text(text):
     if text and LIMIT_TEXT.search(text):
         raise LimitReached("Your AI subscription reports that its limit is reached.", next_clock(text, time.time()))
+    if text and BUSY_TEXT.search(text):
+        raise LimitReached("The AI service is overloaded: the work resumes in a few minutes.", time.time() + 600)
 
 
 class UsageReader:
@@ -2985,7 +3004,8 @@ def main(argv):
             kind = re.search(r"Details: `\[?([a-z_]+)", said)
             error = said.strip().split("\n")[0][:300] + (f" (category: {kind.group(1)})" if kind else "") if kind else said[:400]
             report(role=p["mcp"]["env"].get("DANUS_ROLE") or "", failed=failed, error=error if failed else "",
-                   model=max(usage, key=lambda k: (usage[k] or {}).get("outputTokens", 0)) if usage else None,
+                   # The model asked for, not Claude Code's own helper model (Haiku, reading web pages), which may write more.
+                   model=max([k for k in usage if k == model or f"-{model}-" in f"-{k}-"] or list(usage), key=lambda k: (usage[k] or {}).get("outputTokens", 0)) if usage else None,
                    tokens=sum(int((m or {}).get(k) or 0) for m in usage.values() for k in ("inputTokens", "outputTokens", "cacheCreationInputTokens")))
     except Refused as e:
         print(f"[danus-claude-adapter] refused: {e}", file=sys.stderr)

@@ -800,6 +800,8 @@ export const FactsView = {
       this.activeThread = this.query?.comment ? +this.query.comment : null;
       this.revView = null; this.backlinks = []; this.trace = null;
       if (['content', 'reviews', 'lean', 'links', 'trace'].includes(this.query?.tab)) this.tab = this.query.tab;
+      // A link may open the list filtered, such as the overview's "disputed facts": ?status=disputed.
+      if (!this.id && this.query?.status) { this.clearFilters(); this.fStatus = String(this.query.status); this.showFilters = true; }
       if (this.id) this.loadFact(); else { this.fact = null; this.factError = null; }
     },
     async loadFact() {

@@ -52,3 +52,29 @@ test('your own caps hold both AIs; without a limit, everything is claimed as bef
   assert.ok(free.kinds.includes('extract') && free.kinds.includes('review'));
   assert.equal(free.ai_model, 'claude');
 });
+
+test('a rate limit or an overloaded service holds the work instead of failing the task', () => {
+  const out = spawnSync('python3', ['-c', `
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("oq", sys.argv[1]); oq = importlib.util.module_from_spec(spec); spec.loader.exec_module(oq)
+def kind(text):
+    try: oq.check_limit_text(text); return None
+    except oq.LimitReached as e: return str(e)
+live = 'e,"num_turns":1,"subtype":"success","api_error_status":429,"api_error_type":"rate_limit_error","api_error_origin":"first_party","a'
+print(json.dumps([kind(live), kind('{"api_error_status":529,"api_error_type":"overloaded_error"}'), kind("Claude stopped: the proof has a gap at step 2")]))
+`, CLIENT], { encoding: 'utf8' });
+  const [limit, busy, other] = JSON.parse(out.stdout || '[]');
+  assert.match(limit || '', /limit is reached/, out.stderr);
+  assert.match(busy || '', /overloaded/);
+  assert.equal(other, null, 'an ordinary error still fails the task');
+});
+
+test('the model recorded is the one asked for, not Claude Code\'s helper that read the web pages', () => {
+  const out = spawnSync('python3', ['-c', `
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("oq", sys.argv[1]); oq = importlib.util.module_from_spec(spec); spec.loader.exec_module(oq)
+usage = {"claude-sonnet-5-5": {"outputTokens": 900}, "claude-haiku-5-5": {"outputTokens": 4000}}
+print(json.dumps([oq.model_that_ran("sonnet", usage), oq.model_that_ran("claude-sonnet-5-5", usage), oq.model_that_ran("opus", usage), oq.model_that_ran("sonnet", {})]))
+`, CLIENT], { encoding: 'utf8' });
+  assert.deepEqual(JSON.parse(out.stdout || '[]'), ['claude-sonnet-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5', null], out.stderr);
+});
