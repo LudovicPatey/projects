@@ -52,7 +52,7 @@ import webbrowser
 import zipfile
 import zlib
 
-VERSION = "1.22.8"
+VERSION = "1.22.9"
 API_LEVEL = 2  # raise with the server's AiTaskController::API_LEVEL when a client needs new server features
 GITHUB_REPO = "LudovicPatey/projects"
 KINDS = ["extract", "ask", "bib", "derive", "review", "lean", "notation", "consolidate"]
@@ -904,6 +904,9 @@ Each fact must be readable alone: in "local_notation", define every symbol it us
 with its meaning in this fact, and every term the source defines, such as "left match": each fact is reviewed alone. Do not repeat the project's symbols there.
 Skip results already listed in task.json under "facts". For each result give an EXACT short "quote" copied from the document,
 its "page" when known, and "covers": "statement", "proof" or "both". Fill "proof" only when the document contains the proof.
+A proof must be complete as written: when it relies on claims the document proves inside it ("Claim 3.5"), write their proofs
+in it, or extract each claim as a fact of its own, with its proof, and list its ref in "depends_on". Never leave a claim asserted
+without its proof, nor a construction "defined by induction" without its rule: each fact is reviewed alone.
 Copy the base system and every hypothesis of a result exactly as the document states them: $\\mathsf{RCA}$ is not $\\mathsf{RCA}_0$
 (it allows full induction), $\\mathsf{RCA}_0$ is not $\\mathsf{ACA}_0$, and a base system in parentheses, as in "($\\mathsf{RCA}$) Every IP set...",
 belongs to the statement and to its "quote". A base system that the document sets for a section or the whole paper counts as stated. When the document
@@ -1429,8 +1432,13 @@ def work_once(api, opts, name, stop=None):
     """Processes one task. Returns False when nothing may or can be done now."""
     allowed, reason, retry, limits = guard(opts.provider)
     opts.hold = None if allowed else (reason, retry)
-    if not allowed:
+    other = None if allowed else other_tool(opts.provider)
+    if not allowed and not other:
         return False
+    if other:
+        # The main AI is at its limit: the other one keeps doing what it can do alone, independent reviews and checks.
+        opts.__dict__.setdefault("tool_hold", {})[opts.provider] = retry or time.time() + 1800
+        opts.hold = (f"{reason} Meanwhile {TOOL_NAMES.get(other, other)} keeps doing the independent reviews and checks.", retry)
     kinds = [k for k in opts.kinds if k in KINDS and k in limits["kinds"] and (k != "lean" or lean_conf())]
     try:
         extra = refresh_procedures(api)
@@ -1448,8 +1456,16 @@ def work_once(api, opts, name, stop=None):
     for x in extra:
         if x.get("independent") and x["id"] in kinds:
             models[x["id"]] = review_models(opts)
-    body = {"kinds": kinds, "client_name": name, "ai_model": opts.model or opts.provider, "models": models, "features": ["extract_bib", "extract_comments", "extract_conversation", "review", "lean", "notation", "consolidate", "procedures"], "capabilities": list(CAPABILITIES)}
+    if other:
+        alone = {"review"} | {x["id"] for x in extra if x.get("independent")}
+        models = {k: [m for m in v if tool_of(m) == other] for k, v in models.items() if k in alone and isinstance(v, list)}
+        kinds = [k for k in kinds if models.get(k)]
+        if not kinds:
+            return False
+    body = {"kinds": kinds, "client_name": name, "ai_model": (models[kinds[0]][0] if other else opts.model or opts.provider), "models": models, "features": ["extract_bib", "extract_comments", "extract_conversation", "review", "lean", "notation", "consolidate", "procedures"], "capabilities": list(CAPABILITIES)}
+    meanwhile = opts.hold if other else None
     task, opts.hold = claim_task(api, opts, body)
+    opts.hold = opts.hold or meanwhile
     if not task:
         return False
     Ledger().add(tasks=1)
@@ -1468,7 +1484,7 @@ def work_once(api, opts, name, stop=None):
         say(f"          {e.tool} is at its limit, so another model is tried.")
         safe_release(api, url, task)
     except LimitReached as e:
-        Ledger().block(str(e), e.until)
+        Ledger().block(str(e), e.until, tool_of(task.get("ai_model") or "") if task.get("ai_model") else opts.provider)
         opts.hold = (str(e), e.until)
         say(f"          on hold: {e}")
         safe_release(api, url, task)
@@ -2008,10 +2024,10 @@ class Ledger:
             d["tokens"] += int(tokens or 0)
             self.write(d)
 
-    def block(self, reason, until):
+    def block(self, reason, until, tool=None):
         with self.lock:
             d = self.read()
-            d.update(blocked_until=until, blocked_reason=reason)
+            d.update(blocked_until=until, blocked_reason=reason, blocked_tool=tool)
             self.write(d)
 
 
@@ -2156,7 +2172,31 @@ def guard(provider):
     problem = billing_problem(provider, limits)
     if problem:
         return False, problem, time.time() + 300, limits
-    return evaluate_limits(limits, Ledger().read(), UsageReader.read(provider), time.localtime().tm_hour) + (limits,)
+    return evaluate_limits(limits, day_for(Ledger().read(), provider), UsageReader.read(provider), time.localtime().tm_hour) + (limits,)
+
+
+TOOL_NAMES = {"claude": "Claude", "codex": "ChatGPT"}
+
+
+def day_for(day, tool):
+    """The day as one AI sees it: a subscription limit another AI reported does not hold this one."""
+    if day.get("blocked_tool") and day["blocked_tool"] != tool:
+        return {**day, "blocked_until": 0}
+    return day
+
+
+def other_tool(provider):
+    """When the main AI is at its own limit (its subscription, or its usage caps), the other AI signed in on this computer, if
+    its own limits allow work. Your daily caps, hours and pauses hold both. None otherwise."""
+    limits = load_limits()
+    day = Ledger().read()
+    hour = time.localtime().tm_hour
+    if not evaluate_limits(limits, {**day, "blocked_until": 0}, None, hour)[0]:
+        return None  # held by your own caps, hours or a pause: not by the AI
+    for tool in ("claude", "codex"):
+        if tool != provider and shutil.which(tool) and tool_signed_in(tool) and guard(tool)[0]:
+            return tool
+    return None
 
 
 # ----- Danus, managed in an isolated Linux machine -----
@@ -4662,10 +4702,17 @@ class Service:
         windows = UsageReader.read(provider) if provider else None
         limits = load_limits()
         day = Ledger().read()
-        allowed, reason, retry = evaluate_limits(limits, day, windows, time.localtime().tm_hour)
+        allowed, reason, retry = evaluate_limits(limits, day_for(day, provider), windows, time.localtime().tm_hour) if provider else evaluate_limits(limits, day, windows, time.localtime().tm_hour)
         problem = billing_problem(provider, limits)
         if problem:
             allowed, reason, retry = False, problem, time.time() + 300
+        elif not allowed and provider:
+            # Held by this AI's own limit: the other one signed in here keeps doing the independent reviews and checks.
+            if evaluate_limits(limits, {**day, "blocked_until": 0}, None, time.localtime().tm_hour)[0]:
+                for tool in ("claude", "codex"):
+                    if tool != provider and tools.get(tool, {}).get("signed_in") and guard(tool)[0]:
+                        reason = f"{reason} Meanwhile {TOOL_NAMES[tool]} keeps doing the independent reviews and checks."
+                        break
         projects, error = [], None
         cached = getattr(self, "projects_cache", None)
         if cached and cached[0] == cfg.get("key") and time.time() - cached[1] < 15:
@@ -4695,7 +4742,7 @@ class Service:
         dm = DanusManager()
         procedures = [{**x, "on": procedure_on(limits, x["id"]), "default_on": x["id"] in PROCEDURES_ON} for x in new_procedures(cfg.get("url"))] if cfg.get("url") else []
         return {"procedures": procedures, "lean": lean_public(), "models": models_public(), "backup": backup_public(projects), "update": read_update(), "danus_run": DanusRun().public(), "version": VERSION, "connected": bool(cfg.get("key")) and not error, "url": cfg.get("url", ""), "error": error, "projects": projects, "tools": tools, "provider": provider,
-                "running": self.running(), "allowed": allowed, "reason": reason, "retry_at": retry, "limits": limits, "day": day, "windows": windows,
+                "running": self.running(), "stopping": self.running() and self.stop_flag.is_set(), "allowed": allowed, "reason": reason, "retry_at": retry, "limits": limits, "day": day, "windows": windows,
                 "log": list(self.log)[-60:], "jobs": self.jobs, "danus": {**dm.state(), "engine": danus_engine(), "mode": danus_mode(), "can_native": sys.platform == "darwin", "isolated_installed": sys.platform == "darwin" and danus_mode() == "native" and LimaVm().exists(), "unavailable": dm.unavailable_reason()}}
 
 
@@ -5884,6 +5931,7 @@ const load=async()=>{try{const r=await fetch('/api/state',{headers:{'X-OQ-Token'
 const when=t=>{if(!t)return'';const d=new Date(t*1000);return d.toDateString()===new Date().toDateString()?d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}):d.toLocaleString([],{weekday:'short',hour:'2-digit',minute:'2-digit'})};
 const meter=(l,v,max,txt,cap)=>{const p=max?Math.min(100,100*v/max):0;return`<div class=meter><header><b>${e(l)}</b><small>${e(txt)}</small></header><div class=bar role=img aria-label="${e(l)}: ${e(txt)}"><i class="${p>=100?'high':''}" style="width:${p}%"></i>${cap!=null?`<u style="left:${cap}%"></u>`:''}</div></div>`};
 const hero=()=>{if(!S.connected)return`<section class="panel hero hold"><span class=dot></span><div><b>Connect your account</b><span>Three short steps, no command needed.</span></div><button class="btn primary" data-go=account>Set up</button></section>`;
+ if(S.running&&S.stopping)return`<section class="panel hero hold" aria-live=polite><span class=dot></span><div><b>Stopping</b><span>The task under way finishes first, so that its work is not lost. The client takes no new task, and stops as soon as it is done.</span></div><button class=btn disabled title="Stop was pressed: the client stops after the task under way">Stopping…</button></section>`;
  if(S.running&&S.allowed)return`<section class="panel hero on"><span class=dot></span><div><b>Working for your projects</b><span>Using ${e(toolName(S.provider))}. Your limits are checked before each task.</span></div><button class=btn data-a=stop>Stop</button></section>`;
  if(S.running)return`<section class="panel hero hold"><span class=dot></span><div><b>On hold</b><span>${e(S.reason)}${S.retry_at?' Resumes around '+e(when(S.retry_at))+'.':''}</span></div><button class=btn data-a=stop>Stop</button></section>`;
  return`<section class="panel hero"><span class=dot></span><div><b>Not running</b><span>Your AI account is not being used.</span></div><button class="btn primary" data-a=start ${S.provider?'':'disabled'}>Start</button></section>`};
@@ -5949,7 +5997,7 @@ const backup=()=>{const b=S.backup,s=b.settings,j=S.jobs.backup;BD=BD||{...s};co
 // The page is drawn again every few seconds: a section the user opened stays open (each details element with data-keep is remembered).
 const OPEN=new Set();document.addEventListener('toggle',ev=>{const d=ev.target;if(d?.dataset?.keep){if(d.open)OPEN.add(d.dataset.keep);else OPEN.delete(d.dataset.keep)}},true);
 const render=()=>{if(pressing)return;const a=document.activeElement;if(a&&['INPUT','SELECT','TEXTAREA'].includes(a.tagName)&&view!=='home')return;for(const b of document.querySelectorAll('nav button')){b.classList.toggle('on',b.dataset.v===view);b.setAttribute('aria-current',b.dataset.v===view?'page':'false')}document.getElementById('ver').innerHTML=versionBox();const m=document.getElementById('m');const sc=m.querySelector('.log')?.scrollTop;m.innerHTML=(msg?`<div class=err role=alert>${e(msg)}</div>`:'')+{home,work,limits,danus,backup,account}[view]();if(sc)m.querySelector('.log').scrollTop=sc};
-document.addEventListener('click',ev=>{const b=ev.target.closest('button');if(!b)return;if(b.dataset.v||b.dataset.go){if(['work','limits'].includes(view)&&dirty()&&!confirm('Discard your unsaved changes?'))return;view=b.dataset.v||b.dataset.go;history.replaceState(null,'','#'+view);msg='';draft={...S.limits};MD=null;MO={};BD=null;return render()}if(b.dataset.pswitch){const q=S.projects.find(p=>p.id===+b.dataset.pswitch);return call('/api/project/pause',{project_id:q.id,paused:!q.paused})}if(b.dataset.tool)return call('/api/tool/'+b.dataset.tool,{tool:b.dataset.n});if(b.dataset.use)return call('/api/limits',{}).then(()=>call('/api/start',{provider:b.dataset.use}));const x=b.dataset.a;if(x==='start')call('/api/start',{provider:S.provider});if(x==='stop')call('/api/stop');if(x==='disconnect'&&confirm('Disconnect this computer?'))call('/api/disconnect');if(x==='connect'&&!connecting){CF={url:document.getElementById('url').value,key:document.getElementById('key').value};connecting=true;connectErr='';render();call('/api/connect',CF).then(()=>{connecting=false;if(msg){connectErr=msg;msg=''}else{CF={};connectErr=''}render();document.getElementById('cerr')?.scrollIntoView({block:'center'})})}if(x==='save')saveAll();if(x==='discard'){draft={...S.limits};MD=null;MO={};render()}if(x==='updatecheck'){checking=true;render();call('/api/update/check').finally(()=>{checking=false;render()})}if(x==='updateapply'&&confirm('Install version '+S.update.latest+' now? The client restarts.')){updating=true;render();call('/api/update/apply').finally(()=>{setTimeout(()=>{updating=false;load()},2500)})}if(x==='backupnow')call('/api/backup/run');if(x==='backupopen')call('/api/backup/open');if(x==='backupsave'){document.activeElement?.blur();call('/api/backup/settings',BD).then(()=>{if(!msg){BD=null;render()}})}if(x==='danus')call('/api/danus/setup');if(x==='danusmode'){const m=S.danus.mode==='native'?'isolated':'native';if(m==='isolated'||confirm(NATIVE_WARNING))call('/api/danus/mode',{mode:m,accept:m==='native'})}if(x==='danusremoveiso'&&confirm('Remove the isolated machine and free its disk space?'))call('/api/danus/remove',{mode:'isolated'});if(x==='danusstop'&&confirm('Stop the proof search now? Its facts so far are kept.'))call('/api/danus/stop');if(x==='danusrun'){document.activeElement?.blur();const g=R.goal||'',b={project_id:R.project_id,prompt:R.prompt,minutes:R.minutes,stop_session:R.stop_session,stop_weekly:R.stop_weekly,on_limit:R.on_limit,workers:R.workers,task_id:g[0]==='t'?+g.slice(1):null,question_id:g[0]==='q'?+g.slice(1):null};if(R.on_limit==='resume'&&!R.minutes&&!confirm('This run continues after every reset until you stop it. Start it?'))return;call('/api/danus/run',b).then(()=>{if(!msg)O={}})}if(x==='danusremove'&&confirm('Remove the prover and its isolated machine?'))call('/api/danus/remove')});
+document.addEventListener('click',ev=>{const b=ev.target.closest('button');if(!b)return;if(b.dataset.v||b.dataset.go){if(['work','limits'].includes(view)&&dirty()&&!confirm('Discard your unsaved changes?'))return;view=b.dataset.v||b.dataset.go;history.replaceState(null,'','#'+view);msg='';draft={...S.limits};MD=null;MO={};BD=null;return render()}if(b.dataset.pswitch){const q=S.projects.find(p=>p.id===+b.dataset.pswitch);return call('/api/project/pause',{project_id:q.id,paused:!q.paused})}if(b.dataset.tool)return call('/api/tool/'+b.dataset.tool,{tool:b.dataset.n});if(b.dataset.use)return call('/api/limits',{}).then(()=>call('/api/start',{provider:b.dataset.use}));const x=b.dataset.a;if(x==='start')call('/api/start',{provider:S.provider});if(x==='stop'){S.stopping=true;render();call('/api/stop')}if(x==='disconnect'&&confirm('Disconnect this computer?'))call('/api/disconnect');if(x==='connect'&&!connecting){CF={url:document.getElementById('url').value,key:document.getElementById('key').value};connecting=true;connectErr='';render();call('/api/connect',CF).then(()=>{connecting=false;if(msg){connectErr=msg;msg=''}else{CF={};connectErr=''}render();document.getElementById('cerr')?.scrollIntoView({block:'center'})})}if(x==='save')saveAll();if(x==='discard'){draft={...S.limits};MD=null;MO={};render()}if(x==='updatecheck'){checking=true;render();call('/api/update/check').finally(()=>{checking=false;render()})}if(x==='updateapply'&&confirm('Install version '+S.update.latest+' now? The client restarts.')){updating=true;render();call('/api/update/apply').finally(()=>{setTimeout(()=>{updating=false;load()},2500)})}if(x==='backupnow')call('/api/backup/run');if(x==='backupopen')call('/api/backup/open');if(x==='backupsave'){document.activeElement?.blur();call('/api/backup/settings',BD).then(()=>{if(!msg){BD=null;render()}})}if(x==='danus')call('/api/danus/setup');if(x==='danusmode'){const m=S.danus.mode==='native'?'isolated':'native';if(m==='isolated'||confirm(NATIVE_WARNING))call('/api/danus/mode',{mode:m,accept:m==='native'})}if(x==='danusremoveiso'&&confirm('Remove the isolated machine and free its disk space?'))call('/api/danus/remove',{mode:'isolated'});if(x==='danusstop'&&confirm('Stop the proof search now? Its facts so far are kept.'))call('/api/danus/stop');if(x==='danusrun'){document.activeElement?.blur();const g=R.goal||'',b={project_id:R.project_id,prompt:R.prompt,minutes:R.minutes,stop_session:R.stop_session,stop_weekly:R.stop_weekly,on_limit:R.on_limit,workers:R.workers,task_id:g[0]==='t'?+g.slice(1):null,question_id:g[0]==='q'?+g.slice(1):null};if(R.on_limit==='resume'&&!R.minutes&&!confirm('This run continues after every reset until you stop it. Start it?'))return;call('/api/danus/run',b).then(()=>{if(!msg)O={}})}if(x==='danusremove'&&confirm('Remove the prover and its isolated machine?'))call('/api/danus/remove')});
 document.addEventListener('pointerdown',()=>{pressing=true});for(const n of ['pointerup','pointercancel'])document.addEventListener(n,()=>setTimeout(()=>{pressing=false},0));document.addEventListener('input',ev=>{const t=ev.target;if(t.dataset.c){CF[t.dataset.c]=t.value;connectErr=''}if(t.dataset.b&&BD){const k=t.dataset.b;BD[k]=k==='enabled'?t.checked:k==='folder'?t.value:+t.value;if(t.type==='checkbox'||t.tagName==='SELECT')t.blur()}if(t.dataset.l){draft[t.dataset.l]=t.type==='text'?t.value:+t.value;if(t.type==='range'){t.closest('label').firstChild.textContent=t.closest('label').firstChild.textContent.replace(/\d+%/,t.value+'%')}refreshBar()}if(t.dataset.k){draft.kinds=[...document.querySelectorAll('[data-k]')].filter(x=>x.checked).map(x=>x.dataset.k);t.blur();render()}if('danus'in t.dataset)draft.danus_enabled=t.checked;if(t.dataset.r&&R){const k=t.dataset.r;R[k]=['goal','prompt','on_limit'].includes(k)?t.value:+t.value;if(k==='project_id'){R.goal='';t.blur();options();render()}const set=(i,v)=>{const x=document.getElementById(i);if(x)x.textContent=v};if(k==='workers')set('rw',t.value);if(k==='stop_session')set('rs',t.value);if(k==='stop_weekly')set('rk',t.value);const n=document.getElementById('runsum');if(n)n.innerHTML=runSummary(R.minutes?fmtMin(R.minutes):'no time limit')}});
 document.addEventListener('change',ev=>{const t=ev.target,d=t.dataset||{};if(d.pk){draft.procedures={...(draft.procedures||{}),[d.pk]:t.checked};t.blur();render()}if('autop'in d){draft.auto_procedures=t.checked;t.blur();render()}
  if(d.preset&&d.preset!=='custom'){Object.assign(draft,PRESETS[d.preset][2]);t.blur();render()}if(d.preset==='custom'){t.blur();document.querySelector('[data-l=tasks_per_day]')?.focus()}

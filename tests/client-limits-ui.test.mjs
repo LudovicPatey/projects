@@ -51,3 +51,14 @@ test('a section the user opens stays open: the page is drawn again every few sec
   for (const d of sections) assert.match(d, /data-keep=[\w-]+ \$\{OPEN\.has\('[\w-]+'\)\?'open':''\}/, `remembered: ${d}`);
   assert.match(source, /document\.addEventListener\('toggle',ev=>\{const d=ev\.target;if\(d\?\.dataset\?\.keep\)/);
 });
+
+// Stop lets the task under way finish: the page says so at once, with the button disabled, instead of seeming to ignore the click.
+test('Stop shows "Stopping" until the task under way is done', () => {
+  const hero = source.match(/^const hero=\(\)=>\{[\s\S]*?^ return`<section class="panel hero"><span class=dot><\/span><div><b>Not running[^\n]*$/m)[0];
+  const draw = (S) => new Function('S', 'e', 'toolName', 'when', `${hero}\nreturn hero();`)(S, (x) => String(x), (x) => x, (x) => x);
+  const busy = draw({ connected: true, running: true, allowed: true, stopping: true, provider: 'claude' });
+  assert.match(busy, /<b>Stopping<\/b>/); assert.match(busy, /<button class=btn disabled[^>]*>Stopping…<\/button>/); assert.match(busy, /task under way finishes first/);
+  assert.match(draw({ connected: true, running: true, allowed: true, stopping: false, provider: 'claude' }), /data-a=stop>Stop</);
+  assert.match(source, /if\(x==='stop'\)\{S\.stopping=true;render\(\);call\('\/api\/stop'\)\}/, 'the click shows it before the client answers');
+  assert.match(source, /"stopping": self\.running\(\) and self\.stop_flag\.is_set\(\)/);
+});
