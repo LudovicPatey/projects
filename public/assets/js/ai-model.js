@@ -38,6 +38,10 @@ export function usageView(u, now = Date.now()) {
 export const SWEEP_KINDS = {
   rewrite_check: { label: 'Check rewrites in the project notation', short: 'Rewrite check', icon: 'eye', hint: 'A second AI compares each rewrite with its original. One that changes the meaning is not shown. People can overrule it.' },
   notation_settle: { label: 'Settle the project notation', short: 'Notation sweep', icon: 'book', hint: 'Decides the symbols several facts define and the project notation does not have yet: global, local to their paper, or another spelling of an entry.' },
+  statement_fix: { label: 'Correct statements members flagged', short: 'Correction', icon: 'edit', hint: 'An AI proposes corrected statements a member asked for, each with a proof, checking the source; or says the statement is right as it is.' },
+  fix_check: { label: 'Check corrected statements', short: 'Correction check', icon: 'check-circle', hint: 'An AI of another company checks each proposed statement against the request, the source and its proof. A member then chooses which replace the fact.' },
+  relink: { label: 'Check facts after a correction', short: 'Relink', icon: 'link', hint: 'An AI reads each fact that relied on a superseded fact: does its proof work with a corrected statement?' },
+  relink_check: { label: 'Check those readings', short: 'Relink check', icon: 'check-circle', hint: 'An AI of another company checks each reading. Agreed, the fact relies on the corrected statement, or a repair of its proof starts.' },
   proof_repair: { label: 'Repair proofs a review found flawed', short: 'Proof repair', icon: 'edit', hint: 'An AI of another company than the reviewer repairs the proof, or says why the review is wrong or that the gap cannot be fixed. A repaired proof is added beside the original.' },
   repair_check: { label: 'Check repaired proofs', short: 'Repair check', icon: 'check-circle', hint: 'An AI of the reviewer’s side checks each repair. Rounds go on until both sides agree on a proof or a gap, or three rounds have passed.' },
   proof_review: { label: 'Review proofs nobody reviewed', short: 'Proof review', icon: 'check-circle', hint: 'An independent AI referees each proof nobody reviewed, the facts others rely on first: correct, a gap or an error. It counts like any AI review, and people can review too.' },
@@ -56,6 +60,10 @@ export const PENDING_PASSES = {
   types: { name: 'Notation review', does: 'An AI says what the parameters of this entry stand for, and so what the entry applies to.', meanwhile: 'No need to type them by hand, though Edit lets you.' },
   second: { name: 'Second reading', does: 'Another AI reads this proposal again: it applies it if it agrees, and drops it otherwise.', meanwhile: 'You can still accept or reject it yourself.' },
   repair: { name: 'Proof repair', does: 'A review found a flaw: an AI of another company repairs the proof, says why the review is wrong, or that the gap cannot be fixed.', meanwhile: 'No need to repair it by hand; you can still propose another proof.' },
+  fix: { name: 'Correction of the statement', does: 'A member asked for a correction: an AI proposes corrected statements with proofs, checking the source, or says it is right as it is.', meanwhile: 'Nothing changes yet; no need to correct it by hand.' },
+  fixcheck: { name: 'Check of the correction', does: 'An AI of another company checks each proposed statement against the request, the source and its proof. Then a member chooses which replace this fact.', meanwhile: 'Nothing changes yet.' },
+  relink: { name: 'Check after a correction', does: 'A fact this one relied on was superseded by corrected statements: an AI reads this proof with them.', meanwhile: 'No need to relink it by hand.' },
+  relcheck: { name: 'Check of that reading', does: 'An AI of another company checks whether this proof works with a corrected statement, or needed the old one.', meanwhile: 'No need to relink it by hand.' },
   recheck: { name: 'Check of the repair', does: 'An AI of the reviewer’s side checks the repaired proof, or the answer to the review. If it still finds a flaw, another round starts.', meanwhile: 'You can review the repaired proof yourself: your verdict counts like any review.' },
 };
 

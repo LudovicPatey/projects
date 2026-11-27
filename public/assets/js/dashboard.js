@@ -21,6 +21,7 @@ const ACTIONS = {
   disputed: { icon: 'x', tone: 'bad', label: 'Disputed', text: 'Settle this fact' },
   ai_question: { icon: 'comment', tone: 'warn', label: 'The AI asks', text: 'A choice it could not settle from the text' },
   review: { icon: 'graph', tone: 'info', label: 'To verify', text: 'No check from you yet' },
+  decide: { icon: 'users', tone: 'warn', label: 'To decide', text: 'Both AIs accept corrected statements: choose which replace this fact' },
   strategy: { icon: 'route', tone: 'neutral', label: 'No strategy', text: 'Propose an approach' },
 };
 

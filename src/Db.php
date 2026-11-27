@@ -178,6 +178,10 @@ final class Db
             $migrations[] = "ALTER TABLE $t ADD COLUMN ai_generation_ms INT UNSIGNED NULL";
         }
         $migrations[] = 'ALTER TABLE fact_lean ADD COLUMN check_user_id INT UNSIGNED NULL';
+        // Corrections of statements share the table of proof repairs.
+        $migrations[] = "ALTER TABLE proof_repairs ADD COLUMN kind VARCHAR(10) NOT NULL DEFAULT 'proof'";
+        $migrations[] = 'ALTER TABLE proof_repairs ADD COLUMN proposal_json MEDIUMTEXT NULL';
+        $migrations[] = 'ALTER TABLE proof_repairs ADD COLUMN applied_revision INT UNSIGNED NULL';
         $migrations[] = 'ALTER TABLE fact_lean ADD COLUMN check_generation_ms INT UNSIGNED NULL';
         $migrations[] = 'ALTER TABLE ai_tasks ADD COLUMN source_blob_id INT UNSIGNED NULL';
         $migrations[] = 'ALTER TABLE ai_tasks ADD COLUMN comments_hash CHAR(40) NULL';

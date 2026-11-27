@@ -1937,3 +1937,12 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: non
   .jp-row { grid-template-columns: minmax(0, 1fr); }
   .jp-label { padding-top: 0; }
 }
+
+/* A correction of the statement under way: the proposed statement, set apart like the statement it would replace. */
+.proposals { display: grid; gap: 8px; margin: 0 0 10px; }
+.proposal { display: grid; gap: 6px; padding: 10px 12px; border-left: 3px solid #7c3aed; border-radius: 6px; background: var(--panel-2); }
+.proposal.off { border-left-color: var(--line); opacity: .8; }
+.proposal header { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 13px; }
+.proposal header .check { margin: 0; }
+.proposal-title { display: block; font-weight: 600; font-size: 13.5px; }
+.proposal-statement { display: block; font-size: 14px; line-height: 1.55; }

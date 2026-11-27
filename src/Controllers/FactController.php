@@ -662,6 +662,108 @@ final class FactController
         Response::json(self::present(Access::fact($id)));
     }
 
+    /**
+     * A dependent of a superseded fact now relies on a fact that replaces it: a new revision, its statement and proof unchanged, with
+     * the new dependency instead of the old (src/Relink.php). Its reviews start again, since what it rests on changed.
+     */
+    public static function replaceDependency(int $fid, int $old, int $new, string $notes): int
+    {
+        $f = Db::one('SELECT * FROM facts WHERE id = ? AND deleted_at IS NULL', [$fid]);
+        if (!$f) throw new HttpError(404, 'This fact no longer exists.');
+        $pid = (int)$f['project_id'];
+        $cur = Db::one('SELECT * FROM fact_revisions WHERE fact_id = ? AND revision_no = ?', [$fid, $f['current_revision']]);
+        $content = self::content([], $pid, $cur);
+        $deps = array_map('intval', array_column(Db::all('SELECT depends_on_id FROM fact_deps WHERE fact_id = ?', [$fid]), 'depends_on_id'));
+        $deps = array_values(array_unique(array_map(fn($d) => $d === $old ? $new : $d, $deps)));
+        sort($deps);
+        $sources = Db::all('SELECT source_type, source_id, version_id, conversation_id, page, quote, is_human, covers, comment_role, author_user_id, author_name, author_basis
+                            FROM fact_sources WHERE fact_id = ? AND revision_no = ?', [$fid, $f['current_revision']]);
+        $extra = ['glossary_json' => $cur['glossary_json'], 'external_refs_json' => $cur['external_refs_json']];
+        $no = (int)$f['current_revision'] + 1;
+        Db::tx(function () use ($f, $fid, $pid, $cur, $content, $deps, $sources, $extra, $notes, $no) {
+            $prov = ['origin' => $f['origin'], 'proof_origin' => $f['proof_origin'], 'ai_model' => $cur['ai_model'], 'ai_user_id' => $cur['ai_user_id'], 'ai_generation_ms' => $cur['ai_generation_ms']];
+            self::insertRevision($fid, $no, $content, $deps, $prov, $notes, $extra, $sources);
+            self::setDeps($fid, $deps);
+            Db::update('facts', ['current_revision' => $no, 'updated_at' => Db::now()], 'id = :id', ['id' => $fid]);
+            Activity::touch($pid, 'fact', $fid, 'revision');
+        });
+        QuestionController::factChanged($pid, $fid, "{$f['label']} now relies on a corrected statement and needs a new endorsement");
+        return $no;
+    }
+
+    /**
+     * Replaces a fact whose statement was wrong by one or more corrected facts, which both AI sides accepted and a member chose
+     * (src/StatementFix.php). Each new fact keeps the old one's kind, labels, tags, definitions and dependencies; the one its source
+     * states also keeps its sources. The old fact is retracted, "superseded by" them, and what rests on it is flagged and told.
+     * @param list<array{title: string, statement: string, proof: string, model: ?string, user: ?int, seconds: mixed, from_source: bool}> $variants
+     * @return list<int> the new facts
+     */
+    public static function supersede(int $oldId, array $variants, ?int $correctionId, string $why): array
+    {
+        $f = Db::one('SELECT * FROM facts WHERE id = ? AND deleted_at IS NULL', [$oldId]);
+        if (!$f || $f['retracted_at'] !== null) throw new HttpError(422, 'This fact is retracted already.');
+        $pid = (int)$f['project_id'];
+        $cur = Db::one('SELECT * FROM fact_revisions WHERE fact_id = ? AND revision_no = ?', [$oldId, $f['current_revision']]);
+        $deps = array_map('intval', array_column(Db::all('SELECT depends_on_id FROM fact_deps WHERE fact_id = ?', [$oldId]), 'depends_on_id'));
+        sort($deps);
+        $sources = Db::all('SELECT source_type, source_id, version_id, conversation_id, page, quote, is_human, covers, comment_role, author_user_id, author_name, author_basis
+                            FROM fact_sources WHERE fact_id = ? AND revision_no = ?', [$oldId, $f['current_revision']]);
+        $extra = ['glossary_json' => $cur['glossary_json'], 'external_refs_json' => $cur['external_refs_json']];
+        $ids = [];
+        Db::tx(function () use ($f, $oldId, $pid, $variants, $deps, $sources, $extra, $correctionId, $why, &$ids) {
+            $n = 0;
+            foreach ($variants as $v) {
+                $n++;
+                // The corrected title the AI proposed, else the old one; a variant that would share a title is told apart.
+                $title = trim((string)($v['title'] ?? '')) ?: $f['title'];
+                if (count(array_filter($variants, fn($w) => (trim((string)($w['title'] ?? '')) ?: $f['title']) === $title)) > 1 && !$v['from_source']) $title = mb_substr($title . ' (variant ' . $n . ')', 0, 255);
+                $content = self::content(['statement_text' => $v['statement'], 'proof_text' => $v['proof']], $pid, null);
+                $method = $v['from_source'] ? $f['method'] : 'deduced';
+                $srcs = $v['from_source'] ? $sources : [];
+                $prov = self::provenance($method, $content, $srcs, $v['model']) + Provenance::stamp($v['model'], $v['seconds'] ?? null);
+                if ($v['user']) $prov['ai_user_id'] = (int)$v['user'];
+                if ($prov['proof_origin'] === 'human') $prov['proof_origin'] = 'mixed'; // an AI wrote the proof again from the paper's
+                $now = Db::now();
+                $id = Db::insert('facts', ['project_id' => $pid, 'label' => self::label($pid, '', $f['kind'], $title, null), 'kind' => $f['kind'], 'title' => $title,
+                    'origin' => $prov['origin'], 'proof_origin' => $prov['proof_origin'], 'labels_json' => $f['labels_json'], 'method' => $method, 'tool' => $f['tool'],
+                    'ai_model' => $v['model'], 'topics_json' => $f['topics_json'], 'created_by' => Auth::id(), 'created_at' => $now, 'updated_at' => $now]);
+                self::insertRevision($id, 1, $content, $deps, $prov, "Supersedes {$f['label']}, whose statement was wrong: " . mb_substr($why, 0, 1000), $extra, $srcs);
+                self::setDeps($id, $deps);
+                self::notifyMentions($pid, $id, $content);
+                Activity::touch($pid, 'fact', $id, 'created');
+                Db::insert('fact_supersessions', ['project_id' => $pid, 'old_fact_id' => $oldId, 'new_fact_id' => $id, 'correction_id' => $correctionId,
+                    'from_source' => $v['from_source'] ? 1 : 0, 'created_by' => Auth::id(), 'created_at' => $now]);
+                $ids[] = $id;
+            }
+        });
+        // The reason says why; the fact's page links the new facts by their titles ("Superseded by").
+        self::retractFact($f, (count($ids) === 1 ? 'Superseded by a corrected statement: ' : 'Superseded by ' . count($ids) . ' corrected statements: ') . mb_substr($why, 0, 3000));
+        return $ids;
+    }
+
+    /** Undoes a supersession: the new facts are retracted, the old one comes back. Nothing is deleted. */
+    public static function undoSupersede(int $correctionId, string $who): void
+    {
+        $rows = Db::all('SELECT * FROM fact_supersessions WHERE correction_id = ? AND undone_at IS NULL', [$correctionId]);
+        if (!$rows) throw new HttpError(422, 'Nothing to undo.');
+        foreach ($rows as $s) {
+            $new = Db::one('SELECT * FROM facts WHERE id = ?', [$s['new_fact_id']]);
+            if ($new && $new['retracted_at'] === null) self::retractFact($new, "The correction that made it was undone by $who: the fact it superseded is back.");
+        }
+        $old = (int)$rows[0]['old_fact_id'];
+        Db::update('facts', ['retracted_at' => null, 'retracted_by' => null, 'retract_reason' => null, 'updated_at' => Db::now()], 'id = :id', ['id' => $old]);
+        Activity::touch((int)$rows[0]['project_id'], 'fact', $old, 'reinstated');
+        Db::run('UPDATE fact_supersessions SET undone_at = ? WHERE correction_id = ? AND undone_at IS NULL', [Db::now(), $correctionId]);
+    }
+
+    /** What superseded a fact, and what it superseded: {superseded_by: [...], supersedes: [...]}, each {id, label, title, from_source}. */
+    public static function supersessions(int $fid): array
+    {
+        $q = fn(string $mine, string $other) => array_map(fn($x) => ['id' => (int)$x['id'], 'label' => $x['label'], 'title' => $x['title'], 'from_source' => (bool)$x['from_source'], 'retracted' => $x['retracted_at'] !== null],
+            Db::all("SELECT f.id, f.label, f.title, f.retracted_at, s.from_source FROM fact_supersessions s JOIN facts f ON f.id = s.$other WHERE s.$mine = ? AND s.undone_at IS NULL ORDER BY s.from_source DESC, s.id", [$fid]));
+        return ['superseded_by' => $q('old_fact_id', 'new_fact_id'), 'supersedes' => $q('new_fact_id', 'old_fact_id')];
+    }
+
     public static function delete(Request $r): never
     {
         $f = Access::fact($r->int('id'));
@@ -685,6 +787,16 @@ final class FactController
         $f = Access::fact($r->int('id'));
         $reason = mb_substr($r->str('reason'), 0, 4000);
         if ($reason === '') throw new HttpError(422, 'Please give a reason for retracting this fact.');
+        $affected = self::retractFact($f, $reason);
+        Response::json(['affected' => $affected] + self::present(Access::fact((int)$f['id'])));
+    }
+
+    /**
+     * Withdraws a fact for everyone, flags what rests on it and tells their authors. Also how a correction retracts the fact it
+     * supersedes. @return int how many facts rest on it, directly or not
+     */
+    public static function retractFact(array $f, string $reason): int
+    {
         Db::update('facts', ['retracted_at' => Db::now(), 'retracted_by' => Auth::id(), 'retract_reason' => $reason, 'updated_at' => Db::now()], 'id = :id', ['id' => $f['id']]);
         Activity::touch((int)$f['project_id'], 'fact', (int)$f['id'], 'retracted');
         QuestionController::factChanged((int)$f['project_id'], (int)$f['id'], "{$f['label']} was retracted");
@@ -705,7 +817,7 @@ final class FactController
             if ($uid === Auth::id() || !Access::isMember((int)$f['project_id'], $uid)) continue;
             Notify::send($uid, (int)$f['project_id'], 'fact_retracted', ['link' => ['view' => 'facts', 'id' => (int)$f['id']], 'excerpt' => $f['label'] . ': ' . $reason]);
         }
-        Response::json(['affected' => count($affected)] + self::present(Access::fact((int)$f['id'])));
+        return count($affected);
     }
 
     public static function reinstate(Request $r): never
@@ -930,6 +1042,40 @@ final class FactController
         if ($f['retracted_at']) throw new HttpError(422, 'This fact is retracted.');
         \App\ProofRepair::ask((int)$f['id'], Auth::id());
         Response::json(self::present(Access::fact((int)$f['id'])), 201);
+    }
+
+    /**
+     * A member asks AIs to correct the statement, saying what is wrong (`request_text`). People only. Nothing changes until an AI of
+     * another company agrees with the correction (src/StatementFix.php). Returns the fact, with its correction.
+     */
+    public static function askCorrection(Request $r): never
+    {
+        if (Auth::isAi()) throw new HttpError(403, 'Only a person can ask for a correction of a statement.');
+        $f = Access::fact($r->int('id'));
+        \App\StatementFix::ask((int)$f['id'], Auth::id(), $r->str('request_text'));
+        Response::json(self::present(Access::fact((int)$f['id'])), 201);
+    }
+
+    /** A member chooses which accepted corrections replace the fact (`chosen`: their indexes). Returns the old fact. */
+    public static function applyCorrection(Request $r): never
+    {
+        if (Auth::isAi()) throw new HttpError(403, 'Only a person decides which corrected statements replace a fact.');
+        $fid = (int)Db::value("SELECT fact_id FROM proof_repairs WHERE id = ? AND kind = 'statement'", [$r->int('cid')]);
+        if (!$fid) throw new HttpError(404, 'No such correction.');
+        Access::fact($fid);
+        $ids = \App\StatementFix::decide($r->int('cid'), (array)$r->input('chosen', []), Auth::id());
+        Response::json(['new_facts' => $ids] + self::present(Access::fact($fid)), 201);
+    }
+
+    /** A member undoes an applied correction: the new facts are retracted and the old one comes back. */
+    public static function undoCorrection(Request $r): never
+    {
+        if (Auth::isAi()) throw new HttpError(403, 'Only a person can undo a correction.');
+        $fid = (int)Db::value("SELECT fact_id FROM proof_repairs WHERE id = ? AND kind = 'statement'", [$r->int('cid')]);
+        if (!$fid) throw new HttpError(404, 'No such correction.');
+        Access::fact($fid);
+        \App\StatementFix::undo($r->int('cid'), Auth::id());
+        Response::json(self::present(Access::fact($fid)));
     }
 
     /** Its author rewrites a proof. Reviews of the old text no longer apply. */
@@ -1625,6 +1771,9 @@ final class FactController
         // The AI passes it still waits for: it is not in its final state, and people need not fix by hand what an AI is about to do.
         $out['ai_pending'] = \App\Sweeps::pendingForFact($pid, $id);
         $out['repairs'] = \App\ProofRepair::forFact($id, (int)$out['current_revision']);
+        $out['corrections'] = \App\StatementFix::forFact($id);
+        $out['relinks'] = \App\Relink::forFact($id);
+        $out += self::supersessions($id); // superseded_by, supersedes
         // And what it waits for from a person: a question the AI asked about its rewrite or its check of the source.
         $out['ai_questions'] = self::aiQuestions($pid, $id);
         $out['worth_reading'] = $f['highlight_at'] ? ['reason' => $f['highlight_reason'], 'at' => $f['highlight_at'], 'model' => $f['highlight_model']] : null;

@@ -141,6 +141,10 @@ final class DashboardController
         foreach ($questions as $q) {
             if ($q['pending_answers']) $out[] = ['kind' => 'ratify', 'ref' => 'question:' . $q['id'], 'title' => $q['title'], 'link' => ['view' => 'questions', 'id' => $q['id']]];
         }
+        // Corrected statements both AIs accept, waiting for a member's choice (src/StatementFix.php).
+        foreach (Db::all("SELECT f.id, f.title, f.label FROM proof_repairs r JOIN facts f ON f.id = r.fact_id AND f.deleted_at IS NULL AND f.retracted_at IS NULL WHERE r.project_id = ? AND r.kind = 'statement' AND r.state = 'decide' ORDER BY r.id LIMIT 3", [$pid]) as $c) {
+            $out[] = ['kind' => 'decide', 'ref' => 'fact:' . $c['id'], 'title' => $c['title'], 'code' => $c['label'], 'link' => ['view' => 'facts', 'id' => (int)$c['id']]];
+        }
         foreach ($facts as $f) {
             if ($f['status'] === 'disputed') $out[] = ['kind' => 'disputed', 'ref' => 'fact:' . $f['id'], 'title' => $f['title'], 'code' => $f['label'], 'link' => ['view' => 'facts', 'id' => $f['id']]];
         }

@@ -27,7 +27,7 @@ use App\Controllers\NotationController;
 final class Sweeps
 {
     /** A sweep's kind of task. */
-    public const KINDS = ['rewrite' => 'notation', 'source' => 'source_check', 'check' => 'rewrite_check', 'second' => 'second_reading', 'symbols' => 'consolidate', 'review' => 'proof_review', 'repair' => 'proof_repair', 'recheck' => 'repair_check'];
+    public const KINDS = ['rewrite' => 'notation', 'source' => 'source_check', 'check' => 'rewrite_check', 'second' => 'second_reading', 'symbols' => 'consolidate', 'review' => 'proof_review', 'repair' => 'proof_repair', 'recheck' => 'repair_check', 'fix' => 'statement_fix', 'fixcheck' => 'fix_check', 'relink' => 'relink', 'relcheck' => 'relink_check'];
     /** At most this many facts in one session, and this much text to rewrite. */
     public const REWRITE_BATCH = 12;
     public const REWRITE_CHARS = 40000;
@@ -44,7 +44,7 @@ final class Sweeps
     public const REVIEW_CHARS = 50000;
     /** Entries whose parameters have no type yet, typed in the same session. */
     public const TYPES_BATCH = 30;
-    private const BATCH = ['rewrite' => self::REWRITE_BATCH, 'source' => self::SOURCE_BATCH, 'check' => self::CHECK_BATCH, 'second' => self::SECOND_BATCH, 'symbols' => self::SYMBOLS_BATCH, 'review' => self::REVIEW_BATCH, 'repair' => 3, 'recheck' => 3];
+    private const BATCH = ['rewrite' => self::REWRITE_BATCH, 'source' => self::SOURCE_BATCH, 'check' => self::CHECK_BATCH, 'second' => self::SECOND_BATCH, 'symbols' => self::SYMBOLS_BATCH, 'review' => self::REVIEW_BATCH, 'repair' => 3, 'recheck' => 3, 'fix' => 1, 'fixcheck' => 1, 'relink' => 4, 'relcheck' => 4];
 
     private static function setting(string $key, float $default): float
     {
@@ -112,6 +112,8 @@ final class Sweeps
             'rewrite' => self::rewriteCandidates($pid) && !self::open($pid, 'symbols') && !self::symbolCandidates($pid), 'source' => self::sourceCandidates($pid),
             'check' => self::checkCandidates($pid), 'second' => self::secondCandidates($pid), 'review' => self::reviewCandidates($pid), 'symbols' => self::symbolCandidates($pid) || self::typeCandidates($pid),
             'repair' => ProofRepair::due($pid, 'repair'), 'recheck' => ProofRepair::due($pid, 'check'),
+            'fix' => StatementFix::due($pid, 'revise'), 'fixcheck' => StatementFix::due($pid, 'verify'),
+            'relink' => Relink::due($pid, 'relink'), 'relcheck' => Relink::due($pid, 'relcheck'),
         };
     }
 
@@ -156,6 +158,10 @@ final class Sweeps
         if (in_array($fid, self::reviewCandidates($pid, $graph), true)) $out[] = 'review';
         $step = ProofRepair::pendingStep($fid);
         if ($step) $out[] = $step === 'repair' ? 'repair' : 'recheck';
+        $fix = StatementFix::pendingStep($fid);
+        if ($fix === 'revise' || $fix === 'verify') $out[] = $fix === 'revise' ? 'fix' : 'fixcheck';
+        $rel = Relink::pendingStep($fid);
+        if ($rel) $out[] = $rel === 'relink' ? 'relink' : 'relcheck';
         return array_map(fn($s) => ['sweep' => $s, 'open' => self::open($pid, $s) !== null], $out);
     }
 
@@ -259,6 +265,14 @@ final class Sweeps
     public static function modelFor(string $kind, int $pid, array $models): ?string
     {
         if ($kind === 'proof_review') return self::reviewModel($pid, $models);
+        if (in_array($kind, ['relink', 'relink_check'], true)) {
+            foreach ($models as $m) if (is_string($m) && $m !== '' && Relink::batch($pid, $kind === 'relink' ? 'relink' : 'relcheck', $m)[0]) return $m;
+            return null;
+        }
+        if (in_array($kind, ['statement_fix', 'fix_check'], true)) {
+            foreach ($models as $m) if (is_string($m) && $m !== '' && StatementFix::batch($pid, $kind === 'statement_fix' ? 'revise' : 'verify', $m)[0]) return $m;
+            return null;
+        }
         $step = ['proof_repair' => 'repair', 'repair_check' => 'check'][$kind] ?? null;
         if ($step === null) return null;
         foreach ($models as $m) if (is_string($m) && $m !== '' && ProofRepair::batch($pid, $step, $m)[0]) return $m;
@@ -443,6 +457,22 @@ final class Sweeps
                 return null;
             }
             $snap = ['facts' => $batch, 'full' => $full];
+        } elseif (in_array($t['kind'], ['relink', 'relink_check'], true)) {
+            $step = $t['kind'] === 'relink' ? 'relink' : 'relcheck';
+            [$batch, $full] = Relink::batch($pid, $step, (string)($t['ai_model'] ?? ''));
+            if (!$batch && Relink::due($pid, $step)) {
+                Db::run("UPDATE ai_tasks SET status = 'pending', lease_hash = NULL, lease_until = NULL, claimed_by = NULL, client_name = NULL, ai_model = NULL, attempts = attempts - 1, started_at = NULL, updated_at = ? WHERE id = ?", [Db::now(), $t['id']]);
+                return null;
+            }
+            $snap = ['items' => $batch, 'full' => $full];
+        } elseif (in_array($t['kind'], ['statement_fix', 'fix_check'], true)) {
+            $step = $t['kind'] === 'statement_fix' ? 'revise' : 'verify';
+            [$batch, $full] = StatementFix::batch($pid, $step, (string)($t['ai_model'] ?? ''));
+            if (!$batch && StatementFix::due($pid, $step)) {
+                Db::run("UPDATE ai_tasks SET status = 'pending', lease_hash = NULL, lease_until = NULL, claimed_by = NULL, client_name = NULL, ai_model = NULL, attempts = attempts - 1, started_at = NULL, updated_at = ? WHERE id = ?", [Db::now(), $t['id']]);
+                return null;
+            }
+            $snap = ['items' => $batch, 'full' => $full];
         } elseif (in_array($t['kind'], ['proof_repair', 'repair_check'], true)) {
             $step = $t['kind'] === 'proof_repair' ? 'repair' : 'check';
             [$batch, $full] = ProofRepair::batch($pid, $step, (string)($t['ai_model'] ?? ''));

@@ -3,7 +3,7 @@ import { store, go, link, attempt, toast, refreshMentionables, refreshProject, u
 import { timeAgo, fullDate } from '../util.js';
 import { FactGraph, STATUS, PROOF_LABEL } from '../factgraph.js';
 import { factBadges, quietLabels, statementAddsToTitle } from '../fact-badges.js';
-import { repairView } from '../repair-model.js';
+import { correctionView, relinkView, repairView } from '../repair-model.js';
 import { factTitle, formatFactHtml, kindCounts, kindLabel, kindOf, parseExternalRefs, texLine } from '../fact-format.js';
 import { PROOF_STATE, proofTally, resultOnlyBody, stance } from '../fact-proofs.js';
 import { asMath, checkedByAi, rephrasingState, shownRephrasing } from '../notation-model.js';
@@ -88,7 +88,7 @@ export const FactsView = {
       fact: null, factError: null, tab: 'content', activeThread: null, backlinks: [],
       readable: readView(), fKind: 'all', outline: [], reviewVerdict: 'correct', checkForm: null, trace: null, retracting: null, revView: null, denying: null,
       reviewStatement: 'true', resultOnly: null, proposing: null, proofCheck: null, projectNotation: notationView(), unfaithful: null,
-      fStar: 'all', fBasis: 'all', refPick: {}, gView: null, gScope: 'all', gDepth: 2, matchIds: new Set(), listTag: null, fTopic: 'all', topicDraft: null, fVerify: 'all',
+      fStar: 'all', fBasis: 'all', refPick: {}, correcting: null, chosen: null, gView: null, gScope: 'all', gDepth: 2, matchIds: new Set(), listTag: null, fTopic: 'all', topicDraft: null, fVerify: 'all',
     };
   },
   computed: {
@@ -178,6 +178,10 @@ export const FactsView = {
     proofs() { return (this.fact?.proofs || []).filter((p) => p.revision_no === this.fact.current_revision); },
     // The latest repair of the proof, as one exchange between the reviewer's side and the repairer's (src/ProofRepair.php).
     repair() { const r = this.fact?.repairs?.[0]; return r ? repairView(r, (id) => { const i = this.proofs.findIndex((p) => p.id === id); return i < 0 ? null : i + 2; }) : null; },
+    // The latest correction of the statement a member asked for (src/StatementFix.php).
+    correction() { const c = this.fact?.corrections?.[0]; return c ? { ...correctionView(c), id: c.id } : null; },
+    // This fact relied on one that a correction superseded: the AIs read its proof again (src/Relink.php).
+    relink() { const r = this.fact?.relinks?.[0]; return r ? relinkView(r) : null; },
     repairedProofs() { return new Set((this.fact?.repairs || []).flatMap((r) => (r.steps || []).map((x) => x.proof_id).filter(Boolean))); },
     // A member may ask for a repair when a review of this revision found a flaw and none runs.
     canAskRepair() { return !!this.fact && !this.fact.retracted_at && !this.repair?.open && this.currentReviews.some((v) => v.verdict !== 'correct'); },
@@ -357,6 +361,8 @@ export const FactsView = {
           <span v-if="fact.denied_by.length" class="endorsers denied" title="They say the result is false: their reasons are under Reviews"><icon name="x" :size="13"/> Denied by <template v-for="(e, i) in fact.denied_by" :key="e.id"><a :href="link('members', null, {user: e.id})">{{ e.name }}</a><template v-if="i < fact.denied_by.length - 1">, </template></template></span>
         </div>
         <p v-if="fact.worth_reading" class="fact-note t-info" :title="fact.worth_reading.model ? 'Marked by ' + fact.worth_reading.model + ', in a consolidation' : 'Marked by a member'"><icon name="eye" :size="13"/><span><b>Worth reading.</b> <math-text :text="fact.worth_reading.reason"/></span></p>
+        <p v-if="fact.superseded_by?.length" class="fact-note t-info"><icon name="link" :size="13"/><span><b>Superseded by</b> <template v-for="(x, i) in fact.superseded_by" :key="x.id"><a :href="factLink(x.id)" :title="x.label + (x.from_source ? ': as its source states it' : ': a variant')"><math-text :text="x.title"/></a><template v-if="i < fact.superseded_by.length - 1">, </template></template>: its statement was wrong, and it is kept for the record.</span></p>
+        <p v-if="fact.supersedes?.length" class="fact-note"><icon name="link" :size="13"/><span>Corrects <template v-for="(x, i) in fact.supersedes" :key="x.id"><a :href="factLink(x.id)" :title="x.label"><math-text :text="x.title"/></a><template v-if="i < fact.supersedes.length - 1">, </template></template>, whose statement was wrong.</span></p>
         <p v-if="fact.merged_from" class="fact-note"><icon name="layers" :size="13"/><span>{{ fact.merged_from }} was merged into this fact, as the same result.</span></p>
         <p v-else-if="mergedHere.length" class="fact-note"><icon name="layers" :size="13"/><span>{{ mergedHere.map((h) => h.other_label).join(', ') }} {{ mergedHere.length > 1 ? 'were' : 'was' }} merged into this fact, as the same result. <button class="link-btn" @click="openTab('trace')">History</button></span></p>
         <p v-if="fact.status === 'definition'" class="fact-note t-info"><icon name="book" :size="13"/><span>A definition: it belongs to the project notation, and it is not checked like a result. <button class="link-btn" @click="setMode('notation')">Open the notation</button></span></p>
@@ -388,6 +394,7 @@ export const FactsView = {
               <ai-action menu kind="ask" source-type="fact" :source-id="fact.id" label="Ask a question"/>
               <ai-action v-if="!currentRephrasing && !notationState" menu kind="notation" source-type="fact" :source-id="fact.id" label="Write it in the project notation" title="Write this fact again in the notation agreed by the project"/>
               <ai-action menu kind="derive" source-type="fact" :source-id="fact.id" label="Prove new facts from it"/>
+              <button v-if="!correction?.open" class="menu-item" role="menuitem" title="Say what is wrong in the statement: an AI writes the correction with a proof, checking the source, and an AI of another company checks it. Nothing changes until it agrees; a member can undo it." @click="correcting = {text: ''}"><icon name="edit" :size="14"/><span><b>Correct the statement</b><small>Its base system, a hypothesis, a quantifier: say what it should be.</small></span></button>
               <button v-if="canAskRepair" class="menu-item" role="menuitem" title="An AI of another company than the reviewer repairs the proof, or answers the review; one of the reviewer's side checks it, for up to three rounds. A repaired proof is added beside the original, which stays as it is." @click="askRepair"><icon name="edit" :size="14"/><span><b>Repair the proof</b><small>Answers the latest review that found a flaw, a person's included.</small></span></button>
             </action-menu>
           </template>
@@ -417,6 +424,11 @@ export const FactsView = {
         <rich-editor ref="proofEd" :min-height="220" :initial-html="proposing.proof?.body_html || ''" placeholder="Write the proof. $…$ for LaTeX, @ to cite facts and references."/>
         <template #footer><button class="btn ghost" @click="proposing = null">Cancel</button><button class="btn primary" @click="submitProof">{{ proposing.proof ? 'Save the proof' : 'Propose the proof' }}</button></template>
       </modal>
+      <modal v-if="correcting" title="Correct the statement" @close="correcting = null">
+        <p class="muted small">An AI reads your request, the statement, its source and its proof, and writes the corrected statement with a proof, or says it is right as it is. An AI of another company then checks it against the source. Only when both agree does the correction become a new revision of the fact; reviews then start again, and what rests on it is told. A member can undo it.</p>
+        <label class="field"><span>What is wrong, and what should it say? Point to the source if you can.</span><textarea v-model="correcting.text" rows="4" autofocus placeholder="In the paper the lemma is over RCA, not RCA_0: full induction is allowed."></textarea></label>
+        <template #footer><button class="btn ghost" @click="correcting = null">Cancel</button><button class="btn primary" :disabled="correcting.text.trim().length < 10" @click="askCorrection">Ask for the correction</button></template>
+      </modal>
       <modal v-if="unfaithful" title="The meaning changed" @close="unfaithful = null">
         <label class="field"><span>What does the version in project notation say differently?</span><textarea v-model="unfaithful.note" rows="4" autofocus></textarea></label>
         <template #footer><button class="btn ghost" @click="unfaithful = null">Cancel</button><button class="btn primary" :disabled="!unfaithful.note.trim()" @click="checkRephrasing('unfaithful', unfaithful.note)">Report</button></template>
@@ -445,6 +457,34 @@ export const FactsView = {
         </div>
         <p v-if="cited && !shownRevision" class="fact-note t-info"><icon name="book" :size="13"/><span>Proofs that use this result rely on its source. <template v-if="fact.status === 'accepted'">A member who read the source accepted it.</template><template v-else>Nobody has accepted it yet: read the source, then click <b>Accept</b>. You can also propose a proof below.</template></span></p>
         <section class="fact-sec statement"><h4>Statement</h4><rich-content :html="shown(statementHtml)" :notation="notationMarks" :fact-refs="fact.text_refs"/></section>
+        <section v-if="!shownRevision && correction" class="fact-sec repair-sec">
+          <h4>Correction of the statement<span class="count">{{ correction.round }}</span><span class="grow"></span><span v-if="correction.asked" class="muted small">{{ correction.asked }}</span>
+            <button v-if="correction.applied" class="btn xs" title="Retracts the new facts and brings this one back: nothing is deleted" @click="undoCorrection"><icon name="restore" :size="12"/> Undo</button></h4>
+          <p class="repair-state" :class="'t-' + correction.tone"><icon :name="correction.icon" :size="14"/><span><b>{{ correction.head }}.</b> {{ correction.text }}</span></p>
+          <div v-if="correction.proposals.length" class="proposals">
+            <article v-for="x in correction.proposals" :key="x.index" class="proposal" :class="{off: !x.accepted}">
+              <header><label v-if="correction.waitsForMember && x.accepted" class="check"><input type="checkbox" :checked="isChosen(x.index)" @change="toggleChosen(x.index)" :aria-label="'Keep proposal ' + (x.index + 1)"></label>
+                <b>Proposal {{ x.index + 1 }}</b><span class="tag" :title="x.fromSource ? 'The statement its source states' : 'Another statement that also holds, such as the old one with an extra hypothesis'">{{ x.fromSource ? 'as in the source' : 'variant' }}</span>
+                <span class="grow"></span><span v-if="x.verdict" class="tag" :class="x.verdict.tone" :title="x.checkedBy ? 'Checked by ' + x.checkedBy : null">{{ x.verdict.label }}</span></header>
+              <math-text v-if="x.title" class="proposal-title" :text="x.title"/>
+              <math-text class="proposal-statement" :text="x.statement"/>
+              <details v-if="x.why || x.check"><summary>Why</summary><math-text v-if="x.why" class="repair-why" :text="x.why"/><math-text v-if="x.check" class="repair-why" :text="'Check: ' + x.check"/></details>
+            </article>
+            <div v-if="correction.waitsForMember" class="row-end"><button class="btn primary sm" :disabled="!correction.proposals.some((x) => x.accepted && isChosen(x.index))" title="Each chosen statement becomes a new fact with its proof; this fact is retracted as superseded, and the facts that relied on it are checked again by AIs. You can undo it." @click="applyCorrection">Replace this fact</button></div>
+          </div>
+          <ol class="repair-steps">
+            <li v-for="(x, i) in correction.steps" :key="i" :class="'t-' + x.tone"><icon :name="x.icon" :size="13"/>
+              <div><span class="repair-who">{{ x.who }}</span> {{ x.what }}<details v-if="x.text"><summary>Why</summary><math-text class="repair-why" :text="x.text"/></details></div></li>
+          </ol>
+        </section>
+        <section v-if="!shownRevision && relink" class="fact-sec repair-sec">
+          <h4>After a correction</h4>
+          <p class="repair-state" :class="'t-' + relink.tone"><icon :name="relink.icon" :size="14"/><span><b>{{ relink.head }}.</b> {{ relink.text }}<template v-if="relink.superseded"> It relied on <a :href="factLink(relink.superseded.id)" :title="relink.superseded.label"><math-text :text="relink.superseded.title"/></a>.</template></span></p>
+          <ol v-if="relink.steps.length" class="repair-steps">
+            <li v-for="(x, i) in relink.steps" :key="i" :class="'t-' + x.tone"><icon :name="x.icon" :size="13"/>
+              <div><span class="repair-who">{{ x.who }}</span> {{ x.what }}<details v-if="x.text"><summary>Why</summary><math-text class="repair-why" :text="x.text"/></details></div></li>
+          </ol>
+        </section>
         <section class="fact-sec" v-if="content.proof_html"><h4>Proof<span v-if="!shownRevision && mainFlawed" class="tag amber">Disputed</span><span v-if="!shownRevision && proofs.length" class="tag">1 of {{ proofs.length + 1 }}</span><span class="grow"></span><button v-if="!shownRevision && !fact.retracted_at && !proofs.length && !oldProofs.length && !mainFlawed && fact.status !== 'proof_disputed'" class="link-btn small" title="Propose a different argument, reviewed on its own: one accepted proof is enough for the fact to count as checked" @click="proposing = {proof: null}"><icon name="plus" :size="12"/> Another proof</button></h4><rich-content :html="shown(proofHtml)" :notation="notationMarks" :fact-refs="fact.text_refs"/></section>
         <section v-if="!shownRevision && repair" class="fact-sec repair-sec">
           <h4>Repair of the proof<span class="count">{{ repair.round }}</span><span class="grow"></span><span v-if="repair.asked" class="muted small">{{ repair.asked }}</span></h4>
@@ -686,6 +726,24 @@ export const FactsView = {
   methods: {
     factTitle, texLine, kindOf, kindLabel, stance, asMath, checkedByAi,
     jumpProof(id) { this.$el.querySelector?.(`[data-proof="${id}"]`)?.scrollIntoView({ block: 'start', behavior: 'smooth' }); },
+    async askCorrection() {
+      const f = await attempt(() => api.post(`api/facts/${this.fact.id}/correction`, { request_text: this.correcting.text }), 'Correction asked: nothing changes until an AI of another company agrees with it');
+      if (f) { this.correcting = null; await this.refresh(f); }
+    },
+    // The accepted proposals a member keeps: all of them unless they untick some.
+    isChosen(i) { return this.chosen ? this.chosen.includes(i) : !!this.correction?.proposals.find((x) => x.index === i)?.accepted; },
+    toggleChosen(i) { const now = this.correction.proposals.filter((x) => x.accepted && this.isChosen(x.index)).map((x) => x.index); this.chosen = now.includes(i) ? now.filter((x) => x !== i) : [...now, i]; },
+    async applyCorrection() {
+      const chosen = this.correction.proposals.filter((x) => x.accepted && this.isChosen(x.index)).map((x) => x.index);
+      if (!confirm(`Replace this fact by ${chosen.length} new fact${chosen.length === 1 ? '' : 's'}? This fact is retracted as superseded and kept for the record, and each fact that relied on it is checked again by AIs. You can undo it.`)) return;
+      const f = await attempt(() => api.post(`api/corrections/${this.correction.id}/apply`, { chosen }), 'Replaced: the new facts are in the list, and the facts that relied on this one are being checked');
+      if (f) { this.chosen = null; await this.refresh(f); }
+    },
+    async undoCorrection() {
+      if (!confirm('Undo this correction? The new facts are retracted and this fact comes back; nothing is deleted.')) return;
+      const f = await attempt(() => api.post(`api/corrections/${this.correction.id}/undo`, {}), 'Correction undone: this fact is back');
+      if (f) await this.refresh(f);
+    },
     async askRepair() {
       const f = await attempt(() => api.post(`api/facts/${this.fact.id}/repair`, {}), 'Repair queued: an AI of another company will answer the review');
       if (f) await this.refresh(f);

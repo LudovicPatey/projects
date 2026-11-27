@@ -183,7 +183,7 @@ final class AiTaskController
         // A person's own client may record the Danus run they just launched, and nothing else.
         if (Auth::isAi() && !(Auth::isClient() && $kind === 'derive')) throw new HttpError(403, 'Only a person can do this.');
         if (!in_array($kind, self::kinds(), true)) throw new HttpError(422, 'Choose what the AI should do.');
-        if (in_array($kind, ['rewrite_check', 'second_reading', 'proof_review', 'proof_repair', 'repair_check'], true)) throw new HttpError(422, 'The platform queues this on its own, whenever there is work for it.');
+        if (in_array($kind, ['rewrite_check', 'second_reading', 'proof_review', 'proof_repair', 'repair_check', 'statement_fix', 'fix_check', 'relink', 'relink_check'], true)) throw new HttpError(422, 'The platform queues this on its own, whenever there is work for it.');
         $usage = self::usage((int)Auth::id());
         if ($usage['used'] >= $usage['limit']) {
             $wait = max(1, (int)ceil((strtotime((string)$usage['next_free_at']) - time()) / 60));
@@ -681,7 +681,7 @@ final class AiTaskController
                     if ($used === null) continue; // left for a model independent of its author
                 }
                 // A client that can review with several models, another company's first, takes the proofs the first one may review.
-                if (in_array($c['kind'], ['proof_review', 'proof_repair', 'repair_check'], true) && count($choices) > 1) $used = \App\Sweeps::modelFor($c['kind'], (int)$c['project_id'], $choices) ?? $used;
+                if (in_array($c['kind'], ['proof_review', 'proof_repair', 'repair_check', 'statement_fix', 'fix_check', 'relink', 'relink_check'], true) && count($choices) > 1) $used = \App\Sweeps::modelFor($c['kind'], (int)$c['project_id'], $choices) ?? $used;
                 if (ModelOrder::covered(self::extractedBy($c), $used)) continue;
                 $lease = bin2hex(random_bytes(24));
                 $won = Db::run(
@@ -1066,6 +1066,8 @@ final class AiTaskController
         }
         if ($t['kind'] === 'second_reading') $ctx += ConsolidationController::secondContext($pid, self::batchItems($t));
         if (in_array($t['kind'], ['proof_repair', 'repair_check'], true)) $ctx += \App\ProofRepair::context($pid, self::batchItems($t));
+        if (in_array($t['kind'], ['statement_fix', 'fix_check'], true)) $ctx += \App\StatementFix::context($pid, self::batchItems($t));
+        if (in_array($t['kind'], ['relink', 'relink_check'], true)) $ctx += \App\Relink::context($pid, self::batchItems($t));
         if ($t['kind'] === 'proof_review') {
             // Each proof with what it may rely on: its dependencies, assumed as stated, and the outside results it still uses.
             $graph = array_column(FactController::graph($pid)['facts'], null, 'id');
@@ -1209,6 +1211,14 @@ final class AiTaskController
         return $s[0] === 'document' ? self::documentContext($s[1], null) : self::referenceDocument($s[1]);
     }
 
+    /** The text of a fact's source, as a task reads it: its project file, or the PDF of its reference. */
+    public static function factSourceDocument(int $fid): ?array
+    {
+        $s = self::readableSource($fid);
+        if (!$s) return null;
+        return $s[0] === 'document' ? self::documentContext($s[1], null) : self::referenceDocument($s[1]);
+    }
+
     /** Where a cited result can be read: the project file it was found in, else its reference when that has a PDF. @return ?array{0: string, 1: int} */
     public static function readableSource(int $fid): ?array
     {
@@ -1319,6 +1329,8 @@ final class AiTaskController
             $subject = ['notation' => 'facts not yet in the project notation', 'source_check' => 'cited results not yet checked',
                 'rewrite_check' => 'rewrites not yet compared with their original', 'second_reading' => 'proposals waiting for people', 'proof_review' => 'proofs nobody reviewed yet',
                 'proof_repair' => 'proofs a review found flawed', 'repair_check' => 'repaired proofs to check',
+                'statement_fix' => 'statements a member asked to correct', 'fix_check' => 'corrected statements to check',
+                'relink' => 'facts that relied on a superseded fact', 'relink_check' => 'answers about those facts to check',
                 'consolidate' => 'symbols several facts define, not yet in the project notation'][$t['kind']] ?? null;
         } elseif ($t['source_type'] === 'sweep' && isset($snap['symbols'])) {
             $n = count($snap['symbols']); $m = count($snap['types'] ?? []);
@@ -1329,6 +1341,10 @@ final class AiTaskController
                 'rewrite_check' => "$n rewrite" . ($n === 1 ? '' : 's'),
                 'proof_repair' => "$n proof" . ($n === 1 ? '' : 's') . ' to repair',
                 'repair_check' => "$n repair" . ($n === 1 ? '' : 's') . ' to check',
+                'statement_fix' => "$n statement" . ($n === 1 ? '' : 's') . ' to correct',
+                'fix_check' => "$n correction" . ($n === 1 ? '' : 's') . ' to check',
+                'relink' => "$n fact" . ($n === 1 ? '' : 's') . ' to read again',
+                'relink_check' => "$n answer" . ($n === 1 ? '' : 's') . ' to check',
                 default => "$n proposal" . ($n === 1 ? '' : 's'),
             };
         } elseif ($t['kind'] === 'proof_review' && $t['source_type'] === 'sweep') {

@@ -457,10 +457,31 @@ CREATE TABLE IF NOT EXISTS fact_proof_reviews (
   FOREIGN KEY (reviewer_id) REFERENCES users(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- A fact a correction superseded, and each fact that replaces it: the old one is retracted, with links both ways. Undoing a
+-- correction retracts the new facts and reinstates the old one (undone_at).
+CREATE TABLE IF NOT EXISTS fact_supersessions (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  project_id INT UNSIGNED NOT NULL,
+  old_fact_id INT UNSIGNED NOT NULL,
+  new_fact_id INT UNSIGNED NOT NULL,
+  correction_id INT UNSIGNED NULL,        -- the correction that decided it (proof_repairs, kind 'statement')
+  from_source TINYINT NOT NULL DEFAULT 0, -- the statement its source states, rather than a variant
+  created_by INT UNSIGNED NOT NULL,
+  created_at DATETIME NOT NULL,
+  undone_at DATETIME NULL,
+  KEY idx_supersession_old (old_fact_id),
+  KEY idx_supersession_new (new_fact_id),
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- A proof that an AI review found flawed, repaired by an AI of another company and checked again by one of the reviewer's, in rounds,
--- until both agree on a proof, both agree on a gap neither can fix, or the rounds run out (src/ProofRepair.php).
+-- until both agree on a proof, both agree on a gap neither can fix, or the rounds run out (src/ProofRepair.php). With kind
+-- 'statement', a correction of the statement a member asked for (src/StatementFix.php): proposal_json holds the corrected text.
 CREATE TABLE IF NOT EXISTS proof_repairs (
   id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  kind VARCHAR(10) NOT NULL DEFAULT 'proof',  -- proof: a repair of the proof; statement: a correction of the statement
+  proposal_json MEDIUMTEXT NULL,          -- statement: the corrected statement and proof under discussion
+  applied_revision INT UNSIGNED NULL,     -- statement: the revision it wrote, once both sides agreed
   project_id INT UNSIGNED NOT NULL,
   fact_id INT UNSIGNED NOT NULL,
   revision_no INT UNSIGNED NOT NULL,      -- the revision whose proof is repaired

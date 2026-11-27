@@ -47,10 +47,10 @@ final class ProofRepair
 
     private static function start(array $v, ?int $by): int
     {
-        $open = Db::value("SELECT id FROM proof_repairs WHERE fact_id = ? AND revision_no = ? AND state IN ('repair', 'check')", [$v['fact_id'], $v['revision_no']]);
+        $open = Db::value("SELECT id FROM proof_repairs WHERE kind = 'proof' AND fact_id = ? AND revision_no = ? AND state IN ('repair', 'check')", [$v['fact_id'], $v['revision_no']]);
         if ($open) return (int)$open;
         // One repair per review: a settled one is not started again by the same review.
-        $done = Db::value('SELECT id FROM proof_repairs WHERE review_id = ? AND revision_no = ?', [$v['id'], $v['revision_no']]);
+        $done = Db::value("SELECT id FROM proof_repairs WHERE kind = 'proof' AND review_id = ? AND revision_no = ?", [$v['id'], $v['revision_no']]);
         if ($done && $by === null) return (int)$done;
         $who = $v['reviewer_kind'] === 'human' ? (string)Db::value('SELECT name FROM users WHERE id = ?', [$v['reviewer_id']]) : null;
         $first = ['step' => 'review', 'model' => $v['reviewer_kind'] === 'human' ? null : $v['ai_model'], 'person' => $who, 'verdict' => $v['verdict'],
@@ -74,11 +74,11 @@ final class ProofRepair
         if (!Config::get('sweeps.repair', true)) return;
         foreach (Db::all("SELECT v.id FROM fact_reviews v JOIN facts f ON f.id = v.fact_id AND v.revision_no = f.current_revision
                           WHERE f.project_id = ? AND f.deleted_at IS NULL AND f.retracted_at IS NULL AND v.reviewer_kind <> 'human' AND v.verdict <> 'correct'
-                            AND NOT EXISTS (SELECT 1 FROM proof_repairs r WHERE r.review_id = v.id AND r.revision_no = v.revision_no)", [$pid]) as $v) {
+                            AND NOT EXISTS (SELECT 1 FROM proof_repairs r WHERE r.kind = 'proof' AND r.review_id = v.id AND r.revision_no = v.revision_no)", [$pid]) as $v) {
             self::onReview((int)$v['id']);
         }
         // A fact edited or retracted since: its repair no longer applies.
-        Db::run("UPDATE proof_repairs SET state = 'closed', updated_at = ? WHERE project_id = ? AND state IN ('repair', 'check')
+        Db::run("UPDATE proof_repairs SET state = 'closed', updated_at = ? WHERE project_id = ? AND kind = 'proof' AND state IN ('repair', 'check')
                  AND fact_id IN (SELECT id FROM facts WHERE project_id = ? AND (deleted_at IS NOT NULL OR retracted_at IS NOT NULL OR current_revision <> proof_repairs.revision_no))", [Db::now(), $pid, $pid]);
     }
 
@@ -101,7 +101,7 @@ final class ProofRepair
     public static function due(int $pid, string $step): array
     {
         $rows = Db::all("SELECT r.* FROM proof_repairs r JOIN facts f ON f.id = r.fact_id AND f.current_revision = r.revision_no AND f.deleted_at IS NULL AND f.retracted_at IS NULL
-                         WHERE r.project_id = ? AND r.state = ? ORDER BY r.id", [$pid, $step]);
+                         WHERE r.project_id = ? AND r.kind = 'proof' AND r.state = ? ORDER BY r.id", [$pid, $step]);
         if (count($rows) < 2) return $rows;
         $rank = array_flip(array_keys(Verification::rank($pid)));
         usort($rows, fn($a, $b) => [$rank[(int)$a['fact_id']] ?? PHP_INT_MAX, (int)$a['id']] <=> [$rank[(int)$b['fact_id']] ?? PHP_INT_MAX, (int)$b['id']]);
@@ -173,7 +173,7 @@ final class ProofRepair
             $id = (int)$a['repair_id'];
             if (!isset($mine[$id])) continue;
             unset($mine[$id]); // once each
-            $r = Db::one("SELECT * FROM proof_repairs WHERE id = ? AND state = 'repair'", [$id]);
+            $r = Db::one("SELECT * FROM proof_repairs WHERE id = ? AND kind = 'proof' AND state = 'repair'", [$id]);
             if (!$r) continue;
             $text = trim((string)$a['explanation']);
             $outcome = (string)$a['outcome'];
@@ -210,7 +210,7 @@ final class ProofRepair
             $id = (int)$a['repair_id'];
             if (!isset($mine[$id])) continue;
             unset($mine[$id]);
-            $r = Db::one("SELECT * FROM proof_repairs WHERE id = ? AND state = 'check'", [$id]);
+            $r = Db::one("SELECT * FROM proof_repairs WHERE id = ? AND kind = 'proof' AND state = 'check'", [$id]);
             if (!$r) continue;
             $verdict = (string)$a['verdict']; $text = trim((string)$a['explanation']);
             if ($verdict !== 'correct' && $text === '') continue; // a flaw must be explained
@@ -278,19 +278,19 @@ final class ProofRepair
         return array_map(fn($r) => ['id' => (int)$r['id'], 'state' => $r['state'], 'round' => (int)$r['round'], 'rounds' => self::ROUNDS, 'proof_id' => $r['proof_id'] ? (int)$r['proof_id'] : null,
             'asked_by' => $r['asked_by'] ? (string)Db::value('SELECT name FROM users WHERE id = ?', [$r['asked_by']]) : null, 'review_id' => (int)$r['review_id'],
             'steps' => json_decode((string)$r['steps_json'], true) ?: [], 'updated_at' => $r['updated_at']],
-            Db::all('SELECT * FROM proof_repairs WHERE fact_id = ? AND revision_no = ? ORDER BY id DESC', [$fid, $revision]));
+            Db::all("SELECT * FROM proof_repairs WHERE kind = 'proof' AND fact_id = ? AND revision_no = ? ORDER BY id DESC", [$fid, $revision]));
     }
 
     /** The step a fact waits for, if any: "repair" or "check". */
     public static function pendingStep(int $fid): ?string
     {
-        $s = Db::value("SELECT r.state FROM proof_repairs r JOIN facts f ON f.id = r.fact_id AND f.current_revision = r.revision_no WHERE r.fact_id = ? AND r.state IN ('repair', 'check') LIMIT 1", [$fid]);
+        $s = Db::value("SELECT r.state FROM proof_repairs r JOIN facts f ON f.id = r.fact_id AND f.current_revision = r.revision_no WHERE r.fact_id = ? AND r.kind = 'proof' AND r.state IN ('repair', 'check') LIMIT 1", [$fid]);
         return $s ? (string)$s : null;
     }
 
     /** The reviews a repair settled, by id: both sides agreed on a proof, or the reviewer's side was convinced. */
     public static function resolvedReviews(int $pid): array
     {
-        return array_fill_keys(array_map('intval', array_column(Db::all("SELECT review_id FROM proof_repairs WHERE project_id = ? AND state = 'proof'", [$pid]), 'review_id')), true);
+        return array_fill_keys(array_map('intval', array_column(Db::all("SELECT review_id FROM proof_repairs WHERE project_id = ? AND kind = 'proof' AND state = 'proof'", [$pid]), 'review_id')), true);
     }
 }

@@ -30,6 +30,10 @@ final class Procedures
             'proof_review' => ['label' => 'Review proofs', 'description' => 'Referee the proofs nobody reviewed yet, a few at a time, as an independent reader: correct, a gap, or an error. Each review is shown with its model, like any AI review, and people can review the fact too. A client that can use another company\'s AI reviews with it: its check is the more independent.', 'tier' => 'strong', 'capabilities' => [], 'independent' => true],
             'proof_repair' => ['label' => 'Repair proofs', 'description' => 'When an AI review finds a gap or an error, an AI of another company repairs the proof, says why the review is wrong, or that the gap cannot be fixed. A repaired proof is added as another proof: the reviewed text never changes.', 'tier' => 'strong', 'capabilities' => [], 'independent' => true],
             'repair_check' => ['label' => 'Check repairs', 'description' => 'An AI of the reviewer\'s side checks a repaired proof, or the answer that the review was wrong. Rounds go on until both sides agree on a proof or on a gap, or ' . ProofRepair::ROUNDS . ' rounds have passed: then people decide, with both sides\' arguments.', 'tier' => 'strong', 'capabilities' => [], 'independent' => true],
+            'statement_fix' => ['label' => 'Correct statements', 'description' => 'When a member says a statement is wrong (its base system, a hypothesis, a quantifier), an AI proposes up to ' . StatementFix::PROPOSALS . ' corrected statements, each with a proof, checking the source, or says the statement is right as it is. Nothing changes until another company\'s AI accepts a proposal and a member chooses.', 'tier' => 'strong', 'capabilities' => ['document'], 'independent' => true],
+            'fix_check' => ['label' => 'Check corrections', 'description' => 'An AI of another company checks each proposed statement against the request, the source and its proof. A member then chooses which accepted statements replace the fact, as new facts; the old one is retracted as superseded.', 'tier' => 'strong', 'capabilities' => ['document'], 'independent' => true],
+            'relink' => ['label' => 'Check facts after a correction', 'description' => 'When a fact is superseded by corrected statements, an AI reads each fact that relied on it: does its proof work with a corrected statement, or did it need the old one?', 'tier' => 'strong', 'capabilities' => [], 'independent' => true],
+            'relink_check' => ['label' => 'Check those answers', 'description' => 'An AI of another company checks each answer. Agreed, the fact relies on the corrected statement, its text unchanged; or a review records the gap, which starts a repair of its proof.', 'tier' => 'strong', 'capabilities' => [], 'independent' => true],
             'second_reading' => ['label' => 'Second reading', 'description' => 'Read again the consolidation\'s proposals it was not sure enough to apply, and apply or drop each one, so that people decide only what needs them. Everything can be undone.', 'tier' => 'strong', 'capabilities' => []],
             'source_check' => ['label' => 'Check a cited result', 'description' => 'Read the source of a result cited without proof, and say whether it states the result as written. People still accept it.', 'tier' => 'fast', 'capabilities' => ['document', 'web_search']],
         ];
@@ -204,6 +208,56 @@ Answer in "checks", one entry per item with its "repair_id" and "verdict":
   now convinced it holds; "gap" or "incorrect" if the objection stands.
 In "explanation", name the exact location of each remaining issue, or, for "correct", say what you checked. Do not write a proof yourself.
 TXT,
+        'statement_fix' => <<<'TXT'
+TASK: "corrections" in task.json lists facts whose statement a member of the project says is wrong. For each one you get the fact as it
+stands ("statement", "proof", its "definitions", its "sources" with their quotes and pages), its "dependencies", the facts that use it
+("used_by"), the "proposals" of the last round with the checker's verdicts in "steps", and every step so far, starting with the member's
+request. When "document" is in task.json, it is the source itself: read the passage of the statement in it. A corrected statement is a
+new claim: it will replace the fact as a new fact, and every fact in "used_by" will be checked against it.
+Correct, do not rewrite: change only what the request, the source or the checker's last objection calls for (the base system: RCA is not
+RCA_0, as RCA allows full induction; a hypothesis; a quantifier; a bound), and keep the notation and everything else.
+Answer in "corrections", one entry per item, with its "correction_id" and "outcome":
+- "corrected": "proposals", one to three, each {"title", "statement", "proof", "from_source", "why"}. "title" is the fact's title,
+  corrected the same way when it names what changed ("Half-matching dichotomy (RCA_0)" becomes "Half-matching dichotomy (RCA)"), else
+  unchanged; two proposals never share a title. First the statement as the source states it
+  ("from_source": true). Then, only if they are true and useful, variants (false): for instance the old base system with the extra
+  hypothesis its proof needs, which may keep the facts in "used_by" working. Each "proof" is complete, relies only on the dependencies and
+  standard facts, in the notation of the statement, with $...$ for formulas. In "why", where the source says so, or why the variant holds.
+  In "explanation", what is wrong with the current statement.
+- "keep": the statement is right as it stands and the request is mistaken. "proposals": [], and in "explanation" why, quoting the source.
+- "impossible": no correct statement can be written from the source and the dependencies. "proposals": [], and say why.
+A checker of another company reads each proposal against the source: propose nothing the source and the proofs do not support.
+TXT,
+        'fix_check' => <<<'TXT'
+TASK: "corrections" in task.json lists corrections of statements, each between a member's request and an AI's "proposals". For each one
+you get the fact as it stands, its definitions, sources and dependencies, the facts that use it, the proposals (each with its "index"),
+and the "steps" so far. When "document" is in task.json, it is the source: read the passage. You are an independent referee.
+Answer in "checks", one entry per proposal, with the "correction_id", the "proposal" index and a "verdict":
+- "correct" only if the statement is true and is either what the source states (when "from_source" is true) or a genuine variant, its
+  proof is complete and correct relative to the dependencies, and it changes nothing the request and the source do not call for;
+- "gap" if the statement is right but its proof has a gap;
+- "incorrect" if the statement is not what the source states, changes more than it should, or is false.
+When there are no proposals (the AI answered that the statement is right as it is), give one entry with "proposal": null: "correct" if
+you agree, "incorrect" if the request is right and the statement must be corrected.
+In "explanation", name the exact place of each issue, or what you checked against the source. Do not write a correction yourself.
+TXT,
+        'relink' => <<<'TXT'
+TASK: "relinks" in task.json lists facts whose proof relied on a fact that turned out to be wrong ("superseded") and was replaced by
+corrected statements ("replacements", each with its "fact_id", statement and proof). For each one, read the "fact": its statement,
+proof and definitions. Decide whether its proof still works when it relies on one of the replacements instead of the superseded fact,
+without changing its statement or its proof beyond the citation. A replacement is often weaker (over RCA rather than RCA_0): check what
+the proof actually uses. Answer in "relinks", one entry per item with its "relink_id" and "outcome":
+- "use": the proof works with the replacement "new_fact_id" (one of the replacements' fact_id); in "explanation", say which step used the
+  superseded fact and why the replacement gives what it needs.
+- "needs_old": the proof uses something only the superseded statement gave: "new_fact_id" null, and in "explanation", the step and what
+  it needs. A repair of the proof will start from your explanation.
+TXT,
+        'relink_check' => <<<'TXT'
+TASK: "relinks" in task.json lists facts whose proof relied on a superseded fact, each with another AI's answer in its last step: "use"
+(the proof works with the replacement it names) or "needs_old" (the proof needed the superseded statement). Check that answer strictly:
+read the fact's proof, the superseded statement and the replacements. Answer in "checks", one entry per item with its "relink_id",
+"verdict" ("correct" if you agree with the answer, "incorrect" if not) and "explanation" (the exact step and what it needs).
+TXT,
         'second_reading' => <<<'TXT'
 TASK: "proposals" in task.json lists changes that an AI proposed after reading the whole facts database of the project, but was not
 sure enough to apply on its own. You are a second, independent reader: decide each one, so that people only decide what really needs
@@ -334,6 +388,10 @@ TXT,
         'notation_rephrase_batch' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'facts'], "properties" => ["summary" => ["type" => 'string'], "facts" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['fact_id', 'unchanged', 'statement', 'proof', 'local_notation', 'uses', 'doubt'], "properties" => ["fact_id" => ["type" => 'integer'], "doubt" => ["type" => 'string'], "unchanged" => ["type" => 'boolean'], "statement" => ["type" => 'string'], "proof" => ["type" => ['string', 'null']], "local_notation" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'meaning'], "properties" => ["symbol" => ["type" => 'string'], "meaning" => ["type" => 'string']]]], "uses" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['symbol', 'meaning_here', 'project_symbol'], "properties" => ["symbol" => ["type" => 'string'], "meaning_here" => ["type" => 'string'], "project_symbol" => ["type" => 'string']]]]]]]]],
         'source_check_batch' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'checks'], "properties" => ["summary" => ["type" => 'string'], "checks" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['fact_id', 'verdict', 'where', 'explanation', 'doubt'], "properties" => ["fact_id" => ["type" => 'integer'], "doubt" => ["type" => 'string'], "verdict" => ["type" => 'string', "enum" => ['confirmed', 'differs', 'not_found', 'unreadable']], "where" => ["type" => 'string'], "explanation" => ["type" => 'string']]]]]],
         'rewrite_check' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'checks'], "properties" => ["summary" => ["type" => 'string'], "checks" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['rewrite_id', 'verdict', 'note'], "properties" => ["rewrite_id" => ["type" => 'integer'], "verdict" => ["type" => 'string', "enum" => ['faithful', 'unfaithful']], "note" => ["type" => 'string']]]]]],
+        'statement_fix' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'corrections'], "properties" => ["summary" => ["type" => 'string'], "corrections" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['correction_id', 'outcome', 'proposals', 'explanation'], "properties" => ["correction_id" => ["type" => 'integer'], "outcome" => ["type" => 'string', "enum" => ['corrected', 'keep', 'impossible']], "proposals" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['title', 'statement', 'proof', 'from_source', 'why'], "properties" => ["title" => ["type" => 'string'], "statement" => ["type" => 'string'], "proof" => ["type" => 'string'], "from_source" => ["type" => 'boolean'], "why" => ["type" => 'string']]]], "explanation" => ["type" => 'string']]]]]],
+        'fix_check' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'checks'], "properties" => ["summary" => ["type" => 'string'], "checks" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['correction_id', 'proposal', 'verdict', 'explanation'], "properties" => ["correction_id" => ["type" => 'integer'], "proposal" => ["type" => ['integer', 'null']], "verdict" => ["type" => 'string', "enum" => ['correct', 'gap', 'incorrect']], "explanation" => ["type" => 'string']]]]]],
+        'relink' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'relinks'], "properties" => ["summary" => ["type" => 'string'], "relinks" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['relink_id', 'outcome', 'new_fact_id', 'explanation'], "properties" => ["relink_id" => ["type" => 'integer'], "outcome" => ["type" => 'string', "enum" => ['use', 'needs_old']], "new_fact_id" => ["type" => ['integer', 'null']], "explanation" => ["type" => 'string']]]]]],
+        'relink_check' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'checks'], "properties" => ["summary" => ["type" => 'string'], "checks" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['relink_id', 'verdict', 'explanation'], "properties" => ["relink_id" => ["type" => 'integer'], "verdict" => ["type" => 'string', "enum" => ['correct', 'incorrect']], "explanation" => ["type" => 'string']]]]]],
         'proof_repair' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'repairs'], "properties" => ["summary" => ["type" => 'string'], "repairs" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['repair_id', 'outcome', 'proof', 'explanation'], "properties" => ["repair_id" => ["type" => 'integer'], "outcome" => ["type" => 'string', "enum" => ['repaired', 'review_wrong', 'real_gap']], "proof" => ["type" => ['string', 'null']], "explanation" => ["type" => 'string']]]]]],
         'repair_check' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'checks'], "properties" => ["summary" => ["type" => 'string'], "checks" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['repair_id', 'verdict', 'explanation'], "properties" => ["repair_id" => ["type" => 'integer'], "verdict" => ["type" => 'string', "enum" => ['correct', 'gap', 'incorrect']], "explanation" => ["type" => 'string']]]]]],
         'proof_review' => ["type" => 'object', "additionalProperties" => false, "required" => ['summary', 'reviews'], "properties" => ["summary" => ["type" => 'string'], "reviews" => ["type" => 'array', "items" => ["type" => 'object', "additionalProperties" => false, "required" => ['fact_id', 'verdict', 'explanation'], "properties" => ["fact_id" => ["type" => 'integer'], "verdict" => ["type" => 'string', "enum" => ['correct', 'gap', 'incorrect']], "explanation" => ["type" => 'string']]]]]],
@@ -563,6 +621,14 @@ TXT,
                 $typed = NotationController::typeEntries($pid, json_decode((string)$t['snapshot_json'], true)['types'] ?? [], $answer['types'] ?? []);
                 $read = count($symbols) . ' symbol' . (count($symbols) === 1 ? '' : 's') . ' read' . ($done ? " ($done)" : '');
                 return ['summary' => trim($read . ($typed ? "; $typed entr" . ($typed === 1 ? 'y' : 'ies') . ' typed' : '') . ". $said"), 'suggestion_ids' => $r['created']];
+            case 'statement_fix':
+            case 'fix_check':
+                $r = $v === 'statement_fix' ? StatementFix::applyRevisions($t, $answer['corrections'], $model, $seconds) : StatementFix::applyChecks($t, $answer['checks'], $model, $seconds);
+                return ['summary' => trim($r['summary'] . ' ' . $said)] + $r;
+            case 'relink':
+            case 'relink_check':
+                $r = $v === 'relink' ? Relink::applyReadings($t, $answer['relinks'], $model) : Relink::applyChecks($t, $answer['checks'], $model, $seconds);
+                return ['summary' => trim($r['summary'] . ' ' . $said)] + $r;
             case 'proof_repair':
             case 'repair_check':
                 $r = $v === 'proof_repair' ? ProofRepair::applyRepairs($t, $answer['repairs'], $model, $seconds) : ProofRepair::applyChecks($t, $answer['checks'], $model, $seconds);
