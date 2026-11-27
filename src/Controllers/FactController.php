@@ -1524,9 +1524,7 @@ final class FactController
     private static function assertShareable(int $conversationId, int $pid, bool $publishPrivate): void
     {
         if ($publishPrivate) return;
-        $outside = Db::value('SELECT 1 FROM project_members pm WHERE pm.project_id = ?
-            AND pm.user_id NOT IN (SELECT user_id FROM conversation_participants WHERE conversation_id = ?)', [$pid, $conversationId]);
-        if ($outside) {
+        if (AiTaskController::outsideMembers($pid, $conversationId) > 0) {
             throw new HttpError(422, 'This conversation is private and every project member can see facts. Ask the user, then send publish_private: true.');
         }
     }

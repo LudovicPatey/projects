@@ -338,23 +338,26 @@ export const ARTICLES = [
 
   // ---------------------------------------------------------------- Conversations and comments
   {
-    slug: 'conversations', category: 'talk', title: 'Conversations', summary: 'Linear discussions with the people you choose.',
-    keywords: 'mail messages discussion inbox starred archived reply send participants thread email',
+    slug: 'conversations', category: 'talk', title: 'Conversations', summary: 'Linear discussions with the whole project or with the people you choose.',
+    keywords: 'mail messages discussion inbox starred archived reply send participants thread email public private whole project everyone future members',
     blocks: [
       p('[Mail](app:conversations) works like a webmail: the list on the left, the selected conversation in the middle, and its comments on the right.'),
       live((c) => c.conversations.unread.length ? [line('Waiting for you:', c.conversations.unread.map(toConv))]
         : c.conversations.latest ? [line('You are up to date. Your latest conversation:', [toConv(c.conversations.latest)])]
           : [line('You do not take part in any conversation of this project yet.')]),
       h('Start a conversation'),
-      steps('Click **New**.', 'Enter a **subject** and choose the **participants**.', 'Write your message and click **Send**.'),
-      warn('Only participants can see a conversation. People you add later see its whole history.'),
+      steps('Click **New**.', 'Enter a **subject**.', 'Under **Who can read and answer it**, choose **Whole project** or **Chosen people**, and for chosen people tick who takes part (**All current members** ticks everyone there now).', 'Write your message and click **Send**.'),
+      table(['Choice', 'Who reads and answers it', 'Later'],
+        ['**Whole project**', 'Every member, AI agents included, and everyone who joins the project later, who sees its whole history', 'Nobody can leave it or be added: everyone already takes part. Each member can archive it. Facts extracted from it need no confirmation'],
+        ['**Chosen people**', 'Only the people you tick. Members who join the project later do not see it', 'Participants can add others, who see the whole history, and can leave']),
+      warn('The choice cannot be changed once the conversation has started: a private conversation is never opened to the project, and a whole-project one never becomes private. To discuss with everyone what started in private, start a new whole-project conversation. Its header says which one it is: **Whole project** or **Chosen people**.'),
       h('Organize'),
-      table(['Action', 'Effect'], ['**Star**', 'Keeps it in the Starred folder'], ['**Archive**', 'Removes it from the inbox. A new message brings it back'], ['**Mark as unread**', 'Shows it as new again, for you only'], ['**Leave**', 'You no longer see it, unless someone adds you back']),
+      table(['Action', 'Effect'], ['**Star**', 'Keeps it in the Starred folder'], ['**Archive**', 'Removes it from the inbox. A new message brings it back'], ['**Mark as unread**', 'Shows it as new again, for you only'], ['**Leave**', 'You no longer see it, unless someone adds you back. Not offered in a whole-project conversation: archive it instead']),
       p('You can edit your own messages. An edited message is marked as such.'),
       h('Ask the AI'),
       p('Write your question and click **Ask AI**, or leave the draft empty to ask its opinion on the discussion. Everyone in the conversation sees the question and the answer. The work runs on the AI client of a participant, so the discussion is sent to that person’s AI provider.'),
       h('Extract facts from a conversation'),
-      steps('Open the conversation.', 'Click **Extract facts**.', 'If the conversation is private, read the notice and confirm.', 'The next AI client of a **participant** adds the results to [Facts](app:facts), each with the message it comes from and an exact quotation.'),
+      steps('Open the conversation.', 'Click **Extract facts**.', 'If the conversation is private (chosen people, and some members are not among them), read the notice and confirm. A whole-project conversation needs no confirmation: every member can read it.', 'The next AI client of a **participant** adds the results to [Facts](app:facts), each with the message it comes from and an exact quotation.'),
       list('Extraction never starts by itself on a conversation.', 'Guesses and ideas are not recorded as theorems, and a claim withdrawn later in the discussion is left out.', 'After new messages, the button becomes **Extract new messages**.'),
       warn('Every project member sees the statements and proofs extracted from a private conversation. Its quotes and link stay hidden from non-participants. The other participants are notified, only the messages present when you confirm are read, and the request stops if one of them is edited before it runs.'),
     ],
@@ -531,7 +534,7 @@ export const ARTICLES = [
         ['**A file**, **a reference**', '**A new extraction**, following what you say; for a reference, **related works**', 'New facts with their quotations, as any extraction'],
         ['**A notation entry**', '**A change** of the entry', 'A new entry is proposed beside it; members agree on it or reject it. Agreeing on it needs this one changed or rejected first'],
         ['', '**A rewrite** of the facts, **settling** the notation', 'The upkeep passes, started now'],
-        ['**A conversation**', '**An extraction** of its facts', 'Only when every member can read it: a private conversation\'s participants confirm the sharing on its page']),
+        ['**A conversation**', '**An extraction** of its facts', 'Only when every member can read it, as in a whole-project conversation: a private conversation\'s participants confirm the sharing on its page']),
       list('Work an instruction queues counts as one of your AI requests.', 'An instruction the AI does not understand, or that asks for something outside these lists (editing an object directly, changing other objects), starts nothing: the reply says what it understood and what you could write instead. A plain question is answered in the thread.', 'Only a person\'s comment is an instruction: a comment written by an AI never starts one.', 'AI clients follow instructions from version 1.22.4, or earlier once their member turns on **Follow @AI instructions** on the Work page. An older client answers the comment as a question, as before, and starts nothing.'),
       h('When an AI finds a flaw: the repair'),
       p('When an AI review finds a gap or an error, the proof is not left there. An AI of **another company** than the reviewer answers the review, with the fact\'s definitions and the facts it may rely on: it **repairs** the proof, or explains why **the review is wrong**, or says the gap **cannot be fixed**. A repaired proof is added as another proof, marked **Repair**: the reviewed text never changes, and the statement is never weakened. An AI of the **reviewer\'s side** then checks the repair, or reads the answer.'),
@@ -1000,7 +1003,7 @@ export const ARTICLES = [
     slug: 'privacy', category: 'admin', title: 'Who can see what', summary: 'Visibility of your data within a project.',
     keywords: 'privacy private visibility security who can see access permissions confidential',
     blocks: [
-      table(['Content', 'Visible to'], ['Card of a public project: title, main question, owners, member count', 'Every signed-in researcher'], ['A request to join, with its motivation', 'You and the owners of the project'], ['Question, facts, files, bibliography and their comments', 'All project members, including AI agents'], ['Conversations and their comments', 'Their participants only'], ['Your email address', 'You only'], ['Your read state', 'You only'], ['Your API keys', 'You only, and only when created']),
+      table(['Content', 'Visible to'], ['Card of a public project: title, main question, owners, member count', 'Every signed-in researcher'], ['A request to join, with its motivation', 'You and the owners of the project'], ['Question, facts, files, bibliography and their comments', 'All project members, including AI agents'], ['Whole-project conversations and their comments', 'All project members, including those who join later'], ['Other conversations and their comments', 'Their participants only'], ['Your email address', 'You only'], ['Your read state', 'You only'], ['Your API keys', 'You only, and only when created']),
       warn('A fact extracted from a private conversation is visible to all members. Its quote and link stay hidden from non-participants, and a participant must confirm before the extraction is queued.'),
       p('People outside a project cannot see anything in it. Your own AI client sees what you see.'),
     ],

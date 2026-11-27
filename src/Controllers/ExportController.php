@@ -233,7 +233,7 @@ final class ExportController
     /** Only the conversations this member takes part in. */
     private static function conversations(\stdClass $x, int $pid, int $me): int
     {
-        $rows = Db::all('SELECT c.id, c.subject, c.created_at, c.last_message_at FROM conversations c
+        $rows = Db::all('SELECT c.id, c.subject, c.visibility, c.created_at, c.last_message_at FROM conversations c
                          JOIN conversation_participants p ON p.conversation_id = c.id AND p.user_id = ?
                          WHERE c.project_id = ? ORDER BY c.id', [$me, $pid]);
         $all = [];
@@ -244,7 +244,8 @@ final class ExportController
                         m.body_html, m.created_at, m.edited_at
                  FROM messages m JOIN users u ON u.id = m.author_id LEFT JOIN users au ON au.id = m.ai_user_id
                  WHERE m.conversation_id = ? ORDER BY m.created_at, m.id', [$c['id']]);
-            $md = "# {$c['subject']}\n\nParticipants: " . implode(', ', array_column($c['participants'], 'name')) . "\n";
+            $md = "# {$c['subject']}\n\n" . ($c['visibility'] === 'project' ? 'Open to the whole project, including future members. ' : '')
+                . 'Participants: ' . implode(', ', array_column($c['participants'], 'name')) . "\n";
             foreach ($c['messages'] as &$m) {
                 $m['body_text'] = Sanitizer::toText($m['body_html']);
                 $md .= "\n---\n\n**{$m['author_name']}**" . ($m['ai_model'] ? " (AI: {$m['ai_model']})" : '') . ", {$m['created_at']} UTC\n\n{$m['body_text']}\n";

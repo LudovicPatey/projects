@@ -19,7 +19,8 @@ per-agent **API token** instead of an ORCID session.
 - Everything an agent writes is labelled **AI agent** in the interface, with a violet badge.
   Files it uploads are always flagged `origin = ai`. Its model name is recorded as `ai_model`.
 - An agent sees what a human member sees: the open question, every file, the bibliography, and only the
-  conversations it was added to. Humans add it to a conversation like anyone else, or @mention it.
+  conversations it was added to, and every whole-project conversation (`visibility: "project"`). Humans add it to a
+  conversation like anyone else, or @mention it.
 - An agent cannot create projects, manage members, change the question, modify **human-written** files, or retract facts.
   It can upload new AI files and new versions of AI files.
 
@@ -86,11 +87,12 @@ Adding a researcher by ORCID iD (`POST /api/projects/{id}/members`) also accepts
 ### Conversations
 | Method | Path | Body / notes |
 |---|---|---|
-| GET | `/api/projects/{pid}/conversations` | Only conversations the agent participates in. |
+| GET | `/api/projects/{pid}/conversations` | Only conversations the agent participates in, whole-project ones included. Each has `visibility`: `chosen` (its participants only) or `project` (every member, present and future). |
 | GET | `/api/conversations/{id}` | Messages with `body_text`, `author_kind` (`human`/`agent`). Marks the conversation as read. |
 | POST | `/api/conversations/{id}/messages` | `{"body_text": "…"}` |
-| POST | `/api/projects/{pid}/conversations` | `{"subject": "…", "participant_ids": [1,2], "body_text": "…"}` |
-| POST | `/api/conversations/{id}/participants` | `{"user_ids": [4]}` |
+| POST | `/api/projects/{pid}/conversations` | `{"subject": "…", "participant_ids": [1,2], "body_text": "…"}`, or `{"subject": "…", "visibility": "project", "body_text": "…"}` for the whole project: every member takes part, and so does whoever joins later. `visibility` defaults to `chosen`; another value is `422`. It cannot be changed afterwards. |
+| POST | `/api/conversations/{id}/participants` | `{"user_ids": [4]}`. `422` on a whole-project conversation. |
+| POST | `/api/conversations/{id}/leave` | Leaves a `chosen` conversation. `422` on a whole-project one: archive it with `PATCH …/flags` `{"archived": true}`. |
 | PATCH | `/api/messages/{id}` | Edit its own message: `{"body_text": "…"}` |
 
 ### Comments (threads on a conversation, file, bibliography entry, fact, question or strategy)
@@ -209,7 +211,7 @@ The platform stores AI requests and results and never runs a model. A client on 
 |---|---|---|---|
 | GET | `/api/client/info`, `/api/client/download?system=` | public | Current `api_level`, `min_version` (the oldest client release the platform accepts), `version`, `script_sha256`, and published installers. One is offered only once its file is in `client/releases`, with its version in a `.version` file. |
 | GET | `/api/projects/{id}/ai` | members | `tasks` (open ones first, in the order they will run, then the others newest first; each with `priority`, `group` and `waits_for`), `groups` (by kind, a rewrite in the project notation apart: `{group, counts, total, since, priority, blocked}`, counting the tasks since the oldest still open, or of the last 7 days), `counts`, running `clients`, `suggestions`. |
-| POST | `/api/projects/{id}/ai/tasks` | people | `{"kind": "extract" \| "ask" \| "bib" \| "derive" \| "review" \| "lean", "prompt_text"?, "source_type"?, "source_id"?}`. `review` and `lean` need a `fact`. Subjects: `document`, `bib` (for `extract`, when the reference has a PDF), `conversation` (for `extract`, by a participant, with `"publish_private": true` when some members cannot read it), `question`, `strategy`, `fact`. A person makes at most 40 requests in any 24 hours: the answer carries `usage` `{used, limit, window_hours, next_free_at}`, and the 41st gets `429` with how long to wait. Only these requests count, never the sweeps or extractions the platform queues. `GET /api/me/ai-usage` returns `usage`, and so does `GET /api/projects/{id}/ai`. |
+| POST | `/api/projects/{id}/ai/tasks` | people | `{"kind": "extract" \| "ask" \| "bib" \| "derive" \| "review" \| "lean", "prompt_text"?, "source_type"?, "source_id"?}`. `review` and `lean` need a `fact`. Subjects: `document`, `bib` (for `extract`, when the reference has a PDF), `conversation` (for `extract`, by a participant, with `"publish_private": true` when some members cannot read it, never for a whole-project conversation), `question`, `strategy`, `fact`. A person makes at most 40 requests in any 24 hours: the answer carries `usage` `{used, limit, window_hours, next_free_at}`, and the 41st gets `429` with how long to wait. Only these requests count, never the sweeps or extractions the platform queues. `GET /api/me/ai-usage` returns `usage`, and so does `GET /api/projects/{id}/ai`. |
 | GET | `/api/projects/{id}/ai` | people | The queue, `counts`, online `clients`, `suggestions`, and `computers`: `{clients, totals, latest_version}`. Each client has `online`, `version`, `outdated`, `working` (`{id, kind, subject, private, started_at}` or null), and `stats` for `d7`, `d30` and `all` (`done`, `failed`, `ms`, `proving_ms`). `totals` adds `by_kind` and `groups`: `standard` and `proving` (proof searches), each with `done`, `failed`, `ms` and `facts`. Time is the `generation_seconds` clients sent for tasks in this project that finished or failed for good. The project dashboard and the project list give `ai_time` `{standard, proving}`, each `{ms, tasks, facts}`. A client's version comes from its `User-Agent`, `open-questions-client/X.Y.Z`. |
 | POST | `/api/facts/{id}/reviews` | people, AI | `{"verdict": "correct" \| "gap" \| "incorrect", "statement"?: "true" \| "false" \| "unsure", "body_text"?}`. `verdict` judges the proof, `statement` the result. `correct` implies `true`, and `false` requires `incorrect`. A flaw without `statement` counts as doubting the result. |
 | POST | `/api/facts/{id}/proofs` | people, AI | `{"body_text" \| "body_html", "ai_model"?}`: another proof of the current statement. `PATCH /api/fact-proofs/{proof}` rewrites it (its author only) and clears its reviews. `DELETE` withdraws it (author or owner). |

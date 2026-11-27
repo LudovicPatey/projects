@@ -31,6 +31,8 @@ final class Activity
     {
         $max = (int)Db::value('SELECT COALESCE(MAX(id), 0) FROM activity WHERE project_id = ?', [$pid]);
         foreach (self::TYPES as $type) self::setMark($uid, $pid, $type, 0, $max);
+        // Whole-project conversations include whoever joins, as they include the members already there.
+        Access::syncProjectConversations($pid, $uid);
     }
 
     /** @return array{items: array<string, array<int,int>>, totals: array<string,int>} */

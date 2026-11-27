@@ -2,6 +2,8 @@ import { api } from '../api.js';
 import { store, go, link, attempt, toast, refreshCounters, unreadCount, markRead } from '../store.js';
 import { timeAgo, fullDate, parseDate } from '../util.js';
 import { conversationExtraction, opinionStatus, privateExtractionNotice } from '../ai-model.js';
+import { ACCESS_FINAL, CONVERSATION_ACCESS, accessOf, createBody, whoLine } from '../conversation-model.js';
+import { explain } from '../action-help.js';
 
 const first = (r) => (Array.isArray(r) ? r[0] : r);
 
@@ -11,13 +13,16 @@ export const ConversationsView = {
     return {
       list: [], listLoaded: false, folder: 'inbox', search: '',
       conv: null, convError: null, composing: false,
-      draft: { subject: '', participants: [] }, sending: false,
+      draft: { subject: '', access: 'chosen', participants: [] }, sending: false,
       pending: null, threads: [], activeThread: null,
       adding: false, addSel: [], editingMsg: null, selBtn: null, flashId: null, extracting: false,
     };
   },
   computed: {
     me() { return store.user.id; },
+    access() { return CONVERSATION_ACCESS; },
+    accessFinal() { return ACCESS_FINAL; },
+    convAccess() { return accessOf(this.conv); },
     members() { return store.mentionables.users.filter((u) => u.id !== this.me); },
     folders() {
       const inbox = this.list.filter((c) => !c.archived);
@@ -46,7 +51,7 @@ export const ConversationsView = {
     extraction() { return conversationExtraction(this.conv?.extraction); },
     opinion() { return opinionStatus(this.conv?.ai_opinion); },
     notInConv() {
-      if (!this.conv) return [];
+      if (!this.conv || this.convAccess === 'project') return [];
       const ids = new Set(this.conv.participants.map((p) => p.id));
       return store.mentionables.users.filter((u) => !ids.has(u.id));
     },
@@ -80,7 +85,7 @@ export const ConversationsView = {
       <a v-for="c in filtered" :key="c.id" class="li conv-li" :href="link('conversations', c.id)"
          :class="{active: c.id === id, unread: !!unreadOf(c.id), 'is-new': !!unreadOf(c.id)}">
         <div class="li-top">
-          <span class="li-who">{{ who(c) }}</span>
+          <span class="li-who" :class="{'conv-access': c.visibility === 'project'}" :title="c.visibility === 'project' ? access.project.text : null"><icon v-if="c.visibility === 'project'" name="globe" :size="12"/> {{ who(c) }}</span>
           <span class="li-time">{{ timeAgo(c.last_message_at) }}</span>
           <unread-badge type="conversation" :id="c.id"/>
         </div>
@@ -103,13 +108,19 @@ export const ConversationsView = {
         <button class="icon-btn" @click="composing=false" title="Discard"><icon name="x"/></button></header>
       <div class="compose">
         <label class="field"><span>Subject</span><input v-model="draft.subject" placeholder="e.g. Reduction to the bounded-degree case" autofocus></label>
-        <div class="field"><span>Participants <small class="muted">— only they will see this conversation</small></span>
-          <div class="people-pick">
+        <div class="field" role="radiogroup" aria-label="Who can read and answer this conversation"><span>Who can read and answer it</span>
+          <div class="access-choices">
+            <label v-for="k in ['project', 'chosen']" :key="k" :class="{on: draft.access === k}" :title="explain('conversation.' + k)">
+              <input type="radio" name="conv-access" :value="k" v-model="draft.access"><icon :name="access[k].icon" :size="16"/>
+              <span><b>{{ access[k].label }}</b><small>{{ k === 'project' ? 'Every member, including those who join later' : 'Only the people you tick below' }}</small></span></label>
+          </div>
+          <p class="access-text muted small">{{ access[draft.access].text }} {{ accessFinal }}</p>
+          <div v-if="draft.access === 'chosen'" class="people-pick">
             <label v-for="u in members" :key="u.id" class="person-chip" :class="{on: draft.participants.includes(u.id)}">
               <input type="checkbox" :value="u.id" v-model="draft.participants"><avatar :name="u.name" :id="u.id" :kind="u.kind" :size="20"/> {{ u.name }}
             </label>
             <button class="link-btn" v-if="members.length" @click="draft.participants = draft.participants.length === members.length ? [] : members.map(u => u.id)">
-              {{ draft.participants.length === members.length ? 'None' : 'Everyone' }}</button>
+              {{ draft.participants.length === members.length ? 'None' : 'All current members' }}</button>
             <span v-if="!members.length" class="muted small">You are the only member of this project for now.</span>
           </div>
         </div>
@@ -129,18 +140,24 @@ export const ConversationsView = {
             <button class="icon-btn" :class="{starred: conv.starred}" @click="flag({starred: !conv.starred})" :title="conv.starred ? 'Unstar' : 'Star'"><icon name="star"/></button>
             <button class="icon-btn" @click="flag({archived: !conv.archived})" :title="conv.archived ? 'Move to inbox' : 'Archive'"><icon name="archive"/></button>
             <button class="icon-btn" @click="markUnread" title="Mark as unread"><icon name="mail-unread"/></button>
-            <button class="icon-btn" @click="leave" title="Leave conversation"><icon name="logout"/></button>
+            <button v-if="convAccess === 'chosen'" class="icon-btn" @click="leave" :title="'Leave conversation. ' + explain('conversation.leave')"><icon name="logout"/></button>
           </div>
         </div>
-        <div class="chips">
+        <div v-if="convAccess === 'project'" class="chips conv-who">
+          <span class="pill t-info" :title="explain('conversation.project')"><icon name="globe" :size="12"/> Whole project</span>
+          <span class="hover-list small" tabindex="0" :aria-label="'Who takes part: ' + conv.participants.length + ' members'">{{ conv.participants.length }} member{{ conv.participants.length === 1 ? '' : 's' }}, and anyone who joins
+            <span class="hover-pop" role="tooltip"><b>Every member takes part</b><span>{{ conv.participants.map((p) => p.id === me ? 'You' : p.name).join(', ') }}</span><span class="muted">{{ access.project.text }}</span></span></span>
+        </div>
+        <div v-else class="chips">
+          <span class="pill t-neutral" :title="explain('conversation.chosen')"><icon name="lock" :size="12"/> Chosen people</span>
           <span v-for="p in conv.participants" :key="p.id" class="chip" :class="{'chip-ai': p.kind === 'agent'}"><avatar :name="p.name" :id="p.id" :kind="p.kind" :size="18"/>{{ p.id === me ? 'You' : p.name }}</span>
           <button v-if="notInConv.length" class="chip add" @click="adding = !adding"><icon name="user-plus" :size="13"/> Add</button>
         </div>
         <div v-if="adding" class="add-people">
           <label v-for="u in notInConv" :key="u.id" class="person-chip" :class="{on: addSel.includes(u.id)}">
             <input type="checkbox" :value="u.id" v-model="addSel"><avatar :name="u.name" :id="u.id" :kind="u.kind" :size="20"/> {{ u.name }}</label>
-          <button class="btn primary sm" :disabled="!addSel.length" @click="addPeople">Add to conversation</button>
-          <small class="muted">New participants will see the whole history.</small>
+          <button class="btn primary sm" :disabled="!addSel.length" :title="explain('conversation.add')" @click="addPeople">Add to conversation</button>
+          <small class="muted">They are notified and see the whole history, comments included.</small>
         </div>
       </header>
       <div class="messages" ref="msgs" @mouseup="onMsgMouseUp">
@@ -188,14 +205,9 @@ export const ConversationsView = {
   </section>
 </div>`,
   methods: {
-    timeAgo, fullDate, link,
+    timeAgo, fullDate, link, explain,
     unreadOf(id) { return unreadCount('conversation', id); },
-    who(c) {
-      const others = c.participants.filter((p) => p.id !== this.me);
-      if (!others.length) return 'Only you';
-      const names = others.map((p) => p.name.split(' ')[0]);
-      return names.length > 3 ? names.slice(0, 3).join(', ') + ` +${names.length - 3}` : names.join(', ');
-    },
+    who(c) { return whoLine(c, this.me); },
     describe(t) {
       const m = this.conv?.messages.find((x) => x.id === t.anchor?.message_id);
       return m ? `On ${m.author_name}'s message · ${timeAgo(m.created_at)}` : 'On a message';
@@ -253,7 +265,7 @@ export const ConversationsView = {
       else box.scrollTop = box.scrollHeight;
     },
     startCompose() {
-      this.draft = { subject: '', participants: [] };
+      this.draft = { subject: '', access: 'chosen', participants: [] };
       this.composing = true;
       if (this.id) go(`/p/${this.pid}/conversations?compose=1`);
     },
@@ -262,9 +274,7 @@ export const ConversationsView = {
       if (!this.draft.subject.trim()) return toast('Please enter a subject', 'error');
       if (!html) return toast('The message is empty', 'error');
       this.sending = true;
-      const r = await attempt(() => api.post(`api/projects/${this.pid}/conversations`, {
-        subject: this.draft.subject, participant_ids: this.draft.participants, body_html: html,
-      }));
+      const r = await attempt(() => api.post(`api/projects/${this.pid}/conversations`, { ...createBody(this.draft), body_html: html }));
       this.sending = false;
       if (!r) return;
       this.composing = false;
@@ -319,7 +329,7 @@ export const ConversationsView = {
       }
     },
     async leave() {
-      if (!confirm('Leave this conversation? You will no longer see it unless someone adds you back.')) return;
+      if (!confirm(`Leave “${this.conv.subject}”? ${explain('conversation.leave')}`)) return;
       if (await attempt(() => api.post(`api/conversations/${this.conv.id}/leave`))) {
         await this.loadList();
         go(`/p/${this.pid}/conversations`);

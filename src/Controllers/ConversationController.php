@@ -5,7 +5,11 @@ namespace App\Controllers;
 
 use App\{Access, Activity, Auth, Db, HttpError, Notify, Provenance, Request, Response, Sanitizer};
 
-/** Webmail-like linear conversations between a subset of project members. */
+/**
+ * Webmail-like linear conversations. Each is open to chosen people (visibility 'chosen': its participants only, who can add others) or
+ * to the whole project (visibility 'project': every member takes part, including those who join later; Access::syncProjectConversations).
+ * The choice is made when it starts and is final.
+ */
 final class ConversationController
 {
     public static function list(Request $r): never
@@ -13,8 +17,9 @@ final class ConversationController
         $pid = $r->int('pid');
         Access::member($pid);
         $me = Auth::id();
+        Access::syncProjectConversations($pid, $me);
         $convs = Db::all(
-            "SELECT c.id, c.subject, c.created_at, c.last_message_at, cp.starred, cp.archived, cp.last_read_at,
+            "SELECT c.id, c.subject, c.visibility, c.created_at, c.last_message_at, cp.starred, cp.archived, cp.last_read_at,
                     (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id AND m.author_id <> ?
                         AND (cp.last_read_at IS NULL OR m.created_at > cp.last_read_at)) AS unread,
                     (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) AS message_count,
@@ -39,7 +44,7 @@ final class ConversationController
             $c['archived'] = (bool)$c['archived'];
         }
         $unread = Activity::unread($pid, $me)['items']['conversation'];
-        foreach ($convs as &$c) { $c['unread'] = $unread[(int)$c['id']] ?? 0; $c['private'] = AiTaskController::outsideMembers($pid, (int)$c['id']) > 0; }
+        foreach ($convs as &$c) { $c['unread'] = $unread[(int)$c['id']] ?? 0; $c['private'] = $c['visibility'] !== 'project' && AiTaskController::outsideMembers($pid, (int)$c['id']) > 0; }
         unset($c);
         Response::json(['conversations' => $convs]);
     }
@@ -52,16 +57,21 @@ final class ConversationController
         if ($subject === '') throw new HttpError(422, 'A subject is required.');
         $body = Sanitizer::fromRequest($r, $pid) ?? throw new HttpError(422, 'body_html or body_text is required.');
         if ($body['text'] === '' && !$body['mentions']) throw new HttpError(422, 'The message is empty.');
-        $ids = self::validMembers($pid, (array)$r->input('participant_ids', []));
+        $visibility = $r->input('visibility') ?? 'chosen';
+        if (!in_array($visibility, ['chosen', 'project'], true)) throw new HttpError(422, "visibility is 'chosen' (the participants you list) or 'project' (every present and future member).");
+        // A whole-project conversation includes every member now; those who join later are added when they join.
+        $ids = $visibility === 'project'
+            ? array_map('intval', array_column(Db::all('SELECT user_id FROM project_members WHERE project_id = ?', [$pid]), 'user_id'))
+            : self::validMembers($pid, (array)$r->input('participant_ids', []));
         $ids[] = Auth::id();
         $ids = array_values(array_unique($ids));
 
         $model = Provenance::agentModel($r);
         $stamp = Provenance::stamp($model, $r->input('generation_seconds'));
-        [$cid, $firstMessage] = Db::tx(function () use ($pid, $subject, $ids, $body, $model, $stamp) {
+        [$cid, $firstMessage] = Db::tx(function () use ($pid, $subject, $visibility, $ids, $body, $model, $stamp) {
             $now = Db::now();
             $cid = Db::insert('conversations', [
-                'project_id' => $pid, 'subject' => mb_substr($subject, 0, 255), 'created_by' => Auth::id(),
+                'project_id' => $pid, 'subject' => mb_substr($subject, 0, 255), 'visibility' => $visibility, 'created_by' => Auth::id(),
                 'created_at' => $now, 'last_message_at' => $now,
             ]);
             foreach ($ids as $uid) {
@@ -141,6 +151,7 @@ final class ConversationController
     public static function addParticipants(Request $r): never
     {
         $c = Access::conversation($r->int('id'));
+        if ($c['visibility'] === 'project') throw new HttpError(422, 'Every member of the project already takes part in this conversation, including those who join later.');
         foreach (self::validMembers((int)$c['project_id'], (array)$r->input('user_ids', [])) as $uid) {
             if (!Db::value('SELECT 1 FROM conversation_participants WHERE conversation_id = ? AND user_id = ?', [$c['id'], $uid])) {
                 Db::insert('conversation_participants', ['conversation_id' => $c['id'], 'user_id' => $uid]);
@@ -154,6 +165,7 @@ final class ConversationController
     public static function leave(Request $r): never
     {
         $c = Access::conversation($r->int('id'));
+        if ($c['visibility'] === 'project') throw new HttpError(422, 'Every member of the project takes part in this conversation and cannot leave it. Archive it to take it out of your inbox.');
         Db::run('DELETE FROM conversation_participants WHERE conversation_id = ? AND user_id = ?', [$c['id'], Auth::id()]);
         Response::json(['ok' => true]);
     }

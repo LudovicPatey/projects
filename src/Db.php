@@ -237,10 +237,14 @@ final class Db
         }
         // Projects are private until an owner opens them: a public one shows its card to signed-in researchers, who can ask to join.
         $migrations[] = "ALTER TABLE projects ADD COLUMN visibility VARCHAR(10) NOT NULL DEFAULT 'private'";
+        // A conversation is open to chosen people ('chosen', as before) or to the whole project, present and future members ('project').
+        $migrations[] = "ALTER TABLE conversations ADD COLUMN visibility VARCHAR(10) NOT NULL DEFAULT 'chosen'";
         foreach ($migrations as $m) {
             try { self::pdo()->exec($m); } catch (\PDOException) { /* already applied */ }
         }
         self::pdo()->exec("UPDATE ai_tasks SET kind = 'consolidate' WHERE kind = 'consolidat'");
+        // Every member takes part in a whole-project conversation, whichever way they joined.
+        Access::syncProjectConversations();
         // Existing AI content gets its author's model, or an explicit "unspecified".
         $agentModel = fn(string $col) => "COALESCE((SELECT u.ai_model FROM users u WHERE u.id = $col), 'unspecified')";
         $agents = "(SELECT id FROM users WHERE kind = 'agent')";

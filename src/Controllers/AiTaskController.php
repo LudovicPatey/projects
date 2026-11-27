@@ -472,9 +472,10 @@ final class AiTaskController
             'failed_task' => $last && $last['status'] === 'failed' ? (int)$last['id'] : null, 'clients' => $clients];
     }
 
-    /** Project members who cannot read this conversation. */
+    /** Project members who cannot read this conversation: none for a whole-project one, which every present and future member reads. */
     public static function outsideMembers(int $pid, int $cid): int
     {
+        if (Db::value('SELECT visibility FROM conversations WHERE id = ?', [$cid]) === 'project') return 0;
         return (int)Db::value('SELECT COUNT(*) FROM project_members pm WHERE pm.project_id = ? AND pm.user_id NOT IN (SELECT user_id FROM conversation_participants WHERE conversation_id = ?)', [$pid, $cid]);
     }
 

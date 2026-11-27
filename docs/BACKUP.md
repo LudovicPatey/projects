@@ -1,7 +1,7 @@
 # Backup and restoration
 
 A backup is one `.zip` archive containing **all platform data**: every application table (projects, users,
-conversations, comments, facts, reviews, other proofs of facts and their reviews, repairs of proofs, corrections of statements and the facts they superseded, variants of facts asked by members (`fact_supersessions.relation`), the project notation and facts rewritten in it, consolidation proposals and subject tags of facts, links from proofs to the cited results they use, AI source checks of cited results, native prover campaigns with their rounds and notes, audit keys (hashes only), questions, strategies, requests to join public projects with their motivation, feedback reports, API key hashes, read state…) and every uploaded file.
+conversations with who can read them (`visibility`: chosen people, or the whole project), comments, facts, reviews, other proofs of facts and their reviews, repairs of proofs, corrections of statements and the facts they superseded, variants of facts asked by members (`fact_supersessions.relation`), the project notation and facts rewritten in it, consolidation proposals and subject tags of facts, links from proofs to the cited results they use, AI source checks of cited results, native prover campaigns with their rounds and notes, audit keys (hashes only), questions, strategies, requests to join public projects with their motivation, feedback reports, API key hashes, read state…) and every uploaded file.
 Each table and file is checked by SHA-256, and each new archive is fully verified before it is kept.
 
 An archive does **not** contain `config/config.php`, which holds your database password and ORCID secret.
@@ -30,7 +30,7 @@ python3 oq.py backup --if-due                       # for cron or another schedu
 - Only files named like the client's own backups are ever removed. Copies of a project you have left are kept.
 - Automatic backups run while the app or `oq.py run` is open, and catch up at the next start.
 
-These are the same member copies as **Download project**. They protect a member's readable data, including files, but **cannot be restored with `bin/restore.php`** and exclude other people's private conversations. They do not replace the administrator's full backup below.
+These are the same member copies as **Download project**. They protect a member's readable data, including files, but **cannot be restored with `bin/restore.php`** and exclude other people's private conversations (whole-project conversations are included for every member). They do not replace the administrator's full backup below.
 
 ## Create a backup
 

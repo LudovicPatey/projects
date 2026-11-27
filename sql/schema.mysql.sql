@@ -140,6 +140,7 @@ CREATE TABLE IF NOT EXISTS conversations (
   id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   project_id INT UNSIGNED NOT NULL,
   subject VARCHAR(255) NOT NULL,
+  visibility VARCHAR(10) NOT NULL DEFAULT 'chosen', -- 'chosen': its participants only; 'project': every present and future member takes part
   created_by INT UNSIGNED NOT NULL,
   created_at DATETIME NOT NULL,
   last_message_at DATETIME NOT NULL,
