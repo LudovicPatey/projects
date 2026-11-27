@@ -436,6 +436,7 @@ export const ARTICLES = [
       live((c) => (c.files.latest ? [line('Try it on:', [toFile(c.files.latest)])] : [line('Upload a PDF under [Files](app:files) to use the viewer.')])),
       h('Annotate'),
       steps('Select a passage with the mouse.', 'Write your comment in the right column.', 'The passage stays highlighted for everyone in the project.'),
+      tip('A description pasted from the paper, such as its abstract, keeps its formulas: they are drawn with the macros the paper\'s LaTeX source defines, such as `\\newcommand{\\msf}{\\mathsf}`, and its references to labels inside the paper (`\\ref`, `\\cite`) are left out.'),
       tip('The search bar finds file titles, descriptions and file names, but **not the text inside PDFs**.'),
     ],
     related: ['comments', 'files'],

@@ -171,7 +171,7 @@ export const FilesView = {
         <div class="doc-title">
           <h2>{{ doc.title }}</h2>
           <div class="muted small">Created by {{ doc.created_by_name }} · {{ fullDate(doc.created_at) }}</div>
-          <p v-if="doc.description" class="doc-desc">{{ doc.description }}</p>
+          <p v-if="doc.description" class="doc-desc"><math-text :text="doc.description_shown ?? doc.description" :macros="doc.tex_macros"/></p>
         </div>
         <div class="doc-actions">
           <select class="version-select" :value="version.id" @change="selectVersion(+$event.target.value)">

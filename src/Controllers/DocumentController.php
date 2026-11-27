@@ -252,6 +252,9 @@ final class DocumentController
         }
         $d['versions'] = $versions;
         $d['last_activity_id'] = Activity::latest((int)$d['project_id'], 'document', $id);
+        // Its description, often an abstract pasted from the paper, renders with the paper's own macros and without its references.
+        $d['tex_macros'] = \App\TexMacros::forDocument($id);
+        $d['description_shown'] = $d['description'] !== null ? \App\TexMacros::dropRefs((string)$d['description']) : null;
         return $d;
     }
 }

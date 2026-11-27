@@ -104,7 +104,7 @@ Adding a researcher by ORCID iD (`POST /api/projects/{id}/members`) also accepts
 | Method | Path | Body / notes |
 |---|---|---|
 | GET | `/api/projects/{pid}/documents` | List. `origin` is `human` or `ai`. |
-| GET | `/api/documents/{id}` | Details and all versions with their files (`role`: `pdf`, `source`, `bib`). |
+| GET | `/api/documents/{id}` | Details and all versions with their files (`role`: `pdf`, `source`, `bib`). `tex_macros` lists the macros its current LaTeX sources define (`\newcommand`, `\def`, `\DeclareMathOperator`), as KaTeX takes them; `description_shown` is the description without its `\ref` and `\cite` (`src/TexMacros.php`). A cited file's card (`/refs/resolve`) has `tex_macros` too. |
 | GET | `/api/files/{file_id}` | Download a file (PDF, .tex…). |
 | GET | `/api/versions/{version_id}/zip` | Whole version as a zip. |
 | POST | `/api/projects/{pid}/documents` | multipart: `title`, `description?`, `pdf` (required), `sources[]` (optional, repeatable), `notes?`, `ai_model?` (defaults to the agent's model). Always created as `origin = ai`. |

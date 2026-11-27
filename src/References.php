@@ -210,7 +210,8 @@ final class References
                 break;
             case 'document':
                 foreach ($q("SELECT d.id, d.title, d.description, d.origin, d.ai_model, d.updated_at, u.name AS by_name FROM documents d JOIN users u ON u.id = d.created_by WHERE d.project_id = ? AND d.deleted_at IS NULL AND d.id IN $in") as $r) {
-                    $out[(int)$r['id']] = self::item($type, (int)$r['id'], $r['title'], $r['title'], $r['origin'] === 'ai' ? 'AI-written file' : 'Human-written file', $r['origin'], (string)$r['description'], $r['by_name'], $r['ai_model'], $r['updated_at'], ['view' => 'files', 'id' => (int)$r['id']]);
+                    $out[(int)$r['id']] = self::item($type, (int)$r['id'], $r['title'], $r['title'], $r['origin'] === 'ai' ? 'AI-written file' : 'Human-written file', $r['origin'], \App\TexMacros::dropRefs((string)$r['description']), $r['by_name'], $r['ai_model'], $r['updated_at'], ['view' => 'files', 'id' => (int)$r['id']])
+                        + ['tex_macros' => (object)\App\TexMacros::forDocument((int)$r['id'])];
                 }
                 break;
             case 'version':

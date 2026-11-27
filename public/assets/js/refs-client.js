@@ -141,7 +141,7 @@ export const RefPreview = {
     <h4><math-text :text="heading"/></h4>
     <template v-if="item.state === 'ok'">
       <p v-if="item.subtitle" class="ref-sub"><math-text :text="item.subtitle"/></p>
-      <p v-if="item.excerpt" class="ref-excerpt"><math-text :text="item.excerpt"/></p>
+      <p v-if="item.excerpt" class="ref-excerpt"><math-text :text="item.excerpt" :macros="item.tex_macros"/></p>
       <footer><span v-if="item.by" class="muted small">{{ item.by }}</span><ai-meta :model="item.ai_model" compact/><span class="grow"></span><a v-if="href" :href="href" class="link-btn">Open <icon name="external" :size="11"/></a></footer>
     </template>
     <p v-else class="ref-excerpt">{{ hint }}</p>

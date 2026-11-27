@@ -270,11 +270,12 @@ function hideNotation() { if (pop) pop.hidden = true; }
 
 /** One line of plain text with its LaTeX rendered, for titles and previews in lists. */
 export const MathText = {
-  props: { text: String, highlight: Array },
+  // macros: a paper's own LaTeX macros, for a text taken from it (TexMacros::forDocument).
+  props: { text: String, highlight: Array, macros: Object },
   template: `<span class="math-text" ref="el"></span>`,
   mounted() { this.paint(); },
   beforeUnmount() { clearTimeout(this.retry); },
-  watch: { text() { this.paint(); }, highlight() { this.paint(); } },
+  watch: { text() { this.paint(); }, highlight() { this.paint(); }, macros() { this.paint(); } },
   methods: {
     paint() {
       const el = this.$refs.el;
@@ -283,7 +284,8 @@ export const MathText = {
       el.textContent = bareTex(String(this.text || '').replace(/@\{\w+:([^}]+)\}/g, '$1').replace(/\$\$/g, '$'));
       if (el.textContent.includes('$') || el.textContent.includes('\\(')) {
         if (window.renderMathInElement) {
-          window.renderMathInElement(el, { delimiters: [{ left: '$', right: '$', display: false }, { left: '\\(', right: '\\)', display: false }], throwOnError: false, preProcess: uprightScriptWords });
+          window.renderMathInElement(el, { delimiters: [{ left: '$', right: '$', display: false }, { left: '\\(', right: '\\)', display: false }], throwOnError: false, preProcess: uprightScriptWords,
+            ...(this.macros && Object.keys(this.macros).length ? { macros: { ...this.macros } } : {}) });
         } else {
           this.retry = setTimeout(() => this.paint(), 400); // KaTeX is loaded with defer
         }
