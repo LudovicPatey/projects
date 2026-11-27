@@ -1077,6 +1077,8 @@ final class AiTaskController
                     'statement' => Sanitizer::toText((string)$f['statement_html']), 'proof' => Sanitizer::toText((string)$f['proof_html']),
                     'definitions' => FactController::definitions($pid, (int)$f['id'], (int)$graph[$fid]['current_revision']),
                     'external_refs' => json_decode((string)$f['external_refs_json'], true),
+                    // Where the fact was taken from, so that a base system or a hypothesis changed by extraction is seen.
+                    'sources' => array_values(array_map(fn($s) => ['label' => $s['label'] ?? $s['type'], 'page' => $s['page'] ?? null, 'quote' => $s['quote']], array_filter(FactController::presentSources($fid, (int)$graph[$fid]['current_revision']), fn($s) => !$s['hidden'] && $s['covers'] !== 'context'))),
                     'outside_refs' => array_values(array_map(fn($x) => ['label' => $x['label'], 'settled' => $x['resolved']], $graph[$fid]['outside_refs'] ?? [])),
                     'dependencies' => array_map(fn($d) => ['label' => $d['label'], 'title' => $d['title'], 'statement' => Sanitizer::toText((string)$d['statement_html']),
                         'basis' => $graph[(int)$d['id']]['basis'] ?? null, 'status' => $graph[(int)$d['id']]['status'] ?? null], Db::all(

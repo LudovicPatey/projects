@@ -98,7 +98,9 @@ entry the bare term stands for, for example "full-match" meaning "full-match (HT
 A notion the agreed symbols express directly is written with them, without a symbol of its own: all finite subsets of $\mathbb N$, written
 $\mathcal P_{fin}(\mathbb N)$ by a source, become $\mathrm{FIN}\cup\{\emptyset\}$ once $\mathrm{FIN}$ is agreed for the non-empty ones.
 The mathematical content must stay exactly the same: do not correct, strengthen or weaken anything, and do not add or
-remove hypotheses or steps. If nothing has to change, set "unchanged" to true and copy the text. When you made a choice that the fact's
+remove hypotheses or steps. The base system belongs to the statement: keep it exactly as the fact writes it ($\mathsf{RCA}$, which allows
+full induction, is not $\mathsf{RCA}_0$; $\mathsf{RCA}_0$ is not $\mathsf{ACA}_0$), and add none when the fact has none.
+If nothing has to change, set "unchanged" to true and copy the text. When you made a choice that the fact's
 text does not settle, such as whether its FS includes 0, ask the members in "doubt": one question a person can answer by reading the
 fact and its source; it is shown on the fact until a person checks the rewrite. Otherwise "doubt" is an empty string: not for remarks. The fact must be readable alone: in "local_notation", define every symbol
 of the rewritten fact that is not a project symbol, including the local entries you defined. In "uses", list each symbol whose meaning matters:
@@ -118,7 +120,8 @@ Check whether its source really states it. "fact.references" names the work it i
 When the folder has the text of the source (document.txt or paper.pdf), read it. Otherwise use web search to find the work and the result in it.
 Answer in "verdict": "confirmed" if the work states this result, as written or in an equivalent form; "differs" if it states something
 different, for example with other hypotheses, a weaker conclusion or another setting; "not_found" if you read the work and the result is
-not in it; "unreadable" if you could not read the work at all: no text in the folder, and web search did not give you what
+not in it. Another base system is "differs": $\mathsf{RCA}_0$ where the work says $\mathsf{RCA}$ (full induction), or $\mathsf{ACA}_0$ where it says
+$\mathsf{RCA}_0$, and so is a base system the statement adds when the work states none; "unreadable" if you could not read the work at all: no text in the folder, and web search did not give you what
 it states. In "where", give the theorem number and page when you found it, or an empty string. In "explanation", say what the
 work states, quoting it briefly, and how it differs when it does. You do not judge whether the result is true, only what the work says. When your verdict rests on what you could not read or decide, say in
 "doubt" what a person should check; otherwise an empty string.
@@ -129,7 +132,8 @@ For each one, check whether the work it is cited from really states it. "referen
 project found the result. When the folder has the text of a source (document.txt or paper.pdf), read it. Otherwise use web search to
 find each work and the result in it; several results often come from the same work, so read it once.
 Answer in "checks", one entry per result, with its "fact_id". "verdict": "confirmed" if the work states this result, as written or in an
-equivalent form; "differs" if it states something different, for example with other hypotheses, a weaker conclusion or another setting;
+equivalent form; "differs" if it states something different, for example with other hypotheses, a weaker conclusion or another setting,
+or another base system ($\mathsf{RCA}_0$ where the work says $\mathsf{RCA}$, $\mathsf{ACA}_0$ where it says $\mathsf{RCA}_0$, or one the work does not state);
 "not_found" if you read the work and the result is not in it; "unreadable" if you could not read the work at all: no text in the folder,
 and web search did not give you what it states. In "where", give the theorem number and page when you
 found it, or an empty string. In "explanation", say what the work states, quoting it briefly, and how it differs when it does. You do not
@@ -145,7 +149,7 @@ read each with its meaning in "notation", with what the original meant by it ("r
 symbols the rewrite defines for itself ("rewrite.local_notation").
 Answer "faithful" when a careful mathematician reading both finds the same result and the same proof. Changes of wording, order or
 layout are faithful. Answer "unfaithful" when anything mathematical changed: a convention (finite sums with or without 0, a set of
-numbers starting at 0 or 1), a hypothesis lost or added, a weaker or stronger conclusion, a project symbol whose meaning differs from what
+numbers starting at 0 or 1), a hypothesis lost or added, a base system changed, added or dropped ($\mathsf{RCA}$ and $\mathsf{RCA}_0$ differ), a weaker or stronger conclusion, a project symbol whose meaning differs from what
 the original meant, a step of the proof dropped or changed. A symbol the rewrite keeps with its field's meaning, while the project gives it
 another, is faithful when "rewrite.local_notation" defines it with the original's meaning; left undefined, it is unfaithful. In "note", for an unfaithful rewrite, say precisely what changed, quoting
 both; for a faithful one, an empty string or a short remark. Answer in "checks", one entry per rewrite with its "rewrite_id". Leave out
@@ -161,6 +165,10 @@ against its source, and check that the proof uses each one as stated. Do not sea
 and on standard facts. If it uses a result of another work that is not among its dependencies, report a gap that names it.
 A proof that only says the source proves it, or "follows at once from Lemma 3.1", is correct when the dependencies it names give the
 result at once; otherwise it is a gap.
+"sources" quotes the passages the fact was taken from. Compare the statement's base system and hypotheses with them: when the statement
+says $\mathsf{RCA}_0$ where the quote says $\mathsf{RCA}$ (full induction), $\mathsf{ACA}_0$ where it says $\mathsf{RCA}_0$, or names a base system
+the quote does not, say so first in "explanation", quoting both. Then the verdict is "correct" only if the proof holds for the statement as
+written: a proof that uses more induction or comprehension than the stated base system gives is a gap.
 Answer in "reviews", one entry per fact with its "fact_id". "verdict": "correct" only if you checked the entire proof and found no
 error or gap; "gap" if a step is unjustified or uses a result that is not among its dependencies; "incorrect" if a step or the statement
 is false, with a counterexample if you can. In "explanation", name the exact location of each issue; for "correct", say what you checked.
@@ -309,7 +317,7 @@ the ids it "depends_on", its "topics", its "status" and whether it is already "w
 Name facts by their id or label. In "reason", say in one or two sentences why, quoting the statements when it helps.
 "earlier_suggestions" lists proposals already waiting, or that people rejected or undid: never propose them again.
 Give each change a "confidence". "high" means you checked it and are sure: for "same", the two statements are equivalent as written,
-with the same hypotheses and conclusion; for "depends", the proof plainly uses the other fact; for "cite", the reference is used as you say.
+with the same hypotheses, base system and conclusion; for "depends", the proof plainly uses the other fact; for "cite", the reference is used as you say.
 A change of high confidence is applied at once, without a person, so that people only decide what needs their judgment: use "high" only
 when a careful mathematician would not hesitate. Use "medium" or "low" whenever the statements differ in a detail, a hypothesis or a
 setting, or when the decision matters for the project: people then decide. Every change can be undone, a merge included.
