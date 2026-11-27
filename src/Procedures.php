@@ -27,7 +27,7 @@ final class Procedures
             'notation' => ['label' => 'Project notation', 'description' => 'Propose a common notation for the project, and write facts again in it, when a member asks.', 'tier' => 'strong', 'capabilities' => []],
             'consolidate' => ['label' => 'Consolidate the facts', 'description' => 'After extractions, read the whole facts database and propose merges of duplicates, links across sources, open questions, subject tags, the cited results behind the outside references of proofs, and the project\'s notation.', 'tier' => 'strong', 'capabilities' => []],
             'rewrite_check' => ['label' => 'Check rewrites', 'description' => 'Compare each fact an AI rewrote in the project notation with its original, and say whether it states exactly the same. A rewrite found unfaithful is not shown. People can overrule the verdict.', 'tier' => 'strong', 'capabilities' => []],
-            'proof_review' => ['label' => 'Review proofs', 'description' => 'Referee the proofs nobody reviewed yet, a few at a time, as an independent reader: correct, a gap, or an error. Each review is shown with its model, like any AI review, and people can review the fact too.', 'tier' => 'strong', 'capabilities' => []],
+            'proof_review' => ['label' => 'Review proofs', 'description' => 'Referee the proofs nobody reviewed yet, a few at a time, as an independent reader: correct, a gap, or an error. Each review is shown with its model, like any AI review, and people can review the fact too. A client that can use another company\'s AI reviews with it: its check is the more independent.', 'tier' => 'strong', 'capabilities' => [], 'independent' => true],
             'second_reading' => ['label' => 'Second reading', 'description' => 'Read again the consolidation\'s proposals it was not sure enough to apply, and apply or drop each one, so that people decide only what needs them. Everything can be undone.', 'tier' => 'strong', 'capabilities' => []],
             'source_check' => ['label' => 'Check a cited result', 'description' => 'Read the source of a result cited without proof, and say whether it states the result as written. People still accept it.', 'tier' => 'fast', 'capabilities' => ['document', 'web_search']],
         ];
@@ -321,7 +321,7 @@ TXT,
     {
         $out = [];
         foreach (self::defs() as $id => $d) {
-            $out[] = ['id' => $id, 'label' => $d['label'], 'description' => $d['description'], 'tier' => $d['tier'], 'capabilities' => $d['capabilities'], 'version' => self::version($id)];
+            $out[] = ['id' => $id, 'label' => $d['label'], 'description' => $d['description'], 'tier' => $d['tier'], 'capabilities' => $d['capabilities'], 'independent' => !empty($d['independent']), 'version' => self::version($id)];
         }
         return $out;
     }
@@ -354,7 +354,9 @@ TXT,
         if ($prompt !== '' && $t['kind'] !== 'ask') $instructions .= self::REQUEST_NOTE . $prompt;
         $caps = array_values(array_filter(self::capabilities($t['kind']), fn($c) => $c !== 'document' || !empty($context['document'])));
         return ['procedure' => $t['kind'], 'variant' => $v, 'version' => self::version((string)$t['kind']), 'instructions' => $instructions,
-            'schema' => self::SCHEMAS[$v], 'capabilities' => $caps, 'tier' => self::defs()[$t['kind']]['tier']];
+            'schema' => self::SCHEMAS[$v], 'capabilities' => $caps, 'tier' => self::defs()[$t['kind']]['tier'],
+            // Run on the AI the platform chose among the client's: another company's than the author's, when the client has one.
+            'independent' => !empty(self::defs()[$t['kind']]['independent'])];
     }
 
     /**

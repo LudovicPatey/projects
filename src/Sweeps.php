@@ -181,10 +181,6 @@ final class Sweeps
         return $out;
     }
 
-    /**
-     * Proved facts whose current revision nobody reviewed, person or AI, and that no review sweep read yet: those many facts rely on
-     * first, then the facts worth reading, then the others. @return list<int> fact ids
-     */
     /** How many models may read a proof without reviewing it before it is left to people. */
     public const REVIEW_READERS = 2;
 
@@ -194,21 +190,62 @@ final class Sweeps
         return self::tried($pid, 'proof_review', null);
     }
 
-    public static function reviewCandidates(int $pid, ?array $graph = null): array
+    /**
+     * Proved facts that still wait for an independent AI review, in the order of Verification::rank, the same as people's: what an
+     * answer to a question rests on first. A proof nobody checked yet, and one only an AI of its author's company found correct,
+     * while an AI of another company is around (Verification::companiesAround, and the client asking). Not one that two models read without reviewing it:
+     * it is left to people. @return list<int> fact ids
+     */
+    public static function reviewCandidates(int $pid, ?array $graph = null, ?array $rank = null, array $alsoAround = []): array
     {
         if (!Config::get('sweeps.review', true)) return [];
+        $graph ??= FactController::graph($pid);
+        $rank ??= Verification::rank($pid, $graph);
         $tried = self::tried($pid, 'proof_review', null);
-        $reviewed = [];
-        foreach (Db::all('SELECT DISTINCT v.fact_id FROM fact_reviews v JOIN facts f ON f.id = v.fact_id AND v.revision_no = f.current_revision WHERE f.project_id = ?', [$pid]) as $v) $reviewed[(int)$v['fact_id']] = true;
+        $revision = array_column($graph['facts'], 'current_revision', 'id');
+        $around = null;
         $out = [];
-        foreach (($graph ?? FactController::graph($pid))['facts'] as $f) {
-            $key = (int)$f['id'] . ':' . (int)$f['current_revision'];
-            if ($f['basis'] !== 'proved' || $f['status'] !== 'unchecked' || $f['retracted_at'] !== null || isset($reviewed[(int)$f['id']])) continue;
-            if (count(array_unique($tried[$key] ?? [])) >= self::REVIEW_READERS) continue; // read by two models without a review: left to people
-            $out[] = [(int)$f['id'], count($f['dependents']) * 2 + (!empty($f['worth_reading']) ? 5 : 0)];
+        foreach ($rank as $id => $x) {
+            if (!in_array($x['level'], ['none', 'same_ai'], true)) continue;
+            if (count(array_unique($tried[$id . ':' . (int)$revision[$id]] ?? [])) >= self::REVIEW_READERS) continue;
+            if ($x['level'] === 'same_ai' && !array_diff($around ??= array_merge(Verification::companiesAround($pid), $alsoAround), $x['checked_by'])) continue;
+            $out[] = (int)$id;
         }
-        usort($out, fn($a, $b) => [$b[1], $a[0]] <=> [$a[1], $b[0]]);
-        return array_column($out, 0);
+        return $out;
+    }
+
+    /**
+     * The batch a model would review: the candidates, most important first, that it may review. Never a proof it wrote, nor one it
+     * already read and left out, nor one an AI of its own company already found correct: that one waits for another company's.
+     * @return array{0: list<array{0: int, 1: int}>, 1: bool} the facts at their revision, and whether more was left
+     */
+    public static function reviewBatch(int $pid, string $model): array
+    {
+        $graph = FactController::graph($pid);
+        $rank = Verification::rank($pid, $graph);
+        $byId = array_column($graph['facts'], null, 'id');
+        $model = mb_strtolower(trim($model));
+        $company = Verification::company($model);
+        $readers = self::reviewReaders($pid);
+        $batch = []; $chars = 0; $full = false;
+        // The client asking is around too: its model may be the first of its company here.
+        foreach (self::reviewCandidates($pid, $graph, $rank, array_filter([$company])) as $fid) {
+            $f = $byId[$fid]; $rev = (int)$f['current_revision'];
+            if ($model !== '' && mb_strtolower(trim((string)$f['ai_model'])) === $model) continue;
+            if ($model !== '' && in_array($model, $readers[$fid . ':' . $rev] ?? [], true)) continue;
+            if ($company !== null && in_array($company, $rank[$fid]['checked_by'], true)) continue;
+            $size = (int)Db::value('SELECT LENGTH(statement_html) + LENGTH(COALESCE(proof_html, \'\')) FROM fact_revisions WHERE fact_id = ? AND revision_no = ?', [$fid, $rev]);
+            if ($batch && ($chars + $size > self::REVIEW_CHARS || count($batch) >= self::REVIEW_BATCH)) { $full = true; break; }
+            $batch[] = [$fid, $rev]; $chars += $size;
+        }
+        return [$batch, $full];
+    }
+
+    /** The first of a client's models that has proofs to review here, in the client's order: another company's model first. */
+    public static function reviewModel(int $pid, array $models): ?string
+    {
+        foreach ($models as $m) if (is_string($m) && $m !== '' && self::reviewBatch($pid, $m)[0]) return $m;
+        return null;
     }
 
     /**
@@ -380,20 +417,13 @@ final class Sweeps
             $full = count($allSymbols) > self::SYMBOLS_BATCH || count($allTypes) > self::TYPES_BATCH;
             $snap = ['symbols' => $symbols, 'types' => $types, 'grouping' => true, 'wordings' => $wordings, 'full' => $full];
         } elseif ($t['kind'] === 'proof_review') {
-            $batch = []; $chars = 0; $full = false;
-            // A model never reviews what it wrote: those proofs wait for a client running another model, instead of being refused
-            // and then counted as read.
-            // Nor one this model already read and left out: another model gets it.
-            $model = mb_strtolower(trim((string)($t['ai_model'] ?? '')));
-            $readers = self::reviewReaders($pid);
-            foreach (self::reviewCandidates($pid) as $fid) {
-                $f = Db::one('SELECT current_revision, ai_model FROM facts WHERE id = ?', [$fid]);
-                if ($model !== '' && mb_strtolower(trim((string)$f['ai_model'])) === $model) continue;
-                if ($model !== '' && in_array($model, $readers[$fid . ':' . $f['current_revision']] ?? [], true)) continue;
-                $rev = (int)$f['current_revision'];
-                $size = (int)Db::value('SELECT LENGTH(statement_html) + LENGTH(COALESCE(proof_html, \'\')) FROM fact_revisions WHERE fact_id = ? AND revision_no = ?', [$fid, $rev]);
-                if ($batch && ($chars + $size > self::REVIEW_CHARS || count($batch) >= self::REVIEW_BATCH)) { $full = true; break; }
-                $batch[] = [$fid, $rev]; $chars += $size;
+            // A model never reviews what it wrote, nor what its own company already found correct: those proofs wait for a client
+            // running another model, instead of being refused and then counted as read.
+            [$batch, $full] = self::reviewBatch($pid, (string)($t['ai_model'] ?? ''));
+            if (!$batch && self::reviewCandidates($pid)) {
+                // Proofs are left, for another company's model: the sweep waits for its client rather than ending.
+                Db::run("UPDATE ai_tasks SET status = 'pending', lease_hash = NULL, lease_until = NULL, claimed_by = NULL, client_name = NULL, ai_model = NULL, attempts = attempts - 1, started_at = NULL, updated_at = ? WHERE id = ?", [Db::now(), $t['id']]);
+                return null;
             }
             $snap = ['facts' => $batch, 'full' => $full];
         } elseif ($t['kind'] === 'second_reading') {

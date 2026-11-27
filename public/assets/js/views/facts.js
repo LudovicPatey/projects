@@ -59,7 +59,7 @@ const BasisTag = {
 const FactBadges = {
   props: { f: Object, verbose: Boolean, only: Array },
   computed: { badges() { return factBadges(this.f).filter((b) => !(this.verbose && b.key === 'model') && (!this.only || this.only.includes(b.key))); } },
-  template: `<span class="fbadges" :class="{verbose}"><span v-for="b in badges" :key="b.key" class="fb" :class="'t-' + b.tone" :title="b.title" role="img" :aria-label="b.title"><icon :name="b.icon" :size="13"/><span v-if="verbose" class="fb-label">{{ b.label }}</span></span></span>`,
+  template: `<span class="fbadges" :class="{verbose}"><span v-for="b in badges" :key="b.key" class="fb" :class="'t-' + b.tone" :title="b.title" role="img" :aria-label="b.title"><icon :name="b.icon" :size="13"/><b v-if="b.count && !verbose" class="fb-n">{{ b.count }}</b><span v-if="verbose" class="fb-label">{{ b.label }}</span></span></span>`,
 };
 
 const StatusTag = {
@@ -87,7 +87,7 @@ export const FactsView = {
       fact: null, factError: null, tab: 'content', activeThread: null, backlinks: [],
       readable: readView(), fKind: 'all', outline: [], reviewVerdict: 'correct', checkForm: null, trace: null, retracting: null, revView: null, denying: null,
       reviewStatement: 'true', resultOnly: null, proposing: null, proofCheck: null, projectNotation: notationView(), unfaithful: null,
-      fStar: 'all', fBasis: 'all', refPick: {}, gView: null, gScope: 'all', gDepth: 2, matchIds: new Set(), listTag: null, fTopic: 'all', topicDraft: null,
+      fStar: 'all', fBasis: 'all', refPick: {}, gView: null, gScope: 'all', gDepth: 2, matchIds: new Set(), listTag: null, fTopic: 'all', topicDraft: null, fVerify: 'all',
     };
   },
   computed: {
@@ -110,20 +110,28 @@ export const FactsView = {
         && (this.fLean === 'all' || (this.fLean === 'with' ? f.lean !== 'none' : f.lean === this.fLean))
         && (this.fStar === 'all' || (this.fStar === 'mine' ? f.starred : f.stars > 0))
         && (this.fBasis === 'all' || (this.fBasis === 'incomplete' ? f.incomplete : f.basis === this.fBasis))
+        && (this.fVerify === 'all' || (f.verify && (this.fVerify === 'todo' || f.verify.waits === this.fVerify)))
         && (!q || [f.label, f.title, f.statement_text, f.ai_model, f.author, f.kind, kindOf(f), f.method, f.tool, f.labels.join(' '), (f.topics || []).join(' ')].some((x) => String(x || '').toLowerCase().includes(q)) || this.matchIds.has(f.id)));
       if (this.lineage && this.id) {
         const keep = this.lineageOf(this.id);
         list = list.filter((f) => keep.has(f.id));
       }
       const by = { recent: (a, b) => (a.updated_at < b.updated_at ? 1 : -1), label: (a, b) => a.label.localeCompare(b.label),
-        used: (a, b) => usedBy(b) - usedBy(a), stars: (a, b) => (b.stars || 0) - (a.stars || 0) || usedBy(b) - usedBy(a) };
+        used: (a, b) => usedBy(b) - usedBy(a), stars: (a, b) => (b.stars || 0) - (a.stars || 0) || usedBy(b) - usedBy(a),
+        verify: (a, b) => (b.verify?.score ?? -1) - (a.verify?.score ?? -1) || usedBy(b) - usedBy(a) };
       return [...list].sort(by[this.sort]);
     },
     filteredEdges() {
       const ids = new Set(this.filtered.map((f) => f.id));
       return this.edges.filter(([a, b]) => ids.has(a) && ids.has(b));
     },
-    activeFilters() { return [this.fStatus, this.fOrigin, this.fLabel, this.fLean, this.fStar, this.fTopic, this.fBasis].filter((v) => v !== 'all').length; },
+    activeFilters() { return [this.fStatus, this.fOrigin, this.fLabel, this.fLean, this.fStar, this.fTopic, this.fBasis, this.fVerify].filter((v) => v !== 'all').length; },
+    // Proved facts no person checked yet, and who each one waits for: an AI review that is due, or a person.
+    verifyCounts() {
+      const c = { todo: 0, ai: 0, person: 0 };
+      for (const f of this.results) if (f.verify) { c.todo += 1; c[f.verify.waits] += 1; }
+      return c;
+    },
     basisCounts() {
       const c = { proved: 0, cited: 0, incomplete: 0 };
       for (const f of this.results) { if (f.basis in c) c[f.basis] += 1; if (f.incomplete) c.incomplete += 1; }
@@ -284,7 +292,7 @@ export const FactsView = {
         <button class="btn xs" :class="{on: showFilters}" :aria-expanded="showFilters" @click="showFilters = !showFilters"><icon name="filter" :size="13"/> Filters<b v-if="activeFilters" class="seg-n">{{ activeFilters }}</b></button>
         <button v-if="activeFilters" class="link-btn" @click="clearFilters">Clear</button>
         <span class="grow"></span>
-        <select v-model="sort" aria-label="Sort"><option value="recent">Recent</option><option value="label">Label</option><option value="used">Most used</option><option value="stars">Most starred</option></select>
+        <select v-model="sort" aria-label="Sort"><option value="recent">Recent</option><option value="label">Label</option><option value="used">Most used</option><option value="stars">Most starred</option><option value="verify">To verify first</option></select>
       </div>
       <div v-if="showFilters" class="fact-filters">
         <select v-model="fStatus" aria-label="Filter by status"><option value="all">All statuses ({{ counts.all }})</option><option v-for="(s, k) in statuses" :key="k" :value="k">{{ s.label }} ({{ counts[k] || 0 }})</option></select>
@@ -293,6 +301,7 @@ export const FactsView = {
         <select v-model="fStar" aria-label="Filter by star"><option value="all">Starred or not</option><option value="starred">Starred ({{ starCount }})</option><option value="mine">Starred by me</option></select>
         <select v-model="fBasis" aria-label="Filter by basis"><option value="all">Proved or cited</option><option value="proved">Proved here ({{ basisCounts.proved }})</option><option value="cited">Cited results ({{ basisCounts.cited }})</option><option value="incomplete">Using an outside result ({{ basisCounts.incomplete }})</option></select>
         <select v-if="topicOptions.length || fTopic !== 'all'" v-model="fTopic" class="wide-filter" aria-label="Filter by subject tag"><option value="all">All subjects</option><option v-for="t in topicOptions" :key="t.topic" :value="t.topic">{{ t.topic }} ({{ t.n }})</option></select>
+        <select v-model="fVerify" aria-label="Filter by what a check waits for" title="Proved facts no person has checked yet: those an AI review is due on, and those that wait for a person"><option value="all">Checked or not</option><option value="todo">To verify ({{ verifyCounts.todo }})</option><option value="ai">AI review due ({{ verifyCounts.ai }})</option><option value="person">Waiting for a person ({{ verifyCounts.person }})</option></select>
         <select v-model="fLean" aria-label="Filter by Lean"><option value="all">Any Lean</option><option value="with">With Lean</option><option value="compiled">Compiling</option><option value="none">No Lean</option></select>
       </div>
     </div>
@@ -707,7 +716,7 @@ export const FactsView = {
       if (this.query?.proof) { this.tab = 'content'; this.$nextTick(() => this.$el.querySelector?.(`[data-proof="${+this.query.proof}"]`)?.scrollIntoView({ block: 'center' })); }
       if (this.tab === 'trace') this.loadTrace();
     },
-    clearFilters() { this.fStatus = this.fOrigin = this.fLabel = this.fLean = this.fStar = this.fTopic = this.fBasis = 'all'; },
+    clearFilters() { this.fStatus = this.fOrigin = this.fLabel = this.fLean = this.fStar = this.fTopic = this.fBasis = this.fVerify = 'all'; },
     async saveTopics() {
       const topics = parseTopics(this.topicDraft);
       const r = await attempt(() => api.post(`api/facts/${this.fact.id}/topics`, { topics }), 'Tags saved');

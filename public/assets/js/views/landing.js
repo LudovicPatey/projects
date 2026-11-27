@@ -19,8 +19,8 @@ const FEATURES = [
   },
   {
     kicker: 'Human and AI review', title: 'Trust is earned, one check at a time',
-    text: 'Researchers endorse facts in one click. Humans and independent models can mark them correct, point out a gap, or reject them, and Lean proofs can be attached. A result cited from another work is accepted only by a person who read its source, and every proof is checked against the facts it relies on.',
-    points: ['A model cannot validate its own work', 'A new revision needs new reviews', 'Cited results are told apart from proved facts', 'Lean code containing sorry is detected'],
+    text: 'Researchers endorse facts in one click. Humans and independent models can mark them correct, point out a gap, or reject them, and Lean proofs can be attached. A result cited from another work is accepted only by a person who read its source, and every proof is checked against the facts it relies on. The facts an answer rests on are verified first, by people and by the automatic reviews alike.',
+    points: ['A model cannot validate its own work: another company’s AI checks it first', 'A new revision needs new reviews', 'Cited results are told apart from proved facts', 'Lean code containing sorry is detected'],
     img: 'fact-reviews.webp', w: 1551, h: 1239, alt: 'Reviews of a fact by researchers and by an AI model, with the endorsement button',
   },
   {

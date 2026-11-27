@@ -52,7 +52,7 @@ import webbrowser
 import zipfile
 import zlib
 
-VERSION = "1.20.0"
+VERSION = "1.21.0"
 API_LEVEL = 2  # raise with the server's AiTaskController::API_LEVEL when a client needs new server features
 GITHUB_REPO = "LudovicPatey/projects"
 KINDS = ["extract", "ask", "bib", "derive", "review", "lean", "notation", "consolidate"]
@@ -233,7 +233,7 @@ def clean_procedure(x):
     caps = [str(c) for c in (x.get("capabilities") or []) if isinstance(c, str)][:10]
     return {"id": x["id"], "label": str(x.get("label") or x["id"])[:80], "description": str(x.get("description") or "")[:400],
             "tier": x.get("tier") if x.get("tier") in ("strong", "fast") else "strong", "capabilities": caps,
-            "runnable": all(c in CAPABILITIES for c in caps), "version": str(x.get("version") or "")[:20]}
+            "runnable": all(c in CAPABILITIES for c in caps), "independent": x.get("independent") is True, "version": str(x.get("version") or "")[:20]}
 
 
 def cached_procedures(url=None):
@@ -638,9 +638,15 @@ def process_procedure(api, task, opts):
                 pass  # the question can still be answered from the thread
         public = {k: task.get(k) for k in ("id", "kind", "source_type", "source_id", "prompt_text")}
         (workdir / "task.json").write_text(json.dumps({"task": public, **task["context"]}, ensure_ascii=False, indent=1), encoding="utf-8")
-        wanted = opts.model or chosen_model(opts.provider, task["kind"])
+        tool, wanted = opts.provider, opts.model or chosen_model(opts.provider, task["kind"])
+        if recipe.get("independent") and task.get("ai_model") and tool_of(task["ai_model"]) != opts.provider:
+            # The platform chose this computer's other AI, another company's: its check of the proofs is the more independent.
+            tool, wanted = tool_of(task["ai_model"]), task["ai_model"]
+            allowed, reason, retry, _ = guard(tool)
+            if not allowed:
+                raise ToolBusy(tool, reason, retry or time.time() + 1800)
         prompt = f"{SAFETY}\n\n{instructions}\n\nRead task.json in the current folder to begin."
-        answer, model, seconds = run_ai(opts.provider, prompt, schema, workdir, wanted, "web_search" in caps, opts.timeout)
+        answer, model, seconds = run_ai(tool, prompt, schema, workdir, wanted, "web_search" in caps, opts.timeout)
         remember_alias(wanted, model)
     answer = scrub(answer, api.key)
     done = api.post(f"/api/ai/tasks/{task['id']}/answer", {"lease": task["lease"], "ai_model": model, "generation_seconds": seconds, "answer": answer})
@@ -1410,6 +1416,11 @@ def work_once(api, opts, name, stop=None):
     models = claim_models(opts, kinds)
     if "review" in kinds:
         models["review"] = review_models(opts)
+    # A procedure that checks another model's work is offered every model this computer could check with, another company's first:
+    # the platform picks the one whose check is the most independent.
+    for x in extra:
+        if x.get("independent") and x["id"] in kinds:
+            models[x["id"]] = review_models(opts)
     body = {"kinds": kinds, "client_name": name, "ai_model": opts.model or opts.provider, "models": models, "features": ["extract_bib", "extract_comments", "extract_conversation", "review", "lean", "notation", "consolidate", "procedures"], "capabilities": list(CAPABILITIES)}
     task, opts.hold = claim_task(api, opts, body)
     if not task:

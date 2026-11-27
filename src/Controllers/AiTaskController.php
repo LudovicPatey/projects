@@ -680,6 +680,8 @@ final class AiTaskController
                     foreach ($choices as $choice) if (self::mayReview($c, $choice)) { $used = $choice; break; }
                     if ($used === null) continue; // left for a model independent of its author
                 }
+                // A client that can review with several models, another company's first, takes the proofs the first one may review.
+                if ($c['kind'] === 'proof_review' && count($choices) > 1) $used = \App\Sweeps::reviewModel((int)$c['project_id'], $choices) ?? $used;
                 if (ModelOrder::covered(self::extractedBy($c), $used)) continue;
                 $lease = bin2hex(random_bytes(24));
                 $won = Db::run(

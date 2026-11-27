@@ -18,7 +18,7 @@ const ACTIONS = {
   ratify: { icon: 'check-circle', tone: 'warn', label: 'To ratify', text: 'An answer awaits a human decision' },
   disputed: { icon: 'x', tone: 'bad', label: 'Disputed', text: 'Settle this fact' },
   ai_question: { icon: 'comment', tone: 'warn', label: 'The AI asks', text: 'A choice it could not settle from the text' },
-  review: { icon: 'graph', tone: 'info', label: 'To review', text: 'No check from you yet' },
+  review: { icon: 'graph', tone: 'info', label: 'To verify', text: 'No check from you yet' },
   strategy: { icon: 'route', tone: 'neutral', label: 'No strategy', text: 'Propose an approach' },
 };
 
@@ -73,7 +73,7 @@ export const ActionList = {
   methods: { link },
   template: `<div class="actions"><a v-for="a in actions" :key="a.kind + a.ref" class="action" :href="link(a.link.view, a.link.id)" :title="a.code || null">
     <span class="action-icon" :class="'t-' + meta[a.kind].tone"><icon :name="meta[a.kind].icon" :size="15"/></span>
-    <span class="action-text"><span class="action-kind">{{ meta[a.kind].label }} · {{ meta[a.kind].text }}</span><b><math-text :text="a.title"/></b></span><span class="chev" aria-hidden="true">›</span></a>
+    <span class="action-text"><span class="action-kind">{{ meta[a.kind].label }} · <math-text :text="a.why || meta[a.kind].text"/></span><b><math-text :text="a.title"/></b></span><span class="chev" aria-hidden="true">›</span></a>
     <div v-if="!actions.length" class="d-empty"><icon name="check-circle" :size="20"/> Nothing is waiting for you.</div></div>`,
 };
 

@@ -37,7 +37,7 @@ final class FactController
 
     /** What the interface shows in the list and the graph. The full statement is loaded with each fact. */
     private const COMPACT = ['id', 'label', 'title', 'kind', 'display_kind', 'status', 'chain', 'origin', 'proof_origin', 'method', 'tool', 'lean', 'labels', 'ai_model',
-        'author', 'ai_user_name', 'ai_generation_ms', 'updated_at', 'stars', 'starred', 'comment_count', 'retracted_at', 'created_by', 'current_revision', 'endorsed_by', 'topics', 'basis', 'incomplete', 'worth_reading'];
+        'author', 'ai_user_name', 'ai_generation_ms', 'updated_at', 'stars', 'starred', 'comment_count', 'retracted_at', 'created_by', 'current_revision', 'endorsed_by', 'topics', 'basis', 'incomplete', 'worth_reading', 'check_level', 'verify'];
     private const EXCERPT = 160;
 
     /**
@@ -58,8 +58,13 @@ final class FactController
         }
         $g = self::graph($pid);
         $mine = array_flip(array_map('intval', array_column(Db::all('SELECT s.fact_id FROM fact_stars s JOIN facts f ON f.id = s.fact_id WHERE f.project_id = ? AND s.user_id = ?', [$pid, Auth::id()]), 'fact_id')));
+        // Its priority to verify, for the facts that still wait for a check: null for the others.
+        $rank = \App\Verification::rank($pid, $g);
+        $ai = array_flip(\App\Sweeps::reviewCandidates($pid, $g, $rank));
         foreach ($g['facts'] as &$f) {
             $f['starred'] = isset($mine[$f['id']]);
+            $f['verify'] = isset($rank[$f['id']]) ? \App\Verification::brief($rank[$f['id']]) + ['waits' => isset($ai[$f['id']]) ? 'ai' : 'person'] : null;
+            unset($f['checked_by']);
             if (!$compact) continue;
             $text = (string)$f['statement_text'];
             $short = mb_strlen($text) > self::EXCERPT;
@@ -83,6 +88,10 @@ final class FactController
             Db::value('SELECT COUNT(*) FROM fact_stars s JOIN facts f ON f.id = s.fact_id WHERE f.project_id = ?', [$pid]),
             Db::value('SELECT COALESCE(MAX(s.created_at), \'\') FROM fact_stars s JOIN facts f ON f.id = s.fact_id WHERE f.project_id = ?', [$pid]),
             Db::value('SELECT COUNT(*) FROM notations WHERE project_id = ?', [$pid]),
+            // Answers proposed, ratified or withdrawn change which facts to verify first; AI reviews done change what waits for an AI.
+            Db::value('SELECT COUNT(*) FROM question_answers WHERE project_id = ?', [$pid]),
+            Db::value("SELECT COUNT(*) FROM question_answers WHERE project_id = ? AND state IN ('proposed', 'ratified')", [$pid]),
+            Db::value("SELECT COALESCE(MAX(id), 0) FROM ai_tasks WHERE project_id = ? AND kind = 'proof_review' AND status IN ('done', 'failed')", [$pid]),
         ];
         return sha1(json_encode([$parts, Auth::id(), $compact]));
     }
@@ -194,6 +203,8 @@ final class FactController
             // The result is accepted, but no proof is: "I believe it, the proof is wrong".
             $f['result_endorsed_by'] = array_values(array_filter($people(array_filter($reviews[$id] ?? [], fn($v) => $v['statement_verdict'] === 'true' && $v['verdict'] !== 'correct')), fn($p) => !in_array($p['id'], $endorsers, true)));
             $f['denied_by'] = $people(array_filter($reviews[$id] ?? [], [self::class, 'doubtsStatement']));
+            // How independently its proof is checked: by a person, an AI of another company than its author, or only one of its own.
+            [$f['check_level'], $f['checked_by']] = \App\Verification::level($f['ai_model'], array_merge($reviews[$id] ?? [], $altReviews));
             $f['statement_text'] = Sanitizer::toText($f['statement_html']);
             $f['display_kind'] = FactKind::of((string)$f['kind'], $f['tool'], $f['statement_text']);
             // A definition is a convention, not a claim: it belongs to the project notation, and nothing in it needs a check.

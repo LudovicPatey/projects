@@ -49,7 +49,9 @@ export const quietLabels = (labels) => (labels || []).filter((l) => l !== 'concl
 export function factBadges(f) {
   const out = [];
   const s = STATUS_BADGE[f?.status];
-  if (s) out.push({ key: 'status', ...s });
+  if (s) out.push({ key: 'status', ...s, ...(f.status === 'ai_checked' && LEVEL_TITLE[f.check_level] ? { title: LEVEL_TITLE[f.check_level], tone: f.check_level === 'same_ai' ? 'muted' : 'ai' } : {}) });
+  const v = verifyBadge(f?.verify);
+  if (v) out.push(v);
   if (f?.basis === 'cited') out.push({ key: 'cited', icon: 'book', tone: 'muted', label: 'Cited result', title: 'Cited result: stated by another work without its proof. A person who read the source accepts it.' });
   if (f?.incomplete) out.push({ key: 'outside', icon: 'link', tone: 'warn', label: 'Outside result', title: 'Its proof still uses a result of another work that is not a fact of the database yet.' });
   if (f?.basis !== 'cited') { const p = PROOF_BADGE[f?.proof_origin] || PROOF_BADGE.none; out.push({ key: 'proof', ...p }); }
@@ -58,6 +60,33 @@ export function factBadges(f) {
     out.push({ key: 'model', icon: 'bot', tone: 'muted', label: f.ai_model, title: `${by}.` });
   }
   return out;
+}
+
+/** How independently an AI-checked proof is checked: an AI of its author's company shares its blind spots. */
+const LEVEL_TITLE = {
+  same_ai: 'AI-checked, but only by an AI of the same company as the one that wrote it: another company’s AI or a person should check it.',
+  other_ai: 'AI-checked by an AI of another company than the one that wrote it, an independent check; no person has checked it yet.',
+};
+
+/** A title with formulas, readable in a hover, which cannot typeset them: "Is $\\mathsf{HT}^{=2}_2$ …" becomes "Is HT^=2_2 …". */
+export const plainTex = (s) => String(s || '').replace(/\$/g, '').replace(/\\(?:math[a-z]+|text[a-z]*|operatorname)\{([^{}]*)\}/g, '$1')
+  .replace(/\\emptyset/g, '∅').replace(/\\([a-zA-Z]+)/g, '$1').replace(/[{}]/g, '');
+
+/**
+ * Why a fact waiting for a check matters, as one icon: an answer to a question rests on it, it supports a result worth reading, or
+ * many facts rely on it. Null when nothing much rests on it, so that most cards say nothing. The title also says who it waits for.
+ */
+export function verifyBadge(v) {
+  if (!v) return null;
+  const waits = v.waits === 'ai' ? ' An AI review is due (Review proofs): no need to check it by hand first.' : ' It waits for a person.';
+  const relies = v.rests ? ` ${v.rests} fact${v.rests === 1 ? '' : 's'} rely on it.` : '';
+  if (v.answer_count) {
+    const q = v.answers.map((a) => `“${plainTex(a.title)}”${a.state === 'ratified' ? ' (ratified)' : ''}`).join(', ') + (v.answer_count > v.answers.length ? ` and ${v.answer_count - v.answers.length} more` : '');
+    return { key: 'verify', icon: 'target', tone: 'warn', label: 'Verify first', title: `Verify first: the answer to ${q} rests on it.${relies}${waits}` };
+  }
+  if (v.worth) return { key: 'verify', icon: 'eye', tone: 'warn', label: 'Verify soon', title: `Verify soon: ${v.worth === 1 ? 'a result worth reading rests' : `${v.worth} results worth reading rest`} on it.${relies}${waits}` };
+  if (v.rests >= 3) return { key: 'verify', icon: 'layers', tone: 'muted', label: `${v.rests} rely on it`, count: v.rests, title: `${v.rests} facts rely on it, directly or not: verify it before them.${waits}` };
+  return null;
 }
 
 /** What a reference's card shows as icons: its PDF, what extraction made of it, and the AI that entered it. */

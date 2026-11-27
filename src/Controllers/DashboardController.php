@@ -145,9 +145,17 @@ final class DashboardController
         $reviewed = array_flip(array_map('intval', array_column(Db::all(
             "SELECT v.fact_id FROM fact_reviews v JOIN facts f ON f.id = v.fact_id AND v.revision_no = f.current_revision
              WHERE f.project_id = ? AND v.reviewer_id = ? AND v.reviewer_kind = 'human'", [$pid, $me]), 'fact_id')));
-        $todo = array_filter($facts, fn($f) => !isset($reviewed[$f['id']]) && in_array($f['status'], ['unchecked', 'ai_checked'], true));
-        usort($todo, fn($a, $b) => count($b['dependents']) <=> count($a['dependents']) ?: $a['id'] <=> $b['id']);
-        foreach (array_slice($todo, 0, 3) as $f) $out[] = ['kind' => 'review', 'ref' => 'fact:' . $f['id'], 'title' => $f['title'], 'code' => $f['label'], 'link' => ['view' => 'facts', 'id' => $f['id']]];
+        // The facts to verify first, in the order the AI reviews follow too: what an answer to a question rests on first.
+        $byId = array_column($facts, null, 'id');
+        $shown = 0;
+        foreach (\App\Verification::rank($pid, ['facts' => $facts]) as $id => $x) {
+            if (isset($reviewed[$id])) continue;
+            $f = $byId[$id];
+            $why = $x['answers'] ? 'An answer to “' . $x['answers'][0]['title'] . '” rests on it'
+                : ($x['worth'] ? 'A result worth reading rests on it' : ($x['rests'] ? $x['rests'] . ' fact' . ($x['rests'] === 1 ? '' : 's') . ' rely on it' : null));
+            $out[] = ['kind' => 'review', 'ref' => 'fact:' . $id, 'title' => $f['title'], 'code' => $f['label'], 'why' => $why, 'level' => $x['level'], 'link' => ['view' => 'facts', 'id' => $id]];
+            if (++$shown === 3) break;
+        }
         foreach ($questions as $q) {
             if (!$q['strategies'] && !$q['answer'] && !in_array($q['status'], self::SETTLED, true)) {
                 $out[] = ['kind' => 'strategy', 'ref' => 'question:' . $q['id'], 'title' => $q['title'], 'link' => ['view' => 'questions', 'id' => $q['id']]];
