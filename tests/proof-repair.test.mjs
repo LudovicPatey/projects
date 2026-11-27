@@ -100,3 +100,18 @@ test('a member asks for a repair after a person found a gap; AIs never ask', asy
   // Any model may answer a person's objection.
   assert.ok((await claim(pid, 'proof_repair', 'gpt-5.5')).data.task);
 });
+
+test('a reviewer convinced that its review was wrong checks the fact: its review, replaced by "correct", counts', async () => {
+  const pid = await project('Convinced');
+  const id = await facts(pid, [F('convinced')]);
+  await review(id.convinced, 'gpt-5.5', 'gap');
+  let t = (await claim(pid, 'proof_repair', 'claude-opus-5-5')).data.task;
+  const rid = t.context.repairs[0].repair_id;
+  await answer(t, 'claude-opus-5-5', { summary: '', repairs: [{ repair_id: rid, outcome: 'review_wrong', proof: null, explanation: 'The bound is the induction hypothesis of step 1.' }] });
+  t = (await claim(pid, 'repair_check', 'gpt-5.5')).data.task;
+  await answer(t, 'gpt-5.5', { summary: '', checks: [{ repair_id: rid, verdict: 'correct', explanation: 'Agreed: step 1 gives it.' }] });
+  const f = await fact(id.convinced);
+  assert.equal(f.repairs[0].state, 'proof');
+  assert.equal(f.reviews.length, 1); assert.equal(f.reviews[0].verdict, 'correct', 'the reviewer\'s verdict replaced its gap');
+  assert.equal(f.status, 'ai_checked', 'checked by another company, as it says');
+});

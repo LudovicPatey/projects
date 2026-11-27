@@ -1,7 +1,7 @@
 {
  "min_version": "1.0.0",
  "client_version": "1.22.5",
- "fingerprint": "28b5760bb2d3d5d992782f0224a09c292361abbdcb8b252d5adc32aefb9ab0a5",
+ "fingerprint": "b5befc25a7c29a89788b72d9f2696b771b1f8aa27e4f26d84237031c45931c42",
  "routes": [
   "GET /api/ai/procedures AiTaskController::procedures",
   "GET /api/bib/{id}/pdf BibController::pdf",
@@ -302,7 +302,7 @@
   "FactController::doubtsStatement": "8905f899253ae7fc0fba941e9c66749cd7cb699edb5d13437a38df2f123e6f84",
   "FactController::excerpt": "5760882b2c592efb91724e6c0a45555ecbe16dd44cec4768fb3c030b1051b7fe",
   "FactController::fromDanus": "db2168a954fe33348139699071eff83059e44ad510715b6555be38262039e9b4",
-  "FactController::graph": "0e019383a0b9946113e51f5cdf24e76dabb9d94125c80a88d2efdbab72deeb7a",
+  "FactController::graph": "617eb088eb18dfe63341003a890758fec329c0010c19bfbdbb17b6f48fc77b93",
   "FactController::graphFact": "901ba9d2fca8dddd22883cec08918fefa5abc57f926d1c4a932d2770ce813027",
   "FactController::ingest": "268a96c4f79d7663ec862e57fc97f3050dfad203c876dc3e64989e81658495da",
   "FactController::insertRevision": "5a17583632810f08f01acc16fcedb0e07ff6ac22be57ce35af3c2fd5fbafcf16",
@@ -1943,6 +1943,16 @@
     "+TexMacros::forDocument",
     "+TexMacros::group",
     "+TexMacros::parse"
+   ]
+  },
+  {
+   "date": "2026-11-27",
+   "decision": "compatible",
+   "client_version": "1.22.5",
+   "min_version": "1.0.0",
+   "note": "A fact's status counts again the review a repair started from once that reviewer says correct: statuses only, no change in what clients send or receive.",
+   "changed": [
+    "FactController::graph"
    ]
   }
  ]

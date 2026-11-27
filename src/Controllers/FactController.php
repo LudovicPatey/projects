@@ -200,7 +200,9 @@ final class FactController
             $f['revision_author'] = (int)$f['revision_author'];
             $f['current_revision'] = (int)$f['current_revision'];
             $f['comment_count'] = (int)$f['comment_count'];
-            $f['status'] = self::status($f, array_values(array_filter($reviews[$id] ?? [], fn($v) => !isset($resolved[(int)$v['id']]))), array_values($proofs[$id] ?? []));
+            // A flawed review a repair answered no longer counts against the fact. Only a flawed one: the reviewer's later verdict on the
+            // same revision replaces its review in place, so a review a repair started from may since say "correct", and counts.
+            $f['status'] = self::status($f, array_values(array_filter($reviews[$id] ?? [], fn($v) => $v['verdict'] === 'correct' || !isset($resolved[(int)$v['id']]))), array_values($proofs[$id] ?? []));
             $f['proof_count'] = 1 + count($proofs[$id] ?? []);
             $f['stars'] = $stars[$id] ?? 0;
             $f['review_counts'] = array_count_values(array_column($reviews[$id] ?? [], 'verdict'));
