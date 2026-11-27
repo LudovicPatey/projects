@@ -103,3 +103,36 @@ test('the AIs may keep the statement, or disagree until the rounds run out; noth
   assert.equal(f.corrections[0].state, 'disagree'); assert.equal(f.retracted_at, null);
   assert.equal(correctionView(f.corrections[0]).proposals[0].verdict.label, 'Rejected', 'the last proposal and its verdict stay readable');
 });
+
+test('a fact whose repaired proof was accepted keeps that proof when a correction relinks it', async () => {
+  const pid = await project('Relinked repair');
+  const id = await facts(pid, [F('base'), F('repaired', ['base'])]);
+  // Its own proof was found flawed; a repair by another model was accepted (as live fact 1036).
+  await app.call(key, 'POST', `/api/facts/${id.repaired}/reviews`, { verdict: 'gap', body_text: 'Claim 3.6 is asserted without proof.', ai_model: 'gpt-5.5' });
+  const p = await app.call(key, 'POST', `/api/facts/${id.repaired}/proofs`, { body_text: 'Complete proof, with Claim 3.6 proved: by induction on |D|.', ai_model: 'claude-opus-5-5' });
+  assert.equal(p.status, 201, JSON.stringify(p.data));
+  const proofId = p.data.proofs.at(-1).id; // the answer is the fact, with its proofs
+  const pr = await app.call(key, 'POST', `/api/fact-proofs/${proofId}/reviews`, { verdict: 'correct', body_text: 'The induction closes the gap.', ai_model: 'gpt-5.5' });
+  const before = await fact(id.repaired);
+  assert.equal(before.status, 'ai_checked', JSON.stringify({ p: p.data, pr: pr.data, status: before.status, proofs: before.proofs }).slice(0, 1500));
+  await ask(id.base);
+  let t = (await claim(pid, 'statement_fix', 'gpt-5.5')).data.task;
+  const c = t.context.corrections[0];
+  await answer(t, 'gpt-5.5', { summary: '', corrections: [{ correction_id: c.correction_id, outcome: 'corrected', proposals: [proposals[0]], explanation: 'RCA.' }] });
+  t = (await claim(pid, 'fix_check', 'claude-sonnet-5-5')).data.task;
+  await answer(t, 'claude-sonnet-5-5', { summary: '', checks: [{ correction_id: c.correction_id, proposal: 0, verdict: 'correct', explanation: 'Yes.' }] });
+  const r = await app.call(ann, 'POST', `/api/corrections/${c.correction_id}/apply`, { chosen: [0] });
+  const nf = r.data.new_facts[0];
+  t = (await claim(pid, 'relink', 'gpt-5.5')).data.task;
+  assert.match(t.context.relinks[0].fact.proof, /Claim 3.6 proved/, 'the reader reads the proof that holds');
+  const rid = t.context.relinks[0].relink_id;
+  await answer(t, 'gpt-5.5', { summary: '', relinks: [{ relink_id: rid, outcome: 'use', new_fact_id: nf, explanation: 'Works.' }] });
+  t = (await claim(pid, 'relink_check', 'claude-sonnet-5-5')).data.task;
+  await answer(t, 'claude-sonnet-5-5', { summary: '', checks: [{ relink_id: rid, verdict: 'correct', explanation: 'Agreed.' }] });
+  const f = await fact(id.repaired);
+  assert.equal(f.current_revision, 2);
+  assert.match(f.proof_text, /Claim 3.6 proved/, 'the accepted repair is the new revision\'s proof');
+  const now = f.proofs.filter((x) => x.revision_no === 2);
+  assert.ok(now.some((x) => /for repaired/.test(x.body_html)), 'the flawed proof stays beside it, for the record');
+  assert.ok(!now.some((x) => /Claim 3.6 proved/.test(x.body_html)), 'and the accepted one is not listed twice');
+});

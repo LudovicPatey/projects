@@ -669,12 +669,35 @@ final class FactController
      * A dependent of a superseded fact now relies on a fact that replaces it: a new revision, its statement and proof unchanged, with
      * the new dependency instead of the old (src/Relink.php). Its reviews start again, since what it rests on changed.
      */
+    /**
+     * The proof that holds at a revision, when its own proof does not: an other proof (a repair) that a model independent of its
+     * author accepted and nobody found flawed, while the revision's proof has a flawed review. Null when the revision's own proof
+     * is not flawed, or no other proof is accepted. @return array{id: int, body_html: string, ai_model: ?string}|null
+     */
+    public static function acceptedOtherProof(int $fid, int $revision): ?array
+    {
+        if (!Db::value("SELECT 1 FROM fact_reviews WHERE fact_id = ? AND revision_no = ? AND verdict <> 'correct'", [$fid, $revision])) return null;
+        foreach (Db::all('SELECT id, body_html, ai_model FROM fact_proofs WHERE fact_id = ? AND revision_no = ? ORDER BY id DESC', [$fid, $revision]) as $p) {
+            $rows = Db::all('SELECT verdict, reviewer_kind, ai_model FROM fact_proof_reviews WHERE proof_id = ?', [$p['id']]);
+            if (!$rows || array_filter($rows, fn($v) => $v['verdict'] !== 'correct')) continue;
+            if (array_filter($rows, fn($v) => $v['reviewer_kind'] === 'human' || !self::sameModel(['ai_model' => (string)$p['ai_model']], $v['ai_model']))) {
+                return ['id' => (int)$p['id'], 'body_html' => (string)$p['body_html'], 'ai_model' => $p['ai_model']];
+            }
+        }
+        return null;
+    }
+
     public static function replaceDependency(int $fid, int $old, int $new, string $notes): int
     {
         $f = Db::one('SELECT * FROM facts WHERE id = ? AND deleted_at IS NULL', [$fid]);
         if (!$f) throw new HttpError(404, 'This fact no longer exists.');
         $pid = (int)$f['project_id'];
         $cur = Db::one('SELECT * FROM fact_revisions WHERE fact_id = ? AND revision_no = ?', [$fid, $f['current_revision']]);
+        // The proof the AIs read and found to work with the corrected statement: the accepted repair, when the fact's own proof was
+        // found flawed. It becomes the new revision's proof, and the flawed one stays beside it, for the record.
+        $accepted = self::acceptedOtherProof($fid, (int)$f['current_revision']);
+        $flawed = $accepted ? (string)$cur['proof_html'] : null;
+        if ($accepted) $cur = ['proof_html' => $accepted['body_html']] + $cur;
         $content = self::content([], $pid, $cur);
         $deps = array_map('intval', array_column(Db::all('SELECT depends_on_id FROM fact_deps WHERE fact_id = ?', [$fid]), 'depends_on_id'));
         $deps = array_values(array_unique(array_map(fn($d) => $d === $old ? $new : $d, $deps)));
@@ -683,11 +706,15 @@ final class FactController
                             FROM fact_sources WHERE fact_id = ? AND revision_no = ?', [$fid, $f['current_revision']]);
         $extra = ['glossary_json' => $cur['glossary_json'], 'external_refs_json' => $cur['external_refs_json']];
         $no = (int)$f['current_revision'] + 1;
-        Db::tx(function () use ($f, $fid, $pid, $cur, $content, $deps, $sources, $extra, $notes, $no) {
+        Db::tx(function () use ($f, $fid, $pid, $cur, $content, $deps, $sources, $extra, $notes, $no, $flawed) {
             $prov = ['origin' => $f['origin'], 'proof_origin' => $f['proof_origin'], 'ai_model' => $cur['ai_model'], 'ai_user_id' => $cur['ai_user_id'], 'ai_generation_ms' => $cur['ai_generation_ms']];
             self::insertRevision($fid, $no, $content, $deps, $prov, $notes, $extra, $sources);
             self::setDeps($fid, $deps);
             Db::update('facts', ['current_revision' => $no, 'updated_at' => Db::now()], 'id = :id', ['id' => $fid]);
+            if ($flawed !== null && trim(strip_tags($flawed)) !== '') {
+                Db::insert('fact_proofs', ['fact_id' => $fid, 'revision_no' => $no, 'author_id' => $f['created_by'], 'author_kind' => 'agent', 'ai_model' => $cur['ai_model'],
+                    'ai_user_id' => $cur['ai_user_id'], 'ai_generation_ms' => $cur['ai_generation_ms'], 'body_html' => $flawed, 'created_at' => Db::now(), 'updated_at' => Db::now()]);
+            }
             Activity::touch($pid, 'fact', $fid, 'revision');
         });
         QuestionController::factChanged($pid, $fid, "{$f['label']} now relies on a corrected statement and needs a new endorsement");

@@ -80,7 +80,7 @@ final class Relink
         $fact = function (int $id, bool $proof) use ($pid) {
             $f = Db::one('SELECT f.id, f.label, f.title, f.current_revision, r.statement_html, r.proof_html FROM facts f JOIN fact_revisions r ON r.fact_id = f.id AND r.revision_no = f.current_revision WHERE f.id = ?', [$id]);
             return $f ? ['fact_id' => (int)$f['id'], 'label' => $f['label'], 'title' => $f['title'], 'statement' => Sanitizer::toText((string)$f['statement_html'])]
-                + ($proof ? ['proof' => Sanitizer::toText((string)$f['proof_html']), 'definitions' => FactController::definitions($pid, (int)$f['id'], (int)$f['current_revision'])] : []) : null;
+                + ($proof ? ['proof' => Sanitizer::toText((string)(FactController::acceptedOtherProof((int)$f['id'], (int)$f['current_revision'])['body_html'] ?? $f['proof_html'])), 'definitions' => FactController::definitions($pid, (int)$f['id'], (int)$f['current_revision'])] : []) : null;
         };
         $out = [];
         foreach ($ids as $id) {

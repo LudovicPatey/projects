@@ -1,7 +1,7 @@
 {
  "min_version": "1.0.0",
- "client_version": "1.22.7",
- "fingerprint": "c8aa7d641704edfdea7fc87f16964f497666164bff95878ed94e07332a18ab3e",
+ "client_version": "1.22.9",
+ "fingerprint": "8cfafa60fa125d6be9f099003117aa16a27b4c1a5594cc4b14f865af48ae5390",
  "routes": [
   "GET /api/ai/procedures AiTaskController::procedures",
   "GET /api/bib/{id}/pdf BibController::pdf",
@@ -284,6 +284,7 @@
   "FactController::PREFIX": "90eb307ffb30be024452a8e8e451f24c1cdcf48adde20fb70d994793b2e2cefd",
   "FactController::STATEMENT_VERDICTS": "74e9ab2b9f27126b26c353fc4a4ed52d660c701c304df6a5ad30a2f57199b170",
   "FactController::VERDICTS": "133f8b99efc3748b7ffd8daeaceb730c1576191bcbf0fb2553d061a3c965437b",
+  "FactController::acceptedOtherProof": "93d384b8e908e9b7c852cbe198fb4fed76d818ce4275e10679f7ad76f72c66c6",
   "FactController::addFact": "1d19632f4b28fd250e8fe9355f8f22d54543b52f221756161072ab60029555d9",
   "FactController::addLean": "0ab1b00e12b76592a62e3d906bdf1258c5acc526bae0b132353597edbe4aba96",
   "FactController::aiQuestions": "e6ea7d6e5f3d721d64644a7f906e052d8e8b5c4053ce643eaa16b80ad61d1186",
@@ -327,7 +328,7 @@
   "FactController::provenance": "ee075c6f9668905f148a9797b608c2908934fbbecbcf3131d0a0f3ea4fe5ae7b",
   "FactController::provingContext": "81b94f2f3a06cea56d6511a2d0aa2a5a73561aa9080aedad8731c89082055f70",
   "FactController::recordReview": "5461fda5a3175a31c33af767d985b501810d82a3c4ee9031287a5cfeccc90933",
-  "FactController::replaceDependency": "d312fedb55635c0c62b71cf633c4a11d9058f46ed3c3b0fab318dbc5c6cdb9ce",
+  "FactController::replaceDependency": "aa6d45a4bc4c2cb3636e0844800577349360a6a11a416e648ab8fa78cba10dc6",
   "FactController::requireAi": "93402e521b4ce6bcc9fe56d4629494537eef316f6651ed64125cbbf5b6f8217b",
   "FactController::review": "f84443351d586a79574ba2f9c7f243081561b2299740b462b2c018b78f48eb64",
   "FactController::reviewProof": "aa15af7bd28e1291d76a15e3e5108446b95d8e974848ba21e9e633f7d41dbbfc",
@@ -559,7 +560,7 @@
   "Relink::applyChecks": "9a5ef066fedf3d4e5e551a40c0e5354995126092a79d739df868f183ac17fa2e",
   "Relink::applyReadings": "3692ec0f62ea952136f461b40cf9d49e7e07661f7c795996ed944089e4be29e6",
   "Relink::batch": "2f077dda7f6fd330fac4d5e5b3541d9d2f24103dc836b4d936da91a980816b49",
-  "Relink::context": "802591560a9d19c33abb687a55be1f9920100a9691fac9fe84803c83afe7c849",
+  "Relink::context": "b9374349ee9dbdff9ae03718574aea2046caece96b379225b3819ba9bb876787",
   "Relink::due": "bc63bcde2f01da980fa5ce2f218abf713f3eaa3fc3558170a394e929b39d0250",
   "Relink::forFact": "a5f303d2d579dd94938340e7ce81bb8faecd50ce2babad9d62e831b347952fe4",
   "Relink::items": "893d484024003fbc96f79780a71e0e94b1e38b00f0fff5c0fdf7896cf354fcbb",
@@ -1968,6 +1969,18 @@
     "FactRefs::resolve",
     "+FactController::batchNames",
     "+FactRefs::batchRefs"
+   ]
+  },
+  {
+   "date": "2026-11-27",
+   "decision": "compatible",
+   "client_version": "1.22.9",
+   "min_version": "1.0.0",
+   "note": "A relinked fact keeps its accepted repaired proof as its proof, and the relink reader reads that proof: what clients send and receive is unchanged.",
+   "changed": [
+    "FactController::replaceDependency",
+    "Relink::context",
+    "+FactController::acceptedOtherProof"
    ]
   }
  ]
