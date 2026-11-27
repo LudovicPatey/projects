@@ -51,27 +51,82 @@ function textRanges(math) {
   return out;
 }
 
+/** The subscript and superscript written right after a name: "_0^\\omega" gives {sub: "0", sup: "\\omega"}. */
+function scriptsOf(text) {
+  const out = {}; let i = 0; const t = String(text || '');
+  while (i < t.length) {
+    while (t[i] === ' ') i++;
+    const mark = t[i];
+    if (mark !== '_' && mark !== '^') break;
+    i++; while (t[i] === ' ') i++;
+    let arg;
+    if (t[i] === '{') { let depth = 1, j = i + 1; for (; j < t.length && depth; j++) { if (t[j] === '\\') j++; else if (t[j] === '{') depth++; else if (t[j] === '}') depth--; } arg = t.slice(i + 1, j - 1); i = j; }
+    else if (t[i] === '\\') { const m = t.slice(i).match(/^\\[A-Za-z]+|^\\./); arg = m ? m[0] : '\\'; i += arg.length; }
+    else { arg = t[i] ?? ''; i++; }
+    // Spaces do not count, except one after a command, which ends it: "\\le n" is not "\\len".
+    out[mark === '_' ? 'sub' : 'sup'] = arg.replace(/(\\[A-Za-z]+)\s+(?=[A-Za-z])/g, '$1\u0000').replace(/\s+/g, '').replace(/\u0000/g, ' ');
+  }
+  return out;
+}
+
+/** How well the scripts of a use fit an entry's: its parameters (n and k in \\mathsf{HT}^{=n}_k) stand for any value, other letters for themselves (\\le_c is not \\le_T). -1 when they do not fit. */
+function scriptFit(entry, used) {
+  const own = scriptsOf(String(entry.symbol || '').replace(/^\$+|\$+$/g, '').trim().slice(head(entry.symbol).length));
+  const names = new Set((entry.params || []).map((p) => p.name));
+  let score = 0;
+  for (const k of ['sub', 'sup']) {
+    if (own[k] === undefined && used[k] === undefined) { score += 1; continue; }
+    if (own[k] === undefined || used[k] === undefined) return -1;
+    const re = own[k].split(/(\\[A-Za-z]+|[A-Za-z])/).map((x) => (x && !x.startsWith('\\') && /^[A-Za-z]$/.test(x) && names.has(x) ? '.+?' : x === ' ' ? ' ?' : esc(x))).join('');
+    if (!new RegExp(`^${re}$`).test(used[k])) return -1;
+    // The more it fixes, the better it fits: "=n" fits "=2" better than "A" does.
+    score += 2 + own[k].replace(/(?<!\\[A-Za-z]*)[A-Za-z](?![A-Za-z])/g, '').replace(/\s/g, '').length / 100;
+  }
+  return score;
+}
+
 /**
  * Marks the notation in formulas. `preProcess` rewrites the LaTeX of one formula before KaTeX renders it:
  * each use becomes \htmlClass{oq-nt oq-nt-<i>}{…}, where i is the index of its entry in `entries`.
  */
 export function notationMarker(entries) {
-  const list = (entries || []).map((e, i) => ({ i, re: symbolPattern(e.symbol, e.params ? paramsOf(e) : null), size: head(e.symbol).length })).filter((e) => e.re);
+  const all = (entries || []).map((e, i) => ({ i, entry: { symbol: e.symbol, params: paramsOf(e) }, re: symbolPattern(e.symbol, e.params ? paramsOf(e) : null), size: head(e.symbol).length })).filter((e) => e.re);
+  // Entries with one name, such as \mathsf{RCA}_0 and \mathsf{RCA}^\omega_0, or \mathsf{HT} and \mathsf{HT}^{=n}_k, are one group: its
+  // scripts decide which one a use is (scriptFit), and a use none of them fits is left unmarked rather than given a wrong meaning.
+  const groups = new Map();
+  for (const e of all) { const g = groups.get(e.re); if (g) g.members.push(e); else groups.set(e.re, { re: e.re, size: e.size, members: [e] }); }
+  const list = [...groups.values()];
   // The longest names first: FUT is not found as FU.
   list.sort((a, b) => b.size - a.size);
   if (!list.length) return { preProcess: (math) => math, count: 0 };
-  const re = new RegExp(list.map((e) => `(${e.re})`).join('|'), 'g');
+  const SCRIPTS = '((?:\\s*[_^]\\s*(?:\\{(?:[^{}]|\\{[^{}]*\\})*\\}|\\\\[A-Za-z]+|[^\\s{}\\\\]))*)';
+  // Each group is one alternative, and a group of several also captures the scripts that follow the name.
+  // An entry written with scripts must fit them even alone (\\mathsf{RCA}^\\omega_0 is not \\mathsf{RCA}_0); one without scripts, alone,
+  // marks its name whatever follows (\\mathbb N in \\mathbb N^2).
+  const scripted = (m) => Object.keys(scriptsOf(String(m.entry.symbol || '').replace(/^\$+|\$+$/g, '').trim().slice(head(m.entry.symbol).length))).length > 0;
+  for (const g of list) g.choose = g.members.length > 1 || scripted(g.members[0]);
+  const re = new RegExp(list.map((g) => (g.choose ? `((?:${g.re})${SCRIPTS})` : `((?:${g.re})())`)).join('|'), 'g');
   return {
-    count: list.length,
+    count: all.length,
     preProcess(math) {
       if (math.includes('\\htmlClass')) return math; // marked already, or written by hand: left as it is
       const text = textRanges(math);
       return math.replace(re, (...args) => {
         const at = args[args.length - 2];
-        const found = args.slice(1, list.length + 1).findIndex((g) => g !== undefined);
         const whole = args[0];
         if (text.some(([a, b]) => at > a && at < b && !(at === a && at + whole.length === b))) return whole;
-        return `\\htmlClass{oq-nt oq-nt-${list[found].i}}{${whole}}`;
+        const g = args.slice(1, 2 * list.length + 1).findIndex((x, k) => k % 2 === 0 && x !== undefined) / 2;
+        const group = list[g];
+        let pick = group.members[0];
+        if (group.choose) {
+          const used = scriptsOf(args[2 * g + 2] || '');
+          const ranked = group.members.map((m) => [scriptFit(m.entry, used), m]).filter(([sc]) => sc >= 0).sort((x, y) => y[0] - x[0]);
+          if (!ranked.length) return whole;
+          pick = ranked[0][1];
+        }
+        const marked = `\\htmlClass{oq-nt oq-nt-${pick.i}}{${whole}}`;
+        // Right after a bare _ or ^ (f_\\alpha), a command needs braces to be a script: f_{\\htmlClass{…}{\\alpha}}.
+        return /[_^]\s*$/.test(math.slice(0, at)) ? `{${marked}}` : marked;
       });
     },
   };

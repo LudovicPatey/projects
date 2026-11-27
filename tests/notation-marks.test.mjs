@@ -78,3 +78,32 @@ test('a local entry applies to its defining fact and the facts of the same paper
   const get = async (k) => (await app.call(ann, 'GET', `/api/facts/${ids[k]}`)).data.local_entries.map((e) => e.symbol);
   assert.deepEqual(await get('def'), ['(\\mu)']); assert.deepEqual(await get('same'), ['(\\mu)']); assert.deepEqual(await get('other'), []);
 });
+
+// Entries with one name and different scripts: the scripts of a use decide which one it is, and a use none fits is left unmarked.
+const pick = (entries, tex) => [...notationMarker(entries).preProcess(tex).matchAll(/oq-nt-(\d+)\}/g)].map((m) => entries[+m[1]].symbol);
+
+test('a name with several entries is marked with the one its scripts fit: RCA_0 is not RCA^ω_0', () => {
+  const E = [{ symbol: '\\mathsf{RCA}^\\omega_0' }, { symbol: '\\mathsf{RCA}_0' }, { symbol: '\\mathsf{HT}' }, { symbol: '\\mathsf{HT}^{=n}_k' }, { symbol: '\\mathsf{HT}^{\\le n}_k' }, { symbol: '\\mathsf{HT}^{A}_k' }];
+  assert.deepEqual(pick(E, '(\\mathsf{RCA}_0)'), ['\\mathsf{RCA}_0']);
+  assert.deepEqual(pick(E, '\\mathsf{RCA}^\\omega_0\\vdash'), ['\\mathsf{RCA}^\\omega_0']);
+  assert.deepEqual(pick(E, '\\mathsf{RCA}_0^\\omega'), ['\\mathsf{RCA}^\\omega_0'], 'either order of the scripts');
+  assert.deepEqual(pick(E, '\\mathsf{HT}^{=2}_2'), ['\\mathsf{HT}^{=n}_k'], 'parameters stand for any value');
+  assert.deepEqual(pick(E, '\\mathsf{HT}^{\\le 2}_3'), ['\\mathsf{HT}^{\\le n}_k'], '\\le n is not \\len');
+  assert.deepEqual(pick(E, '\\mathsf{HT}^{X}_2'), ['\\mathsf{HT}^{A}_k']);
+  assert.deepEqual(pick([...E].reverse(), '\\mathsf{HT}^{=2}_2'), ['\\mathsf{HT}^{=n}_k'], 'the most specific wins, whatever the order');
+  assert.deepEqual(pick(E, '\\mathsf{HT}'), ['\\mathsf{HT}']);
+});
+
+test('a symbol that fits no entry of its name is left unmarked rather than given a wrong meaning', () => {
+  const E = [{ symbol: '\\le_{sc}' }, { symbol: '\\le_W' }, { symbol: '\\mathsf{RCA}^\\omega_0' }];
+  assert.deepEqual(pick(E, 'i\\le s'), [], 'a plain \\le is not a reduction');
+  assert.deepEqual(pick(E, 'Y\\le_T W'), [], 'a letter that is not a parameter stands for itself');
+  assert.deepEqual(pick(E, 'X\\le_W Y'), ['\\le_W']);
+  assert.deepEqual(pick(E, '\\mathsf{RCA}_0'), [], 'an entry with scripts must fit them, even alone');
+  assert.deepEqual(pick([{ symbol: '\\mathrm{FIN}' }], '\\mathrm{FIN}_2'), ['\\mathrm{FIN}'], 'one without scripts marks its name whatever follows');
+});
+
+test('a mark right after a bare _ or ^ gets braces, or the formula would not render', () => {
+  assert.equal(mark(['\\alpha'], 'f_\\alpha=1'), 'f_{\\htmlClass{oq-nt oq-nt-0}{\\alpha}}=1');
+  assert.equal(mark(['\\alpha'], '\\alpha+1'), '\\htmlClass{oq-nt oq-nt-0}{\\alpha}+1');
+});
