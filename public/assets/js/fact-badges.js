@@ -59,3 +59,18 @@ export function factBadges(f) {
   }
   return out;
 }
+
+/** What a reference's card shows as icons: its PDF, what extraction made of it, and the AI that entered it. */
+export function bibBadges(e) {
+  const out = [];
+  out.push(e?.has_pdf
+    ? { key: 'pdf', icon: 'pdf', tone: 'bad', label: 'PDF', title: 'Its PDF is attached: readers open it here, and AI clients extract its facts.' }
+    : { key: 'pdf', icon: 'pdf', tone: 'muted', label: 'No PDF', title: 'No PDF yet: upload it to read it here and extract its facts.' });
+  const x = e?.extraction?.state;
+  const models = (e?.extraction?.models || []).join(', ');
+  const ext = { done: ['sparkles', 'good', 'Facts extracted', `Its facts were extracted${models ? ` by ${models}` : ''}.`], queued: ['clock', 'muted', 'Extraction queued', 'Extraction queued: an AI client will read it.'],
+    failed: ['x', 'bad', 'Extraction failed', 'Extraction failed: try again from its page.'], comments: ['comment', 'warn', 'New comments', 'New comments since its extraction: extract it again to take them into account.'] }[x];
+  if (ext) out.push({ key: 'extraction', icon: ext[0], tone: ext[1], label: ext[2], title: ext[3] });
+  if (e?.ai_model) out.push({ key: 'model', icon: 'bot', tone: 'muted', label: e.ai_model, title: `Entered by ${e.ai_model}${e.ai_user_name ? ` for ${e.ai_user_name}` : ''}.` });
+  return out;
+}

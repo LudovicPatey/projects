@@ -46,7 +46,7 @@ const HelpBlock = {
       <template v-for="(l, i) in lines" :key="i">
         <pre v-if="l.code" class="help-code"><code>{{ l.code }}</code></pre>
         <div v-else class="help-live-line"><p><help-inline :text="l.text" :pid="pid"/></p>
-          <div v-if="l.links.length" class="help-pointers"><a v-for="(x, j) in l.links" :key="j" :href="href(x.to)"><code v-if="x.code">{{ x.code }}</code><math-text :text="x.label"/><icon name="external" :size="12"/></a></div>
+          <div v-if="l.links.length" class="help-pointers"><a v-for="(x, j) in l.links" :key="j" :href="href(x.to)" :title="x.code || null"><math-text :text="x.label"/><icon name="external" :size="12"/></a></div>
         </div>
       </template>
     </section>`,

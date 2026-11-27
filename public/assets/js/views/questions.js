@@ -7,10 +7,11 @@ import { ANSWER_KIND, ANSWER_STATE, FACT_SUPPORT, PRIORITY, QUESTION_STATUS, STR
 const LINK_ICONS = { fact: 'graph', document: 'files', bib: 'book' };
 const LINK_GROUPS = { fact: 'Facts', document: 'Files', bib: 'References' };
 
+/** A status: its word, or in a list its icon alone (explained on hover), and nothing for the common state ("quiet"). */
 const StateTag = {
-  props: { status: String, map: Object },
+  props: { status: String, map: Object, icon: Boolean },
   computed: { s() { return this.map[this.status] || { label: this.status, cls: 'off' }; } },
-  template: `<span class="q-state" :class="'qs-' + s.cls">{{ s.label }}</span>`,
+  template: `<span v-if="icon && s.icon" v-show="!s.quiet" class="q-ico" :class="'qs-' + s.cls" role="img" :title="s.hint || s.label" :aria-label="s.hint || s.label"><icon :name="s.icon" :size="13"/></span><span v-else class="q-state" :class="'qs-' + s.cls">{{ s.label }}</span>`,
 };
 
 const LinkChips = {
@@ -98,7 +99,7 @@ export const QuestionsView = {
         <button v-if="r.hasChildren" type="button" class="q-twist" :class="{open: r.open}" :aria-label="(r.open ? 'Collapse ' : 'Expand ') + r.node.title" @click="toggle(r.node.id)">›</button><span v-else class="q-twist none"></span>
         <a :href="link('questions', r.node.id)">
           <span class="q-title"><i v-if="r.node.priority === 'high'" class="q-high" title="High priority">!</i><math-text :text="r.node.title"/></span>
-          <span class="q-meta"><state-tag :status="r.node.status" :map="qStatus"/><span v-if="r.node.strategies.length">{{ r.node.strategies.length }} {{ r.node.strategies.length === 1 ? 'strategy' : 'strategies' }}</span><span v-if="r.hasChildren">{{ progressOf(r.node).done }}/{{ progressOf(r.node).total }} sub</span><span v-if="r.node.pending_answers" class="q-pending">{{ r.node.pending_answers }} to ratify</span><span v-if="r.node.answer_at_risk" class="q-at-risk">Answer at risk</span></span>
+          <span class="q-meta"><state-tag icon :status="r.node.status" :map="qStatus"/><span v-if="r.node.strategies.length" class="q-count" :title="r.node.strategies.length + (r.node.strategies.length === 1 ? ' strategy' : ' strategies')"><icon name="route" :size="12"/> {{ r.node.strategies.length }}</span><span v-if="r.hasChildren" class="q-count" :title="progressOf(r.node).done + ' of ' + progressOf(r.node).total + ' sub-questions settled'"><icon name="target" :size="12"/> {{ progressOf(r.node).done }}/{{ progressOf(r.node).total }}</span><span v-if="r.node.pending_answers" class="q-pending">{{ r.node.pending_answers }} to ratify</span><span v-if="r.node.answer_at_risk" class="q-at-risk">Answer at risk</span></span>
         </a>
         <b v-if="unreadOf(r.node, unread)" class="ios-badge">{{ unreadOf(r.node, unread) }}</b>
       </div>
@@ -141,7 +142,7 @@ export const QuestionsView = {
           <div class="q-a-head"><span class="q-verdict" :class="a.answer">{{ answerKind[a.answer].short }}</span><b>{{ answerKind[a.answer].label }}</b><state-tag :status="a.state" :map="answerState"/>
             <span class="grow"></span><span class="muted small">{{ a.proposer }} · <span :title="fullDate(a.created_at)">{{ timeAgo(a.created_at) }}</span></span><ai-meta :model="a.ai_model" :user="a.ai_user_name" :ms="a.ai_generation_ms" compact/></div>
           <div v-if="actions(a).atRisk" class="q-risk" role="alert"><icon name="eye" :size="15"/><span><b>This ratified answer needs attention.</b> {{ support[a.support].text }} The question stays {{ qStatus[question.status].label.toLowerCase() }} until a human revokes the ratification.</span></div>
-          <a v-if="a.fact" class="q-a-fact" :href="link('facts', a.fact.id)"><code class="key">{{ a.fact.label }}</code><b><math-text :text="a.fact.title"/></b><span class="q-a-statement"><math-text :text="a.fact.statement_text"/></span></a>
+          <a v-if="a.fact" class="q-a-fact" :href="link('facts', a.fact.id)" :title="a.fact.label"><b><math-text :text="a.fact.title"/></b><span class="q-a-statement"><math-text :text="a.fact.statement_text"/></span></a>
           <p v-else class="muted small">The fact has been deleted.</p>
           <rich-content v-if="a.rationale_html" class="q-statement" :html="a.rationale_html"/>
           <div v-if="a.fact && a.state === 'proposed'" class="q-support" :class="{ok: support[a.support].ok}"><icon :name="support[a.support].ok ? 'check-circle' : 'eye'" :size="14"/> {{ support[a.support].text }}</div>
@@ -164,7 +165,7 @@ export const QuestionsView = {
       <section class="q-section">
         <header><h2>Sub-questions <span v-if="settled.total" class="count">{{ settled.done }}/{{ settled.total }} settled</span></h2><button class="btn sm" @click="newQuestion(question.id)"><icon name="plus" :size="14"/> Sub-question</button></header>
         <div v-if="settled.total" class="q-bar" role="progressbar" :aria-valuenow="settled.done" aria-valuemin="0" :aria-valuemax="settled.total" :aria-label="settled.done + ' of ' + settled.total + ' sub-questions settled'"><span :style="{width: 100 * settled.done / settled.total + '%'}"></span></div>
-        <a v-for="c in children" :key="c.id" class="q-child" :href="link('questions', c.id)"><state-tag :status="c.status" :map="qStatus"/><math-text :text="c.title"/><small v-if="c.strategies.length">{{ c.strategies.length }} {{ c.strategies.length === 1 ? 'strategy' : 'strategies' }}</small></a>
+        <a v-for="c in children" :key="c.id" class="q-child" :href="link('questions', c.id)"><state-tag icon :status="c.status" :map="qStatus"/><math-text :text="c.title"/><small v-if="c.strategies.length" class="q-count" :title="c.strategies.length + (c.strategies.length === 1 ? ' strategy' : ' strategies')"><icon name="route" :size="12"/> {{ c.strategies.length }}</small></a>
         <p v-if="!children.length" class="muted small">No sub-question yet.</p>
       </section>
 
@@ -173,9 +174,9 @@ export const QuestionsView = {
         <p v-if="!strategies.length" class="muted small">No strategy yet. Describe an approach, even a tentative one: its history is kept as it evolves.</p>
         <article v-for="s in strategies" :key="s.id" class="q-strategy" :class="{on: s.id === strategyId}">
           <a class="q-s-head" :href="strategyHref(s)" :aria-expanded="s.id === strategyId">
-            <state-tag :status="s.status" :map="sStatus"/><b><math-text :text="s.title"/></b>
+            <state-tag icon :status="s.status" :map="sStatus"/><b><math-text :text="s.title"/></b>
             <b v-if="unread.strategy?.[s.id]" class="ios-badge">{{ unread.strategy[s.id] }}</b>
-            <small><template v-if="s.comment_count"><icon name="comment" :size="11"/> {{ s.comment_count }} · </template>v{{ s.current_revision }} · {{ timeAgo(s.updated_at) }}</small><span class="q-chev" aria-hidden="true">›</span>
+            <small :title="'Version ' + s.current_revision + ', updated ' + timeAgo(s.updated_at)"><template v-if="s.comment_count"><icon name="comment" :size="11"/> {{ s.comment_count }} · </template>{{ timeAgo(s.updated_at) }}</small><span class="q-chev" aria-hidden="true">›</span>
           </a>
           <div v-if="s.id === strategyId" class="q-s-body">
             <div class="q-controls">

@@ -93,14 +93,14 @@ export const ConsolidationPanel = {
           <section v-for="g in groups" :key="g.kind" class="panel" :data-cons="g.kind">
             <header class="ai-head"><h2>{{ g.title }}</h2><small>{{ g.items.length }}</small></header>
             <p class="muted small">{{ g.help }}<template v-if="(g.kind === 'same' || g.kind === 'question') && !owner"> Only an owner applies these.</template></p>
-            <p class="action-help small"><b>Accept:</b> {{ ACTIONS[acceptAction(g.kind)].changes }} <b>Reject:</b> {{ ACTIONS['cons.reject'].changes }} <span class="muted">An accepted change can be undone.</span></p>
+            <p class="cons-help small"><span class="hover-list" tabindex="0"><icon name="help" :size="12"/> What Accept and Reject do<span class="hover-pop" role="tooltip"><span><b>Accept:</b> {{ ACTIONS[acceptAction(g.kind)].changes }}</span><span><b>Reject:</b> {{ ACTIONS['cons.reject'].changes }}</span><span class="muted">An accepted change can be undone.</span></span></span></p>
             <div v-if="g.items.length > 1" class="row-gap"><button class="btn sm" :disabled="busy || g.items.every(ownerOnly)" :title="'For each proposal below: ' + explain(acceptAction(g.kind))" @click="bulk(g, true)"><icon name="check" :size="13"/> Accept all</button><button class="btn sm" :disabled="busy" :title="'For each proposal below: ' + explain('cons.reject')" @click="bulk(g, false)">Reject all</button></div>
             <article v-for="s in g.items.slice(0, open[g.kind] ? 1000 : 40)" :key="s.id" class="cons-item">
               <div class="cons-main">
                 <b class="cons-what"><math-text :text="suggestionText(s, d.facts)"/></b><span v-if="confidence(s)" class="pill cons-conf" :class="'c-' + s.confidence">{{ confidence(s) }}</span>
                 <div class="cons-facts">
-                  <a v-for="id in [s.fact_id, s.other_fact_id].filter(Boolean)" :key="id" class="cons-fact" :href="link('facts', id)">
-                    <code class="key">{{ fact(id)?.label }}</code> <span class="muted small"><math-text :text="clipMath(fact(id)?.excerpt, 220)"/></span></a>
+                  <a v-for="id in [s.fact_id, s.other_fact_id].filter(Boolean)" :key="id" class="cons-fact" :href="link('facts', id)" :title="fact(id)?.label">
+                    <b><math-text :text="fact(id)?.title || fact(id)?.label"/></b> <span class="muted small"><math-text :text="clipMath(fact(id)?.excerpt, 220)"/></span></a>
                 </div>
                 <blockquote v-if="s.kind === 'cite' && s.data?.statement" class="cons-new small"><span class="muted">New cited result, for {{ s.data.ref_label }}:</span> <math-text :text="s.data.statement"/></blockquote>
                 <p class="cons-reason small"><icon name="sparkles" :size="12"/> <math-text :text="s.reason_text"/> <ai-meta compact :model="s.ai_model" :user="s.ai_user_name" :ms="s.ai_generation_ms"/></p>

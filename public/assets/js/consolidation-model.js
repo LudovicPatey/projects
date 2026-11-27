@@ -17,7 +17,8 @@ export function groupSuggestions(list) {
   return SUGGESTION_KINDS.map((k) => ({ ...k, items: list.filter((s) => s.kind === k.kind && s.status === 'proposed') })).filter((g) => g.items.length);
 }
 
-const label = (facts, id) => facts[id]?.label ?? `#${id}`;
+/** A fact named in a proposal: by its title, in quotes; its key only when it has none. */
+const label = (facts, id) => (facts[id]?.title ? `“${facts[id].title}”` : facts[id]?.label ?? `#${id}`);
 
 /** One line saying what accepting would do. */
 export function suggestionText(s, facts) {

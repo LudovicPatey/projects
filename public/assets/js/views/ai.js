@@ -101,7 +101,7 @@ export const AiView = {
       <div class="ai-grid">
         <div class="ai-main">
           <section class="panel" id="ai-clients">
-            <header class="ai-head"><h2><icon name="clock" :size="15"/> AI clients</h2>
+            <header class="ai-head"><h2><icon name="clock" :size="15"/> AI clients <span class="hover-list" tabindex="0" aria-label="What the times count"><icon name="help" :size="13"/><span class="hover-pop" role="tooltip"><span>Proving new facts means proof searches. Standard tasks are extraction, questions, references, reviews and Lean.</span><span>Time is measured by each client on the tasks it finished, or that failed for good, in this project.</span></span></span></h2>
               <div class="seg small" role="group" aria-label="Period"><button v-for="p in periods" :key="p[0]" :class="{on: period === p[0]}" :aria-pressed="period === p[0]" @click="period = p[0]">{{ p[1] }}</button></div></header>
             <div class="ai-compute">
               <div><b>{{ computeTime(totals.ms) }}</b><small>computing in all</small></div>
@@ -123,7 +123,6 @@ export const AiView = {
               </article>
               <div v-if="!computers.length" class="d-empty">No AI client has worked on this project yet.</div>
             </div>
-            <p class="ai-note">Proving new facts means proof searches. Standard tasks are extraction, questions, references, reviews and Lean. Time is measured by each client on the tasks it finished or that failed for good, in this project.</p>
           </section>
           <section v-if="proposed.length || decided.length || autoAdded.length" class="panel" id="ai-suggestions">
             <header class="ai-head"><h2><icon name="lightbulb" :size="15"/> Suggested references</h2><small>Check the source before accepting</small></header>
@@ -197,16 +196,15 @@ export const AiView = {
             <p class="ai-hint">{{ kinds[draft.kind].hint }}</p>
             <label v-if="draft.kind === 'extract'" class="field"><span>File, reference or conversation</span><select v-model="draft.document"><option value="">Choose…</option><optgroup v-if="documents.length" label="Files"><option v-for="f in documents" :key="f.id" :value="f.id">{{ f.title }}</option></optgroup><optgroup v-if="references.length" label="References with a PDF"><option v-for="b in references" :key="b.id" :value="'bib:' + b.id">{{ b.title }}</option></optgroup><optgroup v-if="conversations.length" label="Your conversations"><option v-for="c in conversations" :key="c.id" :value="'conv:' + c.id">{{ c.subject }}{{ c.private ? ' (private)' : '' }}</option></optgroup></select></label>
             <button v-if="draft.kind === 'extract' && bib.toQueue" class="btn block" :title="explain('bib.extract')" @click="extractAll"><icon name="sparkles" :size="14"/> Extract all {{ bib.toQueue }} remaining reference PDFs</button>
-            <label v-if="kinds[draft.kind].needs === 'fact'" class="field"><span>Fact</span><select v-model="draft.fact"><option value="">Choose…</option><option v-for="f in facts" :key="f.id" :value="f.id">{{ f.label }}: {{ f.title }}</option></select></label>
+            <label v-if="kinds[draft.kind].needs === 'fact'" class="field"><span>Fact</span><select v-model="draft.fact"><option value="">Choose…</option><option v-for="f in facts" :key="f.id" :value="f.id">{{ f.title }}</option></select></label>
             <label v-if="draft.kind === 'derive'" class="field"><span>Toward a question (optional)</span><select v-model="draft.question"><option value="">The whole project</option><option v-for="q in questions" :key="q.id" :value="q.id">{{ q.title }}</option></select></label>
             <label class="field"><span>{{ draft.kind === 'ask' ? 'Your question' : 'Instructions (optional)' }}</span><textarea v-model="draft.prompt" rows="3" maxlength="4000" :placeholder="draft.kind === 'bib' ? 'For example: work on sunflower bounds since 2019' : ''"></textarea></label>
-            <div v-if="usage" class="usage-meter" :class="'t-' + usage.tone" role="group" aria-label="Your AI requests">
+            <div v-if="usage" class="usage-meter" :class="'t-' + usage.tone" role="group" aria-label="Your AI requests" :title="usage.text + ' Work the platform queues on its own, such as sweeps and extractions of uploaded files, does not count.'">
               <div class="usage-top"><span>Your AI requests</span><b>{{ usage.used }} / {{ usage.limit }}</b></div>
               <div class="usage-bar" role="meter" :aria-valuenow="usage.used" aria-valuemin="0" :aria-valuemax="usage.limit" :aria-label="usage.label"><i :style="{width: usage.pct + '%'}"></i></div>
-              <small>{{ usage.text }} Work the platform queues on its own, such as sweeps and extractions of uploaded files, does not count.</small>
+              <small>{{ usage.left === 0 ? usage.text : usage.left + ' left in the last 24 hours' }}</small>
             </div>
-            <button class="btn primary block" :disabled="!!error || busy || usage?.left === 0" :title="usage?.left === 0 ? usage.text : explain('task.send')" @click="send">Add to the queue</button>
-            <p class="ai-note">The next member's AI client to run will process it, with the model that member chose for this work.</p>
+            <button class="btn primary block" :disabled="!!error || busy || usage?.left === 0" :title="usage?.left === 0 ? usage.text : explain('task.send') + ' The next member’s AI client to run processes it, with the model that member chose for this work.'" @click="send">Add to the queue</button>
           </section>
         </aside>
       </div>

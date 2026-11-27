@@ -10,6 +10,9 @@ export const STRATEGY_SEGMENTS = [['succeeded', 'Succeeded', '#0d9488'], ['faile
 export const FACT_SEGMENTS = [['double_checked', 'Human + AI', '#0d9488'], ['human_checked', 'Human-checked', '#2dd4bf'], ['accepted', 'Citation accepted', '#5eead4'], ['ai_checked', 'AI-checked', '#4f46e5'], ['source_confirmed', 'Source confirmed', '#a5b4fc'], ['unchecked', 'Unchecked', '#98a2b3'], ['proof_disputed', 'Proof disputed', '#d97706'], ['disputed', 'Disputed', '#b42318'], ['retracted', 'Retracted', '#d0d5dd']];
 export const PROOF_SEGMENTS = [['human', 'Human proof', '#0d9488'], ['mixed', 'Human + AI', '#2dd4bf'], ['ai', 'AI proof', '#4f46e5'], ['none', 'No proof', '#98a2b3']];
 
+/** How an item is named in a list: a fact by its title, its key on hover; anything else by its usual name. */
+export const refName = (r) => (r?.type === 'fact' ? r.title || r.label : r?.label || '');
+
 const ACTIONS = {
   at_risk: { icon: 'eye', tone: 'bad', label: 'Answer at risk', text: 'The fact behind this answer changed' },
   ratify: { icon: 'check-circle', tone: 'warn', label: 'To ratify', text: 'An answer awaits a human decision' },
@@ -68,9 +71,9 @@ export const ActionList = {
   props: { actions: Array },
   created() { this.meta = ACTIONS; },
   methods: { link },
-  template: `<div class="actions"><a v-for="a in actions" :key="a.kind + a.ref" class="action" :href="link(a.link.view, a.link.id)">
+  template: `<div class="actions"><a v-for="a in actions" :key="a.kind + a.ref" class="action" :href="link(a.link.view, a.link.id)" :title="a.code || null">
     <span class="action-icon" :class="'t-' + meta[a.kind].tone"><icon :name="meta[a.kind].icon" :size="15"/></span>
-    <span class="action-text"><span class="action-kind">{{ meta[a.kind].label }} · {{ meta[a.kind].text }}<code v-if="a.code" class="key">{{ a.code }}</code></span><b><math-text :text="a.title"/></b></span><span class="chev" aria-hidden="true">›</span></a>
+    <span class="action-text"><span class="action-kind">{{ meta[a.kind].label }} · {{ meta[a.kind].text }}</span><b><math-text :text="a.title"/></b></span><span class="chev" aria-hidden="true">›</span></a>
     <div v-if="!actions.length" class="d-empty"><icon name="check-circle" :size="20"/> Nothing is waiting for you.</div></div>`,
 };
 
@@ -78,12 +81,12 @@ export const ActivityFeed = {
   props: { items: Array },
   computed: { pid() { return store.project?.id; } },
   created() { this.types = REF_TYPES; },
-  methods: { timeAgo, fullDate, activityVerb, href(x) { return refHref(x.ref, this.pid); } },
+  methods: { timeAgo, fullDate, activityVerb, refName, href(x) { return refHref(x.ref, this.pid); } },
   template: `<ol class="feed"><li v-for="x in items" :key="x.id">
       <avatar v-if="x.actor" :name="x.actor.name" :id="x.actor.id" :kind="x.actor.kind" :size="26"/><span v-else class="feed-ai"><icon name="bot" :size="14"/></span>
       <div><p v-if="(x.count || 1) > 1"><b>{{ x.actor ? x.actor.name : 'An AI client' }}</b> {{ activityVerb(x.kind) }} {{ x.count }} {{ types[x.ref.type].plural.toLowerCase() }}:
-        <template v-for="(r, i) in [x.ref, ...(x.more || [])]" :key="r.key"><a :href="href({ ref: r })"><icon :name="types[r.type].icon" :size="12"/> <math-text :text="r.label"/></a>{{ i < (x.more || []).length ? ', ' : '' }}</template><template v-if="x.count > 1 + (x.more || []).length"> and {{ x.count - 1 - x.more.length }} more</template></p>
-      <p v-else><b>{{ x.actor ? x.actor.name : 'An AI client' }}</b> {{ activityVerb(x.kind) }} <a :href="href(x)"><icon :name="types[x.ref.type].icon" :size="12"/> <math-text :text="x.ref.label"/></a></p>
+        <template v-for="(r, i) in [x.ref, ...(x.more || [])]" :key="r.key"><a :href="href({ ref: r })" :title="r.type === 'fact' ? r.label : null"><icon :name="types[r.type].icon" :size="12"/> <math-text :text="refName(r)"/></a>{{ i < (x.more || []).length ? ', ' : '' }}</template><template v-if="x.count > 1 + (x.more || []).length"> and {{ x.count - 1 - x.more.length }} more</template></p>
+      <p v-else><b>{{ x.actor ? x.actor.name : 'An AI client' }}</b> {{ activityVerb(x.kind) }} <a :href="href(x)" :title="x.ref.type === 'fact' ? x.ref.label : null"><icon :name="types[x.ref.type].icon" :size="12"/> <math-text :text="refName(x.ref)"/></a></p>
       <time :title="fullDate(x.at)">{{ timeAgo(x.at) }}</time></div></li>
     <li v-if="!items.length" class="d-empty">No activity yet.</li></ol>`,
 };
@@ -138,7 +141,7 @@ export const SectionHome = {
       <header><span class="sh-icon"><icon name="book" :size="22"/></span><div><h2>Bibliography</h2><p>The literature of the project, ready to cite anywhere with @.</p></div></header>
       <div class="sh-kpis"><div><b>{{ d.bib.total }}</b><span>references</span></div><div><b>{{ d.bib.with_pdf }}</b><span>with a PDF</span></div><div><b>{{ d.bib.total - d.bib.with_pdf }}</b><span>without a PDF</span></div></div>
       <section v-if="d.bib.years.length" class="panel"><h3>References by year</h3><year-bars :years="d.bib.years"/></section>
-      <section class="panel"><h3>Recently added</h3><a v-for="b in d.bib.recent" :key="b.id" class="d-row" :href="link('bib', b.id)"><code class="key">{{ b.cite_key }}</code><span class="d-title">{{ b.title }}</span><small>{{ b.year }}</small><span class="chev">›</span></a><div v-if="!d.bib.recent.length" class="d-empty">No reference yet.</div></section>
+      <section class="panel"><h3>Recently added</h3><a v-for="b in d.bib.recent" :key="b.id" class="d-row" :href="link('bib', b.id)" :title="b.cite_key"><span class="d-title"><math-text :text="b.title"/></span><small>{{ b.year }}</small><span class="chev">›</span></a><div v-if="!d.bib.recent.length" class="d-empty">No reference yet.</div></section>
     </template>
     <template v-else>
       <header><span class="sh-icon"><icon name="mail" :size="22"/></span><div><h2>Conversations</h2><p>Discussions with the people you choose. Only participants can read them.</p></div></header>

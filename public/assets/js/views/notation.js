@@ -62,7 +62,8 @@ const entryView = (by, actions) => `<div class="nt-head"><div class="notation-sy
       <template v-if="e.note_text"><dt>How sources differ</dt><dd><math-text :text="e.note_text"/></dd></template>
       <template v-for="g in [['instances', 'Other forms'], ['clashes', 'Other meanings']]" :key="g[0]"><template v-if="splitVariants(e.variants)[g[0]].length"><dt>{{ g[1] }}</dt><dd>
         <ul class="nt-list"><li v-for="(v, i) in splitVariants(e.variants)[g[0]]" :key="i"><math-text :text="asMath(v.symbol)"/> <span class="nt-dash">—</span> <math-text :text="v.meaning"/><small v-if="v.where" class="nt-where">{{ v.where }}</small></li></ul></dd></template></template>
-      <template v-if="definedIn(e).length"><dt>Defined in</dt><dd><template v-for="(id, i) in definedIn(e).slice(0, 4)" :key="id"><a :href="link('facts', id)">{{ id === e.definition_fact_id ? e.definition_label || labels.get(id) : labels.get(id) || '#' + id }}</a><small v-if="id === e.definition_fact_id && definedIn(e).length > 1" class="nt-where">its definition</small>{{ i < Math.min(definedIn(e).length, 4) - 1 ? ', ' : '' }}</template><template v-if="definedIn(e).length > 4"> and {{ definedIn(e).length - 4 }} more</template></dd></template>
+      <template v-if="definedIn(e).length"><dt>Defined in</dt><dd><a :href="link('facts', definedIn(e)[0])" :title="labels.get(definedIn(e)[0])"><math-text :text="titles.get(definedIn(e)[0]) || e.definition_label || labels.get(definedIn(e)[0]) || '#' + definedIn(e)[0]"/></a>
+        <span v-if="definedIn(e).length > 1" class="hover-list" tabindex="0"> and {{ definedIn(e).length - 1 }} other fact{{ definedIn(e).length > 2 ? 's' : '' }}<span class="hover-pop" role="tooltip"><a v-for="id in definedIn(e).slice(1, 12)" :key="id" :href="link('facts', id)" :title="labels.get(id)"><math-text :text="titles.get(id) || labels.get(id) || '#' + id"/></a><small v-if="definedIn(e).length > 12" class="muted">and {{ definedIn(e).length - 12 }} more</small></span></span></dd></template>
     </dl>
   <details v-if="actionEffects(e).length" class="notation-effects"><summary>What each choice changes</summary>
     <dl><template v-for="r in actionEffects(e)" :key="r.action"><dt>{{ r.action }}</dt><dd><span class="eff-changes"><math-text :text="r.changes"/></span> <span class="eff-keeps"><b>Unchanged:</b> <math-text :text="r.keeps"/></span></dd></template></dl></details></div>`;
@@ -83,6 +84,7 @@ export const NotationPanel = {
     error() { return entryError(this.draft); },
     definitions() { return this.facts.filter((f) => !f.retracted_at); },
     labels() { return new Map(this.facts.map((f) => [f.id, f.label])); },
+    titles() { return new Map(this.facts.map((f) => [f.id, f.title])); },
     candidates() { return (this.d?.shared || []).filter((s) => !s.entry); },
     sameChoices() { return (this.d?.entries || []).filter((e) => e.status !== 'rejected'); },
   },
@@ -212,7 +214,7 @@ export const NotationPanel = {
                 <div v-if="b.title" class="wording-head"><b>{{ b.title }}</b><template v-if="b.label">: <math-text :text="b.label"/></template>
                   <span v-if="b.entry" class="wording-entry">→ <a :href="link('facts', null, {mode: 'notation', notation: b.entry.id})"><math-text :text="asMath(b.entry.symbol)"/></a> <span class="muted small">{{ b.entry.word }}</span></span>
                   <span v-else-if="b.key !== 'unread'" class="muted small">· no project entry</span></div>
-                <ul class="notation-variants"><li v-for="(m, i) in b.items" :key="i"><math-text :text="m.meaning"/> <small><template v-for="(id, j) in m.facts.slice(0, 4)" :key="id"><a :href="link('facts', id)">{{ labels.get(id) || '#' + id }}</a>{{ j < Math.min(m.facts.length, 4) - 1 ? ', ' : '' }}</template><template v-if="m.facts.length > 4"> and {{ m.facts.length - 4 }} more</template></small></li></ul></div>
+                <ul class="notation-variants"><li v-for="(m, i) in b.items" :key="i"><math-text :text="m.meaning"/> <span class="hover-list small" tabindex="0">{{ m.facts.length }} fact{{ m.facts.length > 1 ? 's' : '' }}<span class="hover-pop" role="tooltip"><a v-for="id in m.facts.slice(0, 12)" :key="id" :href="link('facts', id)" :title="labels.get(id)"><math-text :text="titles.get(id) || labels.get(id) || '#' + id"/></a><small v-if="m.facts.length > 12" class="muted">and {{ m.facts.length - 12 }} more</small></span></span></li></ul></div>
               <footer v-if="!s.entry" class="nt-decide">
                 <select class="sm" v-model="sameTarget[s.symbol]" :aria-label="'The entry ' + s.symbol + ' is another spelling of'">
                   <option :value="undefined" disabled>Same as which entry?</option>
@@ -249,7 +251,7 @@ export const NotationPanel = {
             <header class="ai-head"><h2><icon name="book" :size="15"/> Definitions from the facts</h2><small>{{ d.definitions.filter((x) => !x.entry).length }} without an entry</small></header>
             <p class="muted small">Definitions are conventions, not results: they are no longer listed or checked among the facts. Give each one an entry, so that the project agrees on its symbol.</p>
             <article v-for="x in d.definitions" :key="x.id" class="notation-def">
-              <div class="notation-def-main"><a :href="link('facts', x.id)"><code class="key">{{ x.label }}</code> <math-text :text="x.title"/></a>
+              <div class="notation-def-main"><a :href="link('facts', x.id)" :title="x.label"><math-text :text="x.title"/></a>
                 <p class="muted small"><math-text :text="clipMath(x.statement_text, 400)"/></p>
                 <small v-if="x.used_by" class="muted">Used by {{ x.used_by }} fact{{ x.used_by > 1 ? 's' : '' }}</small></div>
               <div class="notation-actions"><a v-if="x.entry" class="chip-link" :href="link('facts', null, {mode: 'notation', notation: x.entry.id})"><math-text :text="asMath(x.entry.symbol)"/> · {{ x.entry.status }}</a>

@@ -30,7 +30,7 @@ test('accepting a consolidation proposal says what its kind does, for every kind
   const groups = groupSuggestions(kinds.map((kind, i) => ({ id: i + 1, kind, status: 'proposed' })));
   for (const g of groups) assert.ok(ACTIONS[acceptAction(g.kind)], g.kind);
   const view = source('public/assets/js/views/consolidation.js');
-  assert.match(view, /class="action-help small"><b>Accept:<\/b> \{\{ ACTIONS\[acceptAction\(g\.kind\)\]\.changes \}\}/, 'beside each group');
+  assert.match(view, /What Accept and Reject do<span class="hover-pop" role="tooltip"><span><b>Accept:<\/b> \{\{ ACTIONS\[acceptAction\(g\.kind\)\]\.changes \}\}/, 'beside each group, on hover');
   assert.match(view, /For each one: \$\{explain\(/, 'in the confirmation of Accept all and Reject all');
 });
 

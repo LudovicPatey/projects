@@ -39,6 +39,7 @@ test('the interface helpers', () => {
   assert.deepEqual(groupSuggestions(s).map((g) => [g.kind, g.items.length]), [['same', 1], ['topics', 1]]);
   const facts_ = { 1: { label: 'thm-a' }, 2: { label: 'lem-b' } };
   assert.match(suggestionText({ kind: 'same', fact_id: 1, other_fact_id: 2 }, facts_), /lem-b.*thm-a/);
+  assert.equal(suggestionText({ kind: 'depends', fact_id: 1, other_fact_id: 2 }, { 1: { label: 'thm-a', title: 'A theorem' }, 2: { label: 'lem-b', title: 'A lemma' } }).includes('“A theorem”'), true, 'facts are named by their titles');
   assert.match(suggestionText({ kind: 'kind', fact_id: 1, data: { kind: 'theorem' } }, facts_), /theorem/);
   assert.match(suggestionText({ kind: 'topics', fact_id: 2, data: { topics: ['x', 'y'] } }, facts_), /x, y/);
   const f = topicFilter(['Ramsey theory']);

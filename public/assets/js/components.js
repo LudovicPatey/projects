@@ -115,7 +115,8 @@ export const AiPending = {
     passes() { return pendingView(this.items); },
     asks() { return (this.questions || []).map(questionView).filter(Boolean); },
   },
-  template: `<div v-if="passes.length || asks.length" class="ai-pending" :class="{compact}" role="note"><icon name="clock" :size="13"/><span><b>Not final yet.</b>
+  template: `<div v-if="compact && (passes.length || asks.length)" class="ai-pending compact" role="note" :title="[...passes.map((p) => p.name + ': ' + p.text), ...asks.map((q) => q.who + ': ' + q.text)].join('\n')"><icon name="clock" :size="13"/><span><b>Not final yet:</b> {{ [...passes.map((p) => p.name), ...asks.length ? ['a question for a person'] : []].join(', ') }}</span></div>
+  <div v-else-if="passes.length || asks.length" class="ai-pending" role="note"><icon name="clock" :size="13"/><span><b>Not final yet.</b>
     <span v-if="passes.length" class="ai-pending-group"><span class="ai-pending-head">Waiting for {{ passes.length > 1 ? 'AI passes' : 'an AI pass' }}</span>
       <template v-for="p in passes" :key="p.sweep"> <span class="ai-pending-pass" :title="p.text"><b>{{ p.name }}</b><template v-if="!compact">: {{ p.text }}</template></span></template></span>
     <span v-if="asks.length" class="ai-pending-group"><span class="ai-pending-head">Waiting for a person</span>

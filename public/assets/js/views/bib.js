@@ -2,6 +2,7 @@ import { api } from '../api.js';
 import { store, go, link, attempt, toast, refreshMentionables, unreadCount, markRead, markItemUnread } from '../store.js';
 import { timeAgo, fullDate, fileSize } from '../util.js';
 import { EXTRACTION_LABEL, bibProgress } from '../ai-model.js';
+import { bibBadges } from '../fact-badges.js';
 
 const TYPES = ['article', 'inproceedings', 'book', 'incollection', 'phdthesis', 'mastersthesis', 'techreport', 'misc', 'unpublished'];
 
@@ -64,15 +65,11 @@ export const BibView = {
     </div>
     <div class="list">
       <a v-for="e in filtered" :key="e.id" class="li bib-li" :class="{active: e.id === id, 'is-new': !!unreadOf(e.id)}" :href="link('bib', e.id)">
-        <div class="li-top"><code class="key">{{ e.cite_key }}</code><span class="li-time">{{ e.year }}</span><unread-badge type="bib" :id="e.id"/></div>
-        <div class="li-subject"><math-text :text="e.title"/></div>
+        <div class="li-top"><span class="li-subject"><math-text :text="e.title"/></span><span class="li-time">{{ e.year }}</span><unread-badge type="bib" :id="e.id"/></div>
         <div class="li-snippet">{{ e.authors }}</div>
         <div class="li-meta">
-          <span v-if="e.has_pdf" class="tag red"><icon name="pdf" :size="11"/> PDF</span>
-          <span v-else class="tag muted-tag">no PDF</span>
-          <span v-if="extractionLabel[e.extraction?.state]" class="tag" :title="(e.extraction.models || []).join(', ')">{{ extractionLabel[e.extraction.state] }}</span>
-          <ai-meta compact :model="e.ai_model" :user="e.ai_user_name" :ms="e.ai_generation_ms"/>
-          <span v-if="e.comment_count"><icon name="comment" :size="12"/> {{ e.comment_count }}</span>
+          <span class="fbadges"><span v-for="b in bibBadges(e)" :key="b.key" class="fb" :class="'t-' + b.tone" role="img" :title="b.title" :aria-label="b.title"><icon :name="b.icon" :size="13"/></span></span>
+          <span v-if="e.comment_count" :title="e.comment_count + ' comments'"><icon name="comment" :size="12"/> {{ e.comment_count }}</span>
           <span class="muted small ellipsis">{{ e.venue }}</span>
         </div>
       </a>
@@ -174,6 +171,7 @@ export const BibView = {
 </div>`,
   created() { this.types = TYPES; this.extractionLabel = EXTRACTION_LABEL; },
   methods: {
+    bibBadges,
     timeAgo, fullDate, fileSize, link, markItemUnread,
     unreadOf(id) { return unreadCount('bib', id); },
     onActivity() { if (this.tab !== 'bibtex' || this.editBib === this.entry?.bibtex) this.loadEntry(); },

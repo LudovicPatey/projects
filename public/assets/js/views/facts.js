@@ -414,7 +414,7 @@ export const FactsView = {
           <p class="muted small">A proof relies only on facts of the database, so that it can be checked against them. Link each result the proof takes from another work to the fact that states it, usually a cited result. A consolidation proposes these links, and writes the cited results that are missing.</p>
           <div v-for="r in fact.outside_refs" :key="r.key" class="outside-ref" :class="{open: !r.resolved}">
             <div class="outside-ref-top"><icon :name="r.resolved ? 'check-circle' : 'link'" :size="14"/><math-text class="outside-ref-label" :text="r.label"/></div>
-            <div v-if="r.fact" class="row-gap small"><span class="muted">Stated by</span><a :href="factLink(r.fact.id)"><code class="key">{{ r.fact.label }}</code></a><status-tag :status="r.fact.status"/><button class="link-btn small" :title="explain('fact.unlink')" @click="clearRef(r)">Unlink</button></div>
+            <div v-if="r.fact" class="row-gap small"><span class="muted">Stated by</span><a :href="factLink(r.fact.id)" :title="r.fact.label"><fact-badges :f="r.fact" :only="['status']"/> <math-text :text="r.fact.title"/></a><button class="link-btn small" :title="explain('fact.unlink')" @click="clearRef(r)">Unlink</button></div>
             <div v-else-if="r.not_used" class="row-gap small"><span class="muted">Not used as a result: background only.</span><button class="link-btn small" @click="clearRef(r)">Undo</button></div>
             <div v-else class="outside-ref-act">
               <select v-model="refPick[r.key]" class="sm" :aria-label="'Fact that states ' + r.label"><option :value="undefined" disabled>Fact that states it…</option><option v-for="f in linkOptions" :key="f.id" :value="f.id">{{ f.basis === 'cited' ? 'Cited · ' : '' }}{{ f.label }}: {{ f.title }}</option></select>
@@ -567,7 +567,7 @@ export const FactsView = {
             <div v-if="trace.incomplete.length" class="fact-alert amber small">Not complete: {{ trace.incomplete.map((x) => x.label).join(', ') }} still use{{ trace.incomplete.length === 1 ? 's' : '' }} a result of another work directly.</div>
             <div v-if="!trace.rests_on.length" class="muted small">{{ fact.basis === 'cited' ? 'It is itself a cited result.' : 'No cited result: everything it builds on is proved in the database.' }}</div>
             <template v-else><div class="trace-summary small"><b>{{ trace.rests_on_accepted }}</b> of {{ trace.rests_on.length }} accepted by a member who read the source.</div>
-              <a v-for="c in trace.rests_on" :key="c.id" class="trace-anc" :href="factLink(c.id)"><code class="key">{{ c.label }}</code><status-tag :status="c.status"/><span class="muted small ellipsis">{{ c.title }}</span></a></template>
+              <a v-for="c in trace.rests_on" :key="c.id" class="trace-anc" :href="factLink(c.id)" :title="c.label"><fact-badges :f="c" :only="['status']"/><span class="small ellipsis"><math-text :text="c.title"/></span></a></template>
           </section>
           <section class="trace-sec"><h4>People credited for human proofs <span class="count">including what it builds on</span></h4>
             <div v-if="!trace.human_proof_credits.length" class="muted small">No human proof is recorded in this fact or its dependencies.</div>
@@ -577,8 +577,8 @@ export const FactsView = {
           <section class="trace-sec"><h4>Built on <span class="count">{{ trace.ancestor_count }} fact{{ trace.ancestor_count === 1 ? '' : 's' }}</span></h4>
             <div v-if="trace.ancestor_count" class="trace-summary"><template v-for="(n, k) in trace.ancestor_proof_origins" :key="k"><span v-if="n"><proof-tag :origin="k"/> {{ n }}</span></template></div>
             <a v-for="a in trace.ancestors" :key="a.id" class="trace-anc" :style="{paddingLeft: (a.depth - 1) * 12 + 6 + 'px'}" :href="factLink(a.id)">
-              <code class="key">{{ a.label }}</code><proof-tag :origin="a.proof_origin"/><status-tag :status="a.status"/>
-              <span class="muted small ellipsis">{{ creditText(a) }}</span></a>
+              <fact-badges :f="{ status: a.status, proof_origin: a.proof_origin, basis: a.basis }" :only="['status', 'proof']"/>
+              <span class="small ellipsis" :title="a.label"><math-text :text="a.title || a.label"/> <span class="muted">{{ creditText(a) }}</span></span></a>
             <div v-if="trace.ancestor_count > trace.ancestors.length" class="muted small">Showing the {{ trace.ancestors.length }} closest facts.</div>
           </section>
         </template>

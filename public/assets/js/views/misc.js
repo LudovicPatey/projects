@@ -2,6 +2,7 @@ import { api } from '../api.js';
 import { explain } from '../action-help.js';
 import { store, go, link, attempt, toast, refreshProject, refreshMentionables, refreshCounters, markRead, markAllRead } from '../store.js';
 import { timeAgo, fullDate, memberSince } from '../util.js';
+import { QUESTION_STATUS } from '../questions-model.js';
 import { aiTimeSummary, computeTime } from '../ai-model.js';
 import { FACT_SEGMENTS, PROOF_SEGMENTS, QUESTION_SEGMENTS, STRATEGY_SEGMENTS, dashboardComponents } from '../dashboard.js';
 
@@ -78,7 +79,7 @@ export const OverviewView = {
     questionUnread() { return store.counters.unread?.question?.[this.p.id] || 0; },
     people() { return this.p.members.map((m) => ({ ...m, c: this.d?.people?.[m.id] || {} })); },
   },
-  created() { this.seg = { QUESTION_SEGMENTS, STRATEGY_SEGMENTS, FACT_SEGMENTS, PROOF_SEGMENTS }; },
+  created() { this.seg = { QUESTION_SEGMENTS, STRATEGY_SEGMENTS, FACT_SEGMENTS, PROOF_SEGMENTS }; this.qStatus = QUESTION_STATUS; },
   mounted() { this.load(); },
   watch: {
     questionUnread: { immediate: true, handler(n) { if (n) refreshProject().then(() => markRead('question', this.p.id, this.p.last_activity_id)); } },
@@ -120,9 +121,9 @@ export const OverviewView = {
           <p class="muted small">Facts the AI consolidation marked as real progress, that you have not opened since. Most facts are routine: these are worth your time.</p>
           <div v-for="f in d.reading" :key="f.id" class="reading-row">
             <div class="reading-body">
-              <a class="reading-title" :href="link('facts', f.id)"><math-text :text="f.title"/></a>
+              <a class="reading-title" :href="link('facts', f.id)" :title="f.label"><math-text :text="f.title"/></a>
               <p class="reading-why"><math-text :text="f.reason"/></p>
-              <p class="reading-meta"><code class="key">{{ f.label }}</code><ai-meta compact :model="f.model"/>
+              <p class="reading-meta"><span class="fb t-muted" role="img" :title="'Marked by ' + f.model" :aria-label="'Marked by ' + f.model"><icon name="bot" :size="13"/></span>
                 <span v-if="f.citations?.count" class="hover-list" tabindex="0" :aria-label="citesText(f) + ': show them'"><icon name="book" :size="12"/> {{ citesText(f) }}
                   <span class="hover-pop" role="tooltip"><b>Cited results nobody accepted yet</b> This fact relies on them: read their sources, then review them.
                     <a v-for="c in f.citations.facts" :key="c.id" :href="link('facts', c.id)"><math-text :text="c.title"/> <small class="muted">{{ c.label }}{{ c.status === 'source_confirmed' ? ' · source confirmed by AI' : '' }}</small></a>
@@ -131,9 +132,9 @@ export const OverviewView = {
           </div></section>
         <section class="panel"><header><h2><icon name="target" :size="15"/> Big questions</h2><a :href="link('questions')">All questions ›</a></header>
           <a v-for="q in d.questions.roots" :key="q.id" class="big-q" :href="link('questions', q.id)">
-            <div class="big-q-top"><i v-if="q.priority === 'high'" class="q-high" title="High priority">!</i><b><math-text :text="q.title"/></b><pill :status="q.status"/></div>
-            <div v-if="q.total" class="big-q-bar"><i><span :style="{width: 100 * q.done / q.total + '%'}"></span></i><small>{{ q.done }}/{{ q.total }} sub-questions settled</small></div>
-            <small v-else class="muted">{{ q.strategies }} {{ q.strategies === 1 ? 'strategy' : 'strategies' }}</small></a>
+            <div class="big-q-top"><i v-if="q.priority === 'high'" class="q-high" title="High priority">!</i><b><math-text :text="q.title"/></b><span v-if="!qStatus[q.status]?.quiet" class="q-ico" :class="'qs-' + (qStatus[q.status]?.cls || 'off')" role="img" :title="qStatus[q.status]?.hint" :aria-label="qStatus[q.status]?.hint"><icon :name="qStatus[q.status]?.icon || 'help'" :size="14"/></span></div>
+            <div class="big-q-meta"><span v-if="q.total" class="big-q-bar" :title="q.done + ' of ' + q.total + ' sub-questions settled'"><i><span :style="{width: 100 * q.done / q.total + '%'}"></span></i><small>{{ q.done }}/{{ q.total }}</small></span>
+              <span class="q-count" :title="q.strategies ? q.strategies + (q.strategies === 1 ? ' strategy' : ' strategies') : 'No strategy yet'"><icon name="route" :size="12"/> {{ q.strategies }}</span></div></a>
           <div v-if="!d.questions.roots.length" class="d-empty"><icon name="target" :size="20"/> <a :href="link('questions')">State the first question</a></div></section>
         <section class="panel"><header><h2><icon name="graph" :size="15"/> State of knowledge</h2><a :href="link('facts', null, {mode: 'graph'})">Fact graph ›</a></header>
           <div class="chart-grid"><div><h3>Questions</h3><stack-bar :counts="d.questions.by_status" :segments="seg.QUESTION_SEGMENTS" label="Questions by status"/></div>

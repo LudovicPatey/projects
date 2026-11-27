@@ -1,21 +1,23 @@
 // Open questions: tree logic. No dependency, so that it can be unit tested.
 
+// Each status with its icon and what it means, for lists that show the icon alone and explain it on hover. "quiet": the common
+// state, which lists leave out (almost every question is open).
 export const QUESTION_STATUS = {
-  open: { label: 'Open', cls: 'open' },
-  active: { label: 'In progress', cls: 'active' },
-  partial: { label: 'Partial result', cls: 'partial' },
-  solved: { label: 'Solved', cls: 'good' },
-  refuted: { label: 'Refuted', cls: 'bad' },
-  abandoned: { label: 'Abandoned', cls: 'off' },
+  open: { label: 'Open', cls: 'open', icon: 'help', hint: 'Open: nobody settled it yet.', quiet: true },
+  active: { label: 'In progress', cls: 'active', icon: 'clock', hint: 'In progress: someone is working on it.' },
+  partial: { label: 'Partial result', cls: 'partial', icon: 'check', hint: 'Partial result: part of it is settled.' },
+  solved: { label: 'Solved', cls: 'good', icon: 'check-circle', hint: 'Solved: a ratified positive answer.' },
+  refuted: { label: 'Refuted', cls: 'bad', icon: 'x', hint: 'Refuted: a ratified negative answer.' },
+  abandoned: { label: 'Abandoned', cls: 'off', icon: 'archive', hint: 'Abandoned: no longer pursued.' },
 };
 
 export const STRATEGY_STATUS = {
-  idea: { label: 'Idea', cls: 'open' },
-  active: { label: 'Being tried', cls: 'active' },
-  blocked: { label: 'Blocked', cls: 'partial' },
-  succeeded: { label: 'Succeeded', cls: 'good' },
-  failed: { label: 'Failed', cls: 'bad' },
-  abandoned: { label: 'Abandoned', cls: 'off' },
+  idea: { label: 'Idea', cls: 'open', icon: 'lightbulb', hint: 'An idea: not tried yet.' },
+  active: { label: 'Being tried', cls: 'active', icon: 'route', hint: 'Being tried.' },
+  blocked: { label: 'Blocked', cls: 'partial', icon: 'lock', hint: 'Blocked: stuck at a step.' },
+  succeeded: { label: 'Succeeded', cls: 'good', icon: 'check-circle', hint: 'Succeeded.' },
+  failed: { label: 'Failed', cls: 'bad', icon: 'x', hint: 'Failed: it cannot work as stated.' },
+  abandoned: { label: 'Abandoned', cls: 'off', icon: 'archive', hint: 'Abandoned.' },
 };
 
 export const PRIORITY = { high: 'High', normal: 'Normal', low: 'Low' };
