@@ -52,7 +52,7 @@ import webbrowser
 import zipfile
 import zlib
 
-VERSION = "1.22.6"
+VERSION = "1.22.7"
 API_LEVEL = 2  # raise with the server's AiTaskController::API_LEVEL when a client needs new server features
 GITHUB_REPO = "LudovicPatey/projects"
 KINDS = ["extract", "ask", "bib", "derive", "review", "lean", "notation", "consolidate"]
@@ -901,7 +901,7 @@ Keep lemmas, propositions, theorems, corollaries and conjectures that matter to 
 Definitions and notations are not facts, and extraction proposes no project notation: put the definition of each symbol a fact uses
 in that fact's "local_notation". Notation shared across facts is decided later, by a review of the whole project.
 Each fact must be readable alone: in "local_notation", define every symbol it uses that is not in the project's notation ("notation" in task.json),
-with its meaning in this fact. Do not repeat the project's symbols there.
+with its meaning in this fact, and every term the source defines, such as "left match": each fact is reviewed alone. Do not repeat the project's symbols there.
 Skip results already listed in task.json under "facts". For each result give an EXACT short "quote" copied from the document,
 its "page" when known, and "covers": "statement", "proof" or "both". Fill "proof" only when the document contains the proof.
 Copy the base system and every hypothesis of a result exactly as the document states them: $\\mathsf{RCA}$ is not $\\mathsf{RCA}_0$
@@ -928,7 +928,7 @@ Keep lemmas, propositions, theorems, corollaries and conjectures that matter to 
 Definitions and notations are not facts, and extraction proposes no project notation: put the definition of each symbol a fact uses
 in that fact's "local_notation". Notation shared across facts is decided later, by a review of the whole project.
 Each fact must be readable alone: in "local_notation", define every symbol it uses that is not in the project's notation ("notation" in task.json),
-with its meaning in this fact. Do not repeat the project's symbols there.
+with its meaning in this fact, and every term the discussion defines: each fact is reviewed alone. Do not repeat the project's symbols there.
 A discussion is informal: keep only what a participant really states. A guess, a question or an idea to try is a "conjecture" or is left out, never a theorem.
 Read the whole discussion first. Leave out a claim that a later message withdraws or refutes, and use the final corrected version of a claim that was fixed.
 For each result give "message_id", the id of the one message that states it, and an EXACT short "quote" copied from that message's "text".
@@ -1031,7 +1031,9 @@ Answer in "relation": "same" only if the theorem states exactly the fact; "stron
     "derive": """TASK: try to derive NEW mathematical facts useful for the subject of this task, or for the open questions in task.json.
 Write every statement and proof in the project's agreed notation, listed in "notation" in task.json. When "fact" has a "statement_in_project_notation", use it.
 Each fact must be readable alone: in "local_notation", define every symbol it uses that is not in the project's notation ("notation" in task.json),
-with its meaning in this fact. Do not repeat the project's symbols there.
+with its meaning in this fact, and every term with a technical meaning that is not standard, such as "left match" or "P-condition", even when
+another fact or paper defines it: each fact is reviewed alone, with only its own definitions and the project's. Do not repeat the project's symbols there.
+In a proof, name the facts you use by their label, or by the ref of a new fact of this answer, and list each of them in "depends_on".
 Prefer small, solid steps. Each fact needs a complete, rigorous "proof" unless its kind is definition, conjecture or remark.
 Leave "quote", "page" and "covers" null. "depends_on" may use refs of your new facts, or labels of existing facts.
 A proof may rely only on facts of the database and on standard facts: do not use a result of another work that is not in task.json.

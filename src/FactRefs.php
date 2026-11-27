@@ -50,8 +50,9 @@ final class FactRefs
      */
     public static function resolve(int $pid, int $fid, array $texts): array
     {
+        $batch = self::batchRefs($pid, $fid, implode("\n", $texts));
         $names = self::names(implode("\n", $texts));
-        if (!$names) return [];
+        if (!$names) return $batch;
         $deps = array_map('intval', array_column(Db::all('SELECT depends_on_id FROM fact_deps WHERE fact_id = ?', [$fid]), 'depends_on_id'));
         $same = array_map('intval', array_column(Db::all("SELECT DISTINCT o.fact_id FROM fact_sources s
             JOIN facts f ON f.id = s.fact_id AND s.revision_no = f.current_revision
@@ -59,7 +60,7 @@ final class FactRefs
             JOIN facts g ON g.id = o.fact_id AND o.revision_no = g.current_revision AND g.project_id = f.project_id
             WHERE s.fact_id = ? AND s.covers <> 'context' AND s.source_type IN ('bib', 'document') AND o.fact_id <> ?", [$fid, $fid]), 'fact_id'));
         $ids = array_values(array_unique(array_merge($deps, $same)));
-        if (!$ids) return [];
+        if (!$ids) return $batch;
         [$in, $p] = Db::in($ids);
         $facts = [];
         foreach (Db::all("SELECT id, kind, title, external_id, current_revision FROM facts WHERE id IN $in AND project_id = ? AND deleted_at IS NULL AND retracted_at IS NULL", array_merge($p, [$pid])) as $f) {
@@ -74,6 +75,29 @@ final class FactRefs
                 if (count($hits) === 1) { $out[] = ['text' => $name, 'fact_id' => $hits[0]]; break; }
                 if ($hits) break; // several facts carry this number: no link rather than a wrong one
             }
+        }
+        return array_merge($batch, $out);
+    }
+
+    /**
+     * Facts an AI sent in one answer name each other by the refs it gave them ("By lem:full-match-gives-left-match"), kept in
+     * their external ids (oq-t{task}-{ref}). Such a name in the text links to that fact. Clients before 1.22.6 cut refs to 32
+     * characters: a name that begins with a ref of exactly that length matches it too. Newer imports write links instead.
+     * @return list<array{text: string, fact_id: int}>
+     */
+    private static function batchRefs(int $pid, int $fid, string $text): array
+    {
+        $ext = (string)Db::value('SELECT external_id FROM facts WHERE id = ?', [$fid]);
+        if (!preg_match('/^(oq-t\d+-)/', $ext, $m) || !preg_match_all('/(?<![\w:\/-])[a-z]{2,8}:[A-Za-z0-9][\w.:-]*[A-Za-z0-9]/', $text, $found)) return [];
+        $refs = [];
+        foreach (Db::all('SELECT id, external_id FROM facts WHERE project_id = ? AND id <> ? AND external_id LIKE ? AND deleted_at IS NULL AND retracted_at IS NULL', [$pid, $fid, $m[1] . '%']) as $f) {
+            $refs[substr((string)$f['external_id'], strlen($m[1]))] = (int)$f['id'];
+        }
+        $out = [];
+        foreach (array_unique($found[0]) as $name) {
+            $hit = $refs[$name] ?? null;
+            if ($hit === null) foreach ($refs as $ref => $id) if (strlen($ref) === 32 && str_starts_with($name, $ref)) { $hit = $id; break; }
+            if ($hit !== null) $out[] = ['text' => $name, 'fact_id' => $hit];
         }
         return $out;
     }

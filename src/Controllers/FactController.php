@@ -551,6 +551,7 @@ final class FactController
                 $old = $ext !== '' ? Db::value('SELECT id FROM facts WHERE project_id = ? AND external_id = ? AND deleted_at IS NULL', [$pid, $ext]) : null;
                 if ($old) { $refs[$it['ref']] = (int)$old; $skipped[] = ['ref' => $it['ref'], 'id' => (int)$old]; continue; }
                 try {
+                    $it = self::batchNames($it, $refs);
                     $id = self::ingest($pid, $it, $refs);
                     $refs[$it['ref']] = $id;
                     $created[] = ['ref' => $it['ref'], 'id' => $id, 'label' => Db::value('SELECT label FROM facts WHERE id = ?', [$id])];
@@ -1310,6 +1311,32 @@ final class FactController
     }
 
     /** $cited: a cited result written from an outside reference of a proof, which names that reference instead of quoting a source. */
+    /**
+     * A batch's facts name each other by the refs their author gave them ("By lem:full-match-gives-left-match ..."), which are
+     * not the labels the platform gives. In a fact's text, the ref of a fact of the same batch created before it becomes a link to
+     * that fact, and a fact its proof names is one it depends on. Only refs that cannot be ordinary words: with ":", "-" or "_",
+     * at least 6 characters.
+     */
+    private static function batchNames(array $it, array $refs): array
+    {
+        $names = array_filter(array_keys($refs), fn($ref) => is_string($ref) && mb_strlen($ref) >= 6 && preg_match('/[:_-]/', $ref) && $ref !== ($it['ref'] ?? null));
+        if (!$names) return $it;
+        usort($names, fn($a, $b) => mb_strlen($b) <=> mb_strlen($a)); // the longest first: a ref may begin another
+        $named = [];
+        foreach (['statement_text', 'proof_text', 'intuition_text'] as $k) {
+            if (!is_string($it[$k] ?? null) || $it[$k] === '') continue;
+            foreach ($names as $ref) {
+                $re = '/(?<![\w:.\/-])' . preg_quote($ref, '/') . '(?![\w:-])/u';
+                $it[$k] = preg_replace_callback($re, function () use ($ref, $refs, $k, &$named) {
+                    if ($k === 'proof_text') $named[] = $ref;
+                    return '@{fact:' . $refs[$ref] . '}';
+                }, $it[$k]) ?? $it[$k];
+            }
+        }
+        if ($named) $it['depends_on'] = array_values(array_unique(array_merge(array_map('strval', (array)($it['depends_on'] ?? [])), $named)));
+        return $it;
+    }
+
     private static function ingest(int $pid, array $it, array $refs, bool $cited = false): int
     {
         $title = mb_substr(self::s($it, 'title'), 0, 255);

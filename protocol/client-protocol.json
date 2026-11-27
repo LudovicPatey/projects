@@ -1,7 +1,7 @@
 {
  "min_version": "1.0.0",
- "client_version": "1.22.5",
- "fingerprint": "b5befc25a7c29a89788b72d9f2696b771b1f8aa27e4f26d84237031c45931c42",
+ "client_version": "1.22.7",
+ "fingerprint": "c8aa7d641704edfdea7fc87f16964f497666164bff95878ed94e07332a18ab3e",
  "routes": [
   "GET /api/ai/procedures AiTaskController::procedures",
   "GET /api/bib/{id}/pdf BibController::pdf",
@@ -290,7 +290,8 @@
   "FactController::assertAcyclic": "8a001987b2a5fcc5920d2e7c60def27b42a048180fd673db66243576e82ae726",
   "FactController::assertQuote": "248476a0adadbd69287e08db01640795df643af79bbd004c0b8c99a2b3e2ff4e",
   "FactController::assertShareable": "feb324c76235b15574264aee996fc3fea1677a0ef325ae30bbc515a0d0762dbd",
-  "FactController::batch": "0f3f6a7c5d5c5068ffae96bb7e4c7670715de54180eb4d4c4f5077039e1b1f9b",
+  "FactController::batch": "f4fa9f6790720fc531b0056e9801bfb653010b1465da9204ed920c835bafa878",
+  "FactController::batchNames": "95a9c5d4db1f04f917d22960d53b139d3c475014a71088ff72d2442a9925ef58",
   "FactController::checkFormat": "544663280cd0040c40430c42e2acad39436f5b18d2a8470a3adf65aeb0a06e35",
   "FactController::checkLean": "52f05190c7b97ea6449bc85b5594b68ccabb10350e040befef2ade89120d8118",
   "FactController::content": "f5e0c3e75588e8a020460a2fd31cfb20ce7677bccba781778546e4cb0386b2c0",
@@ -348,11 +349,12 @@
   "FactMigration::repairRefs": "46c970e93573e5ef774a30d26e02cac04476d7ab20d1d03dab3bb9d4d1f81d96",
   "FactRefs::PREFIX": "89833d096974f9819c14f2ff3571a765d5ba2f726b048c5fcb4828b28f7f05d3",
   "FactRefs::WORDS": "58041966e21203666184e79f454a6117e280d5cba9bb03e77d01cda1892a36a1",
+  "FactRefs::batchRefs": "e780155352bb875289d27d1b8202a62ee7834347eb20afc1225e0a15e0465a2d",
   "FactRefs::has": "b317cce4414191476b4830ebbcc6ec9403e9d5a3fa3e73326d7f8b6c52a2103b",
   "FactRefs::names": "41808a12a54d863acf14fd270a054408bfa15fd1b3f9fb47b71fe2a898d4d2aa",
   "FactRefs::numbers": "870928f6cb2562aa6816bda4bfba72016564829fcc3cf5556bbec2bfcd8e0c32",
   "FactRefs::pattern": "ca67d5c52c28a34975887d8307ac342403572e2257653dcd82bcfcef7d739d69",
-  "FactRefs::resolve": "cddf44fe16deaf0aa9990852a22dc579a4ef6562dd07c019a12c144df6fd9486",
+  "FactRefs::resolve": "73ddff1778c7536be3f775eeb1f9e4cf9b0aa17a43782af4302e42065d7ad610",
   "Instructions::ACTIONS": "15c903cb219a96b45bd5f89071f70f0211abf401db53eec74dc892080f331bc1",
   "Instructions::NAMES": "5da731323fa8200fc47cd391f1a7516e69f51465639907579916e4065bf89f22",
   "Instructions::SUBJECT": "1079450bbaf3949d5c95bb07dc43876bebd46f018bff05bed73f80305b7726b4",
@@ -1953,6 +1955,19 @@
    "note": "A fact's status counts again the review a repair started from once that reviewer says correct: statuses only, no change in what clients send or receive.",
    "changed": [
     "FactController::graph"
+   ]
+  },
+  {
+   "date": "2026-11-27",
+   "decision": "compatible",
+   "client_version": "1.22.7",
+   "min_version": "1.0.0",
+   "note": "Batch imports link the refs a batch's facts use for each other and add the dependencies their proofs name: older clients send the same batches, and get links where they had raw names.",
+   "changed": [
+    "FactController::batch",
+    "FactRefs::resolve",
+    "+FactController::batchNames",
+    "+FactRefs::batchRefs"
    ]
   }
  ]
