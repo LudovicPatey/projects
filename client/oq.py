@@ -52,7 +52,7 @@ import webbrowser
 import zipfile
 import zlib
 
-VERSION = "1.22.7"
+VERSION = "1.22.8"
 API_LEVEL = 2  # raise with the server's AiTaskController::API_LEVEL when a client needs new server features
 GITHUB_REPO = "LudovicPatey/projects"
 KINDS = ["extract", "ask", "bib", "derive", "review", "lean", "notation", "consolidate"]
@@ -2398,6 +2398,38 @@ class ContainerVm:
         subprocess.run([self.tool, "rm", "-f", VM_NAME], capture_output=True, env=self.env)
 
 
+def wsl_text(raw):
+    """wsl.exe writes UTF-16 to a pipe."""
+    if b"\0" in raw[:200]:
+        return raw.decode("utf-16-le", "replace")
+    return raw.decode("utf-8", "replace")
+
+
+def wsl_problem(code, text):
+    """What stops WSL, from its exit code and its words: "missing" (not enabled), "old" (no --name), "virtualization" (off in the
+    firmware), or "" (none recognised)."""
+    t = text.lower()
+    if "0x80370102" in t or "virtualization" in t or "virtualisation" in t:
+        return "virtualization"
+    if ("--name" in t and ("invalid" in t or "unknown" in t or "unrecognized" in t)) or "invalid command line option" in t:
+        return "old"
+    if code != 0 and ("0x8007019e" in t or "not installed" in t or "not enabled" in t or "optional component" in t or "virtual machine platform" in t or "wsl --install" in t):
+        return "missing"
+    if code != 0 and not t.strip():
+        return "missing"
+    return ""
+
+
+WSL_HELP = {
+    "declined": "Proving needs Windows's Linux subsystem (WSL), and its installation was not approved. Press Set up proving again and approve it in the window Windows shows, or run this in a PowerShell opened as administrator: wsl --install --no-distribution",
+    "restart": "Windows installed its Linux subsystem. Restart the computer, then press Set up proving again.",
+    "virtualization": "Windows's Linux subsystem needs virtualization. Run this in a PowerShell opened as administrator: wsl --install --no-distribution, and restart the computer. If it still fails, turn on virtualization (Intel VT-x or AMD-V, sometimes called SVM) in the computer's firmware settings.",
+    "old": "Windows's Linux subsystem is too old to create a separate machine. Run this in a PowerShell opened as administrator: wsl --update, then press Set up proving again.",
+    "missing": "Proving needs Windows's Linux subsystem (WSL), which is not installed. Press Set up proving again and approve the installation, or run this in a PowerShell opened as administrator: wsl --install --no-distribution, then restart the computer.",
+    "other": "Windows could not create the Linux machine.",
+}
+
+
 class WslVm:
     name = "Windows Linux subsystem"
     isolation_check = "! mountpoint -q /mnt/c && ! command -v cmd.exe >/dev/null"
@@ -2409,13 +2441,34 @@ class WslVm:
         p = subprocess.run(["wsl", "--list", "--quiet"], capture_output=True, env=self.env)
         return VM_NAME in p.stdout.replace(b"\0", b"").decode("utf-8", "replace")
 
+    def run(self, *args):
+        p = subprocess.run(["wsl", *args], capture_output=True, env=self.env)
+        return p.returncode, wsl_text(p.stdout + p.stderr)
+
+    def elevated(self, *args):
+        """Runs wsl as administrator: Windows shows its approval window. Returns False if it was declined or failed."""
+        quoted = ",".join("'" + a.replace("'", "''") + "'" for a in args)
+        script = f"$p = Start-Process wsl -ArgumentList {quoted} -Verb RunAs -Wait -PassThru; exit $p.ExitCode"
+        p = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script], capture_output=True, env=self.env)
+        return p.returncode == 0
+
     def start(self, say):
         if self.exists():
             return
+        code, text = self.run("--status")
+        if wsl_problem(code, text) == "missing":
+            say("Windows asks you to approve the installation of its Linux subsystem")
+            if not (self.elevated("--install", "--no-distribution") or self.elevated("--install")):
+                raise Stop(WSL_HELP["declined"])
+            raise Stop(WSL_HELP["restart"])
         say("Creating the isolated Linux machine")
-        p = subprocess.run(["wsl", "--install", "Ubuntu-24.04", "--name", VM_NAME, "--no-launch"], capture_output=True, env=self.env)
-        if p.returncode != 0:
-            raise Stop("Windows could not create the Linux machine. It may need the Windows Subsystem for Linux, which asks for administrator approval once.")
+        code, text = self.run("--install", "Ubuntu-24.04", "--name", VM_NAME, "--no-launch")
+        if code != 0 and wsl_problem(code, text) == "old":
+            say("Updating Windows's Linux subsystem: Windows asks you to approve it")
+            self.elevated("--update")
+            code, text = self.run("--install", "Ubuntu-24.04", "--name", VM_NAME, "--no-launch")
+        if code != 0:
+            raise Stop(WSL_HELP.get(wsl_problem(code, text), WSL_HELP["other"]) + (f" Windows said: {text.strip()[-300:]}" if text.strip() else ""))
         conf = "[automount]\nenabled=false\nmountFsTab=false\n[interop]\nenabled=false\nappendWindowsPath=false\n"
         p = subprocess.run(["wsl", "-d", VM_NAME, "-u", "root", "--", "sh", "-c", "cat > /etc/wsl.conf"], input=conf.encode("utf-8"), capture_output=True, env=self.env)
         if p.returncode != 0:
