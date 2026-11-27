@@ -21,7 +21,7 @@ use App\Sanitizer;
  */
 final class ConsolidationController
 {
-    public const KINDS = ['same', 'depends', 'kind', 'question', 'topics', 'cite', 'progress', 'notation'];
+    public const KINDS = ['same', 'depends', 'kind', 'question', 'topics', 'cite', 'progress', 'notation', 'answer'];
     private const NOTATION_ACTIONS = ['adopt', 'local', 'reject'];
     public const MAX_TOPICS = 8;
     private const MAX_TOPIC_LENGTH = 40;
@@ -151,10 +151,13 @@ final class ConsolidationController
     }
 
     /** What the AI may apply on its own when it is confident and the project allows it. Turning a remark into an open question stays with people. */
-    public const AUTO_KINDS = ['same', 'depends', 'kind', 'topics', 'cite', 'progress', 'notation'];
+    public const AUTO_KINDS = ['same', 'depends', 'kind', 'topics', 'cite', 'progress', 'notation', 'answer'];
 
-    /** Cheap to undo and changing no result: applied when the AI finds them probable too, so that people decide as little as possible. */
-    public const AUTO_MEDIUM_KINDS = ['notation', 'topics'];
+    /**
+     * Cheap to undo and changing no result: applied when the AI finds them probable too, so that people decide as little as possible.
+     * An answer applied is only a proposed answer: a member still ratifies or rejects it.
+     */
+    public const AUTO_MEDIUM_KINDS = ['notation', 'topics', 'answer'];
 
     public static function autoApplies(array $s): bool
     {
@@ -234,7 +237,13 @@ final class ConsolidationController
         $decided = array_map(fn($s) => ['kind' => $s['kind'], 'fact_id' => (int)$s['fact_id'], 'other_fact_id' => $s['other_fact_id'] ? (int)$s['other_fact_id'] : null,
             'data' => json_decode((string)$s['data_json'], true), 'status' => $s['status']],
             Db::all("SELECT kind, fact_id, other_fact_id, data_json, status FROM fact_suggestions WHERE project_id = ? AND status IN ('proposed', 'rejected', 'undone') ORDER BY id DESC LIMIT 600", [$pid]));
-        return ['fact_texts' => $facts, 'topics' => self::topics($pid), 'earlier_suggestions' => $decided,
+        // The questions the project asks, with the answers proposed so far: facts may now settle one.
+        $questions = array_map(fn($q) => ['id' => (int)$q['id'], 'parent_id' => $q['parent_id'] ? (int)$q['parent_id'] : null, 'title' => $q['title'],
+            'statement' => mb_substr(\App\Sanitizer::toText((string)$q['statement_html']), 0, 1500), 'status' => $q['status'],
+            'answers' => array_map(fn($a) => ['fact_id' => (int)$a['fact_id'], 'answer' => $a['answer'], 'state' => $a['state']],
+                Db::all("SELECT fact_id, answer, state FROM question_answers WHERE question_id = ? AND state IN ('proposed', 'ratified', 'rejected') ORDER BY id", [$q['id']]))],
+            Db::all('SELECT id, parent_id, title, statement_html, status FROM open_questions WHERE project_id = ? AND deleted_at IS NULL ORDER BY id LIMIT 200', [$pid]));
+        return ['fact_texts' => $facts, 'open_questions' => $questions, 'topics' => self::topics($pid), 'earlier_suggestions' => $decided,
             // The project's notation, and the symbols several facts define for themselves: what to normalize.
             'notation' => NotationController::forTask($pid, false), 'local_notation' => NotationController::shared($pid, 2, 80),
             'omitted_facts' => max(0, (int)Db::value('SELECT COUNT(*) FROM facts WHERE project_id = ? AND deleted_at IS NULL AND retracted_at IS NULL', [$pid]) - count($facts))];
@@ -316,6 +325,11 @@ final class ConsolidationController
                 $to = (int)self::live($pid, (int)$other)['id'];
                 $undo = ['dep_added' => self::addDependency($pid, $f, $to) ? $to : null];
                 $out = ['fact_id' => $fid];
+                break;
+            case 'answer':
+                // A proposed answer to the question, resting on the fact, with the AI's reason: a member ratifies or rejects it.
+                $undo = ['answer_id' => QuestionController::proposeFromConsolidation($pid, (int)$data['question'], $fid, (string)$data['answer'], (string)$s['reason_text'], $s['ai_model'])];
+                $out = ['fact_id' => $fid, 'question_id' => (int)$data['question']];
                 break;
             case 'progress':
                 // Real progress, worth a person's reading: it appears in the members' reading suggestions.
@@ -403,6 +417,9 @@ final class ConsolidationController
                 $added = array_diff(self::decode($u['after'] ?? null), self::decode($u['before'] ?? null));
                 $topics = $cur === ($u['after'] ?? null) ? self::decode($u['before'] ?? null) : array_values(array_diff(self::decode($cur), $added));
                 Db::update('facts', ['topics_json' => $topics ? json_encode($topics, JSON_UNESCAPED_UNICODE) : null, 'updated_at' => $now], 'id = :id', ['id' => $fid]);
+                break;
+            case 'answer':
+                if ($u['answer_id'] ?? null) QuestionController::withdrawFromConsolidation((int)$u['answer_id']);
                 break;
             case 'progress':
                 Db::update('facts', ['highlight_reason' => null, 'highlight_at' => null, 'highlight_model' => null, 'highlight_activity' => null] + ($u['before'] ?? []), 'id = :id', ['id' => $fid]);
@@ -732,6 +749,16 @@ final class ConsolidationController
             $data = ['topics' => $topics];
         }
         if ($kind === 'notation') $data = self::cleanNotation($pid, $x['notation'] ?? null);
+        if ($kind === 'answer') {
+            // Facts that settle an open question: "fact" is the one the answer rests on, "answer" says which way.
+            $qid = (int)(is_numeric($x['question'] ?? null) ? $x['question'] : 0);
+            $q = Db::one('SELECT id, title, status FROM open_questions WHERE id = ? AND project_id = ? AND deleted_at IS NULL', [$qid, $pid]);
+            if (!$q) throw new HttpError(422, 'Name in "question" an open question of the project, from "open_questions".');
+            if (in_array($q['status'], ['solved', 'refuted'], true)) throw new HttpError(422, 'This question is already settled.');
+            $ans = is_string($x['answer'] ?? null) ? $x['answer'] : '';
+            if (!in_array($ans, QuestionController::ANSWERS, true)) throw new HttpError(422, 'An answer is "positive" or "negative".');
+            $data = ['question' => (int)$q['id'], 'question_title' => $q['title'], 'answer' => $ans];
+        }
         $confidence = in_array($x['confidence'] ?? null, ['high', 'medium', 'low'], true) ? $x['confidence'] : null;
         return ['kind' => $kind, 'fact_id' => $fid, 'other_fact_id' => $other, 'data_json' => $data ? json_encode($data, JSON_UNESCAPED_UNICODE) : null, 'reason_text' => $reason, 'confidence' => $confidence];
     }
@@ -803,6 +830,7 @@ final class ConsolidationController
             } elseif ($s['kind'] === 'kind' && $r['data_json'] !== $s['data_json']) continue;
             elseif ($s['kind'] === 'cite' && (json_decode((string)$r['data_json'], true)['ref'] ?? null) !== (json_decode((string)$s['data_json'], true)['ref'] ?? null)) continue;
             elseif ($s['kind'] === 'notation') continue; // compared by symbol below, whatever fact it was attached to
+            elseif ($s['kind'] === 'answer' && (json_decode((string)$r['data_json'], true)['question'] ?? null) !== (json_decode((string)$s['data_json'], true)['question'] ?? null)) continue;
             if ($r['status'] === 'undone') return 'People undid this change.';
             return $r['status'] === 'rejected' ? 'People already rejected this proposal.' : 'The same proposal is already waiting.';
         }
@@ -819,6 +847,12 @@ final class ConsolidationController
         }
         if ($s['kind'] === 'depends' && Db::value('SELECT 1 FROM fact_deps WHERE fact_id = ? AND depends_on_id = ?', [$s['fact_id'], $s['other_fact_id']])) return 'This dependency is already recorded.';
         if ($s['kind'] === 'progress' && Db::value('SELECT highlight_at FROM facts WHERE id = ?', [$s['fact_id']])) return 'This fact is already marked as worth reading.';
+        if ($s['kind'] === 'answer') {
+            $d = json_decode((string)$s['data_json'], true);
+            if (Db::value("SELECT 1 FROM question_answers WHERE question_id = ? AND fact_id = ? AND answer = ? AND state IN ('proposed', 'rejected', 'withdrawn')", [$d['question'], $s['fact_id'], $d['answer']])) {
+                return 'This answer was already proposed.';
+            }
+        }
         return null;
     }
 

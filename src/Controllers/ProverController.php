@@ -127,6 +127,8 @@ final class ProverController
         $failed = $r->input('error') !== null && trim((string)$r->input('error')) !== '';
         Db::update('prover_rounds', ['status' => $failed ? 'failed' : 'done', 'finished_at' => Db::now(), 'seconds' => max(0, min(86400, (int)$r->input('seconds'))),
             'summary_text' => mb_substr(trim($failed ? (string)$r->input('error') : $r->str('summary')), 0, 2000) ?: null], 'id = :id', ['id' => $x['id']]);
+        // A round that added facts: the whole database is read again, with the questions they may settle.
+        if (Db::value("SELECT 1 FROM facts WHERE project_id = ? AND external_id LIKE ? AND deleted_at IS NULL", [$x['project_id'], "prover-r{$x['id']}-%"])) AiTaskController::queueConsolidation((int)$x['project_id']);
         Response::json(['ok' => true]);
     }
 

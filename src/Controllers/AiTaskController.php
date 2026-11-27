@@ -822,7 +822,8 @@ final class AiTaskController
         Db::update('ai_tasks', ['status' => 'done', 'lease_hash' => null, 'lease_until' => null, 'ai_model' => $model, 'ai_user_id' => $stamp['ai_user_id'], 'ai_generation_ms' => $stamp['ai_generation_ms'],
             'summary_text' => $summary, 'error_text' => null,
             'result_json' => json_encode(['fact_ids' => $factIds, 'suggestion_ids' => $suggestionIds, 'reply' => $reply]), 'finished_at' => $now, 'updated_at' => $now], 'id = :id', ['id' => $t['id']]);
-        if ($t['kind'] === 'extract') self::queueConsolidation($pid);
+        // New facts, extracted or proved, are read with the whole database: merges, links, and the questions they may settle.
+        if ($t['kind'] === 'extract' || ($t['kind'] === 'derive' && $factIds)) self::queueConsolidation($pid);
         if ($t['requested_by'] && (int)$t['requested_by'] !== Auth::aiUserId()) {
             Notify::send((int)$t['requested_by'], $pid, 'ai_done', ['link' => self::resultLink($t, $reply), 'excerpt' => $summary ?? 'Your AI request is done.']);
         }

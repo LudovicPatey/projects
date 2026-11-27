@@ -354,6 +354,38 @@ final class QuestionController
         return (bool)Db::value("SELECT 1 FROM question_answers WHERE fact_id = ? AND state = 'ratified'", [$factId]);
     }
 
+    /**
+     * An answer the consolidation proposes, from facts that settle a question (src/Controllers/ConsolidationController.php): the same
+     * row as a member's proposal, by the AI, with its reason. A person still ratifies it. @return int the answer
+     */
+    public static function proposeFromConsolidation(int $pid, int $qid, int $fid, string $answer, string $reason, ?string $model): int
+    {
+        if (!in_array($answer, self::ANSWERS, true)) throw new HttpError(422, 'The answer must be positive or negative.');
+        $q = Db::one('SELECT * FROM open_questions WHERE id = ? AND project_id = ? AND deleted_at IS NULL', [$qid, $pid]);
+        if (!$q) throw new HttpError(422, 'This question is not in the project.');
+        if (in_array($q['status'], ['solved', 'refuted'], true) || self::ratified($qid)) throw new HttpError(409, 'This question already has a ratified answer.');
+        $f = Db::one('SELECT id, label, current_revision, retracted_at FROM facts WHERE id = ? AND project_id = ? AND deleted_at IS NULL', [$fid, $pid]);
+        if (!$f || $f['retracted_at']) throw new HttpError(422, 'An answer must point to a live fact of this project.');
+        if (Db::value("SELECT 1 FROM question_answers WHERE question_id = ? AND fact_id = ? AND answer = ? AND state = 'proposed'", [$qid, $fid, $answer])) {
+            throw new HttpError(409, 'This answer is already proposed.');
+        }
+        $html = Sanitizer::clean(Sanitizer::textToHtml(mb_substr($reason, 0, 4000), $pid))['html'];
+        $id = Db::insert('question_answers', ['project_id' => $pid, 'question_id' => $qid, 'fact_id' => $fid, 'fact_revision' => $f['current_revision'], 'answer' => $answer,
+            'state' => 'proposed', 'rationale_html' => $html, 'proposed_by' => Auth::id(), 'ai_model' => $model, 'created_at' => Db::now()]);
+        Activity::touch($pid, 'oquestion', $qid, 'answer', $id);
+        self::tell((int)$q['created_by'], $pid, 'answer_proposed', ['view' => 'questions', 'id' => $qid], "{$f['label']}: {$q['title']}");
+        return $id;
+    }
+
+    /** Undoing the consolidation's proposal withdraws its answer, while nobody ratified or rejected it. */
+    public static function withdrawFromConsolidation(int $answerId): void
+    {
+        $a = Db::one('SELECT * FROM question_answers WHERE id = ?', [$answerId]);
+        if (!$a || $a['state'] !== 'proposed') return;
+        $q = Db::one('SELECT * FROM open_questions WHERE id = ?', [$a['question_id']]);
+        if ($q) self::close($a, $q, 'withdrawn', 'Withdrawn: the consolidation proposal was undone.', null);
+    }
+
     private static function close(array $a, array $q, string $state, ?string $note, ?string $notice): void
     {
         Db::update('question_answers', ['state' => $state, 'closed_by' => Auth::id(), 'closed_at' => Db::now(), 'closed_note' => $note], 'id = :id', ['id' => $a['id']]);
