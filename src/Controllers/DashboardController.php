@@ -151,9 +151,10 @@ final class DashboardController
         foreach (\App\Verification::rank($pid, ['facts' => $facts]) as $id => $x) {
             if (isset($reviewed[$id])) continue;
             $f = $byId[$id];
-            $why = $x['answers'] ? 'An answer to “' . $x['answers'][0]['title'] . '” rests on it'
-                : ($x['worth'] ? 'A result worth reading rests on it' : ($x['rests'] ? $x['rests'] . ' fact' . ($x['rests'] === 1 ? '' : 's') . ' rely on it' : null));
-            $out[] = ['kind' => 'review', 'ref' => 'fact:' . $id, 'title' => $f['title'], 'code' => $f['label'], 'why' => $why, 'level' => $x['level'], 'link' => ['view' => 'facts', 'id' => $id]];
+            // Short, since several facts often rest on one answer: the question itself is on hover.
+            $why = $x['answers'] ? 'An answer rests on it' : ($x['worth'] ? 'A result worth reading rests on it' : ($x['rests'] ? $x['rests'] . ' fact' . ($x['rests'] === 1 ? '' : 's') . ' rely on it' : null));
+            $whyTitle = $x['answers'] ? 'The answer to ' . implode(', ', array_map(fn($a) => '“' . $a['title'] . '”', $x['answers'])) . ' rests on it: verify it first.' : null;
+            $out[] = ['kind' => 'review', 'ref' => 'fact:' . $id, 'title' => $f['title'], 'code' => $f['label'], 'why' => $why, 'why_title' => $whyTitle, 'level' => $x['level'], 'link' => ['view' => 'facts', 'id' => $id]];
             if (++$shown === 3) break;
         }
         foreach ($questions as $q) {

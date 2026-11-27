@@ -135,6 +135,11 @@ export function sharedState(s) {
   }
 }
 
+/** The same, in a few words for the symbol's header line: the full sentence is its hover. */
+export function sharedStateShort(s) {
+  return { reading: 'AI settling it now', next: 'AI pass due', later: 'AI pass later', left: 'Waits for a member' }[s?.sweep] || '';
+}
+
 /** "X, Y: infinite block sequence", one line per type, as the form writes the parameters. */
 export function paramsText(params, fixed = []) {
   return [...paramGroups(params).map((g) => `${g.params.map((p) => p.name).join(', ')}: ${g.type}`),
@@ -218,13 +223,13 @@ export function rephrasingState(fact) {
   const cur = all.find((r) => r.current);
   const ai = checkedByAi(cur);
   if (cur?.check_verdict === 'unfaithful') {
-    return { tone: 'bad', text: ai ? `A second AI found that the version in project notation changes the meaning: ${cur.check_note || ''} The original is shown.` : 'A person found that the version in project notation changes the meaning. The original is shown.' };
+    return { tone: 'bad', short: 'Notation: meaning changed', text: ai ? `A second AI found that the version in project notation changes the meaning: ${cur.check_note || ''} The original is shown.` : 'A person found that the version in project notation changes the meaning. The original is shown.' };
   }
-  if (cur?.unchanged) return { tone: 'good', text: 'Already written in the project\'s notation.' };
+  if (cur?.unchanged) return { tone: 'good', short: 'In the project notation', text: 'Already written in the project\'s notation.' };
   if (cur) {
-    if (cur.check_verdict === 'faithful') return { tone: 'good', text: ai ? 'Shown in the project\'s notation. A second AI compared it with the original and found the same meaning.' : 'Shown in the project\'s notation, checked by a person.' };
-    return { tone: 'info', text: 'Shown in the project\'s notation by an AI. A second AI will compare it with the original; you can check it now.' };
+    if (cur.check_verdict === 'faithful') return { tone: 'good', short: 'Project notation, same meaning', text: ai ? 'Shown in the project\'s notation. A second AI compared it with the original and found the same meaning.' : 'Shown in the project\'s notation, checked by a person.' };
+    return { tone: 'info', short: 'Project notation, not compared yet', text: 'Shown in the project\'s notation by an AI. A second AI will compare it with the original; you can check it now.' };
   }
-  if (all.some((r) => r.revision_no === fact.current_revision)) return { tone: 'warn', text: 'The agreed notation changed since this fact was rewritten.' };
+  if (all.some((r) => r.revision_no === fact.current_revision)) return { tone: 'warn', short: 'Notation changed since', text: 'The agreed notation changed since this fact was rewritten.' };
   return null;
 }

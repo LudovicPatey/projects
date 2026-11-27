@@ -1,5 +1,6 @@
 // Shared building blocks of the structured pages: figures, charts, work lists and activity.
 import { api } from './api.js';
+import { plainTex } from './fact-badges.js';
 import { store, link } from './store.js';
 import { timeAgo, fullDate } from './util.js';
 import { REF_TYPES, activityVerb, refHref, statusInfo } from './references.js';
@@ -70,10 +71,10 @@ export const ActionList = {
   components: { },
   props: { actions: Array },
   created() { this.meta = ACTIONS; },
-  methods: { link },
+  methods: { link, plainTex },
   template: `<div class="actions"><a v-for="a in actions" :key="a.kind + a.ref" class="action" :href="link(a.link.view, a.link.id)" :title="a.code || null">
     <span class="action-icon" :class="'t-' + meta[a.kind].tone"><icon :name="meta[a.kind].icon" :size="15"/></span>
-    <span class="action-text"><span class="action-kind">{{ meta[a.kind].label }} · <math-text :text="a.why || meta[a.kind].text"/></span><b><math-text :text="a.title"/></b></span><span class="chev" aria-hidden="true">›</span></a>
+    <span class="action-text"><span class="action-kind" :title="a.why_title ? plainTex(a.why_title) : null">{{ meta[a.kind].label }} · {{ a.why || meta[a.kind].text }}</span><b><math-text :text="a.title"/></b></span><span class="chev" aria-hidden="true">›</span></a>
     <div v-if="!actions.length" class="d-empty"><icon name="check-circle" :size="20"/> Nothing is waiting for you.</div></div>`,
 };
 

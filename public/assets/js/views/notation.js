@@ -3,7 +3,8 @@ import { link, attempt, toast } from '../store.js';
 import { timeAgo } from '../util.js';
 import { Kpi, StackBar } from '../dashboard.js';
 import { clipMath } from '../fact-format.js';
-import { NOTATION_SEGMENTS, actionEffects, asMath, colorMath, entryBody, entryError, entryScope, paramsText, sharedDraft, sharedState, wordingGroups, splitVariants, toRewrite } from '../notation-model.js';
+import { uprightScriptWords } from '../bare-tex.js';
+import { NOTATION_SEGMENTS, actionEffects, asMath, colorMath, entryBody, entryError, entryScope, paramsText, sharedDraft, sharedState, sharedStateShort, wordingGroups, splitVariants, toRewrite } from '../notation-model.js';
 import { colorParams, inferParams, paramGroups, trustParams } from '../notation-params.js';
 
 /** A symbol with its parameters in color: pointing at one says what type of object it stands for. */
@@ -21,11 +22,11 @@ const NotationSymbol = {
       const text = params.length ? colorMath(asMath(this.symbol), params) : asMath(this.symbol);
       el.textContent = text;
       if (!window.renderMathInElement) { this.retry = setTimeout(() => this.paint(), 400); return; } // KaTeX is loaded with defer
-      window.renderMathInElement(el, { delimiters: [{ left: '$', right: '$', display: false }], throwOnError: false, trust: trustParams });
+      window.renderMathInElement(el, { delimiters: [{ left: '$', right: '$', display: false }], throwOnError: false, trust: trustParams, preProcess: uprightScriptWords });
       if (params.length && el.querySelector('.katex-error')) {
         // Colors that KaTeX cannot place: the symbol as written, uncolored, rather than its source in red.
         el.textContent = asMath(this.symbol);
-        window.renderMathInElement(el, { delimiters: [{ left: '$', right: '$', display: false }], throwOnError: false });
+        window.renderMathInElement(el, { delimiters: [{ left: '$', right: '$', display: false }], throwOnError: false, preProcess: uprightScriptWords });
         return;
       }
       el.querySelectorAll('.oq-pm').forEach((n) => {
@@ -61,7 +62,7 @@ const entryView = (by, actions) => `<div class="nt-head"><div class="notation-sy
         <small class="nt-hint">{{ scopeOf(e).typed ? 'The same symbol between other objects keeps its own meaning.' : typesHint(e) + ' Until then, the meaning says what the entry applies to.' }}</small></dd></template>
       <template v-if="e.note_text"><dt>How sources differ</dt><dd><math-text :text="e.note_text"/></dd></template>
       <template v-for="g in [['instances', 'Other forms'], ['clashes', 'Other meanings']]" :key="g[0]"><template v-if="splitVariants(e.variants)[g[0]].length"><dt>{{ g[1] }}</dt><dd>
-        <ul class="nt-list"><li v-for="(v, i) in splitVariants(e.variants)[g[0]]" :key="i"><math-text :text="asMath(v.symbol)"/> <span class="nt-dash">—</span> <math-text :text="v.meaning"/><small v-if="v.where" class="nt-where">{{ v.where }}</small></li></ul></dd></template></template>
+        <ul class="nt-list"><li v-for="(v, i) in splitVariants(e.variants)[g[0]]" :key="i"><math-text :text="asMath(v.symbol)"/> <span class="nt-dash">—</span> <math-text :text="v.meaning"/><small v-if="v.where" class="nt-where"><math-text :text="v.where"/></small></li></ul></dd></template></template>
       <template v-if="definedIn(e).length"><dt>Defined in</dt><dd><a :href="link('facts', definedIn(e)[0])" :title="labels.get(definedIn(e)[0])"><math-text :text="titles.get(definedIn(e)[0]) || e.definition_label || labels.get(definedIn(e)[0]) || '#' + definedIn(e)[0]"/></a>
         <span v-if="definedIn(e).length > 1" class="hover-list" tabindex="0"> and {{ definedIn(e).length - 1 }} other fact{{ definedIn(e).length > 2 ? 's' : '' }}<span class="hover-pop" role="tooltip"><a v-for="id in definedIn(e).slice(1, 12)" :key="id" :href="link('facts', id)" :title="labels.get(id)"><math-text :text="titles.get(id) || labels.get(id) || '#' + id"/></a><small v-if="definedIn(e).length > 12" class="muted">and {{ definedIn(e).length - 12 }} more</small></span></span></dd></template>
     </dl>
@@ -104,7 +105,7 @@ export const NotationPanel = {
         onKeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.currentTarget.click(); } } };
     },
     clipMath,
-    timeAgo, link, asMath, splitVariants, sharedState, wordingGroups, actionEffects, paramGroups, inferParams,
+    timeAgo, link, asMath, splitVariants, sharedState, sharedStateShort, wordingGroups, actionEffects, paramGroups, inferParams,
     scopeOf(e) { return entryScope(e); },
     /** A symbol as plain text, for a dropdown, which shows no formula: \\mathrm{FS}(X) reads FS(X). */
     plainSymbol(sym) { return String(sym || '').replace(/\\(?:mathrm|mathsf|mathbf|mathit|mathcal|mathbb|operatorname|text)\s*\{([^{}]*)\}/g, '$1').replace(/\\([A-Za-z]+)/g, '$1').replace(/[{}$]/g, ''); },
@@ -196,7 +197,7 @@ export const NotationPanel = {
             <header class="ai-head"><h2><icon name="graph" :size="15"/> Facts and the agreed notation</h2></header>
             <stack-bar :counts="d.progress" :segments="segments" label="Facts by notation"/>
             <p class="muted small">Rewriting never changes a fact's reviewed text. Each fact shows its version in the project's notation, and a person can confirm that it says the same.</p>
-            <div class="row-gap"><button class="btn primary sm" :disabled="!agreed.length || !remaining" @click="rewriteAll"><icon name="sparkles" :size="14"/> Rewrite {{ remaining }} fact{{ remaining === 1 ? '' : 's' }}</button>
+            <div class="row-gap"><button v-if="remaining" class="btn primary sm" :disabled="!agreed.length" @click="rewriteAll"><icon name="sparkles" :size="14"/> Rewrite {{ remaining }} fact{{ remaining === 1 ? '' : 's' }}</button><span v-else-if="agreed.length" class="muted small"><icon name="check" :size="13"/> Every fact is in the project notation.</span>
               <span v-if="!agreed.length" class="muted small">Agree on at least one symbol first.</span></div>
           </section>
           <section v-if="d.shared.length" class="panel" data-nt="shared">
@@ -207,8 +208,8 @@ export const NotationPanel = {
                 <div class="nt-provenance">In {{ s.facts }} facts<template v-if="wordingGroups(s).summary"> · {{ wordingGroups(s).summary }}</template>
                   <template v-if="s.entry?.id"> · <a :href="link('facts', null, {mode: 'notation', notation: s.entry.id})" title="Open the entry: who decided it, and how to reopen or undo it">project entry, {{ statusWord(s.entry.status) }}</a></template>
                   <template v-else-if="s.entry?.status === 'derived'"> · <span title="An expression in agreed project symbols: it needs no entry of its own">written with project symbols</span></template>
-                  <template v-if="s.entry?.clashes"> · {{ s.entry.clashes }} other meaning{{ s.entry.clashes > 1 ? 's' : '' }} in sources</template></div></div>
-              <p v-if="sharedState(s)" class="shared-state" :class="'s-' + s.sweep"><icon :name="s.sweep === 'left' ? 'users' : 'sparkles'" :size="12"/> {{ sharedState(s) }}</p>
+                  <template v-if="s.entry?.clashes"> · {{ s.entry.clashes }} other meaning{{ s.entry.clashes > 1 ? 's' : '' }} in sources</template>
+                  <span v-if="sharedState(s)" class="shared-state" :class="'s-' + s.sweep" :title="sharedState(s)" role="note"><icon :name="s.sweep === 'left' ? 'users' : 'clock'" :size="12"/> {{ sharedStateShort(s) }}</span></div></div>
               <p v-if="s.spellings?.length > 1" class="muted small nt-spellings">Written {{ s.spellings.length }} ways: <template v-for="(w, i) in s.spellings.slice(0, 5)" :key="w"><math-text :text="asMath(w)"/>{{ i < Math.min(s.spellings.length, 5) - 1 ? ', ' : '' }}</template></p>
               <div v-for="b in wordingGroups(s).blocks" :key="b.key" class="wording-group" :class="[b.tone === null ? 'g-plain' : 'g-' + b.tone, {grouped: wordingGroups(s).grouped}]">
                 <div v-if="b.title" class="wording-head"><b>{{ b.title }}</b><template v-if="b.label">: <math-text :text="b.label"/></template>
@@ -243,9 +244,9 @@ export const NotationPanel = {
             </article>
             <details v-if="local.length" class="ai-decided"><summary>Local, defined within facts ({{ local.length }})</summary>
               <p class="muted small">Too specific to be project symbols. A rewrite unfolds them, or defines them within the fact that uses them.</p>
-              <div v-for="e in local" :key="e.id" class="d-row"><math-text :text="asMath(e.symbol)"/><span class="d-title">{{ e.meaning_text }}</span><button class="btn xs" @click="decide(e, 'proposed')">Reopen</button></div></details>
+              <div v-for="e in local" :key="e.id" class="d-row"><math-text :text="asMath(e.symbol)"/><math-text class="d-title" :text="e.meaning_text"/><button class="btn xs" @click="decide(e, 'proposed')">Reopen</button></div></details>
             <details v-if="rejected.length" class="ai-decided"><summary>Rejected ({{ rejected.length }})</summary>
-              <div v-for="e in rejected" :key="e.id" class="d-row"><math-text :text="asMath(e.symbol)"/><span class="d-title">{{ e.meaning_text }}</span><button class="btn xs" @click="decide(e, 'proposed')">Reopen</button><button class="btn xs" @click="remove(e)">Delete</button></div></details>
+              <div v-for="e in rejected" :key="e.id" class="d-row"><math-text :text="asMath(e.symbol)"/><math-text class="d-title" :text="e.meaning_text"/><button class="btn xs" @click="decide(e, 'proposed')">Reopen</button><button class="btn xs" @click="remove(e)">Delete</button></div></details>
           </section>
           <section v-if="d.definitions.length" class="panel" id="notation-definitions">
             <header class="ai-head"><h2><icon name="book" :size="15"/> Definitions from the facts</h2><small>{{ d.definitions.filter((x) => !x.entry).length }} without an entry</small></header>

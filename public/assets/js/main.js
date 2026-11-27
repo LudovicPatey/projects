@@ -23,6 +23,24 @@ import { VIEW_HELP } from './help/content.js';
 import { ProjectsView, OverviewView, MembersView, ProfileView, NotificationsDrawer } from './views/misc.js';
 import { AdminView } from './views/admin.js';
 
+/**
+ * A list shown on hover stays in the window: opened near the right edge, it shifts left; near the left edge, right. One rule for every
+ * hover list, run when it opens (and by the visual audit, which fires the same event before measuring).
+ */
+function placeHoverPop(e) {
+  const list = e.target.closest?.('.hover-list');
+  const pop = list?.querySelector(':scope > .hover-pop');
+  if (!pop) return;
+  pop.style.left = ''; pop.style.right = '';
+  const shown = pop.style.display; pop.style.display = 'grid';
+  const r = pop.getBoundingClientRect(); const vw = document.documentElement.clientWidth;
+  const shift = r.right > vw - 8 ? vw - 8 - r.right : r.left < 8 ? 8 - r.left : 0;
+  if (shift) { const base = parseFloat(getComputedStyle(pop).left) || 0; pop.style.left = `${base + shift}px`; pop.style.right = 'auto'; }
+  pop.style.display = shown;
+}
+document.addEventListener('mouseover', placeHoverPop);
+document.addEventListener('focusin', placeHoverPop);
+
 const App = {
   data() { return { ready: false, showNotifs: false, projectError: null }; },
   computed: {

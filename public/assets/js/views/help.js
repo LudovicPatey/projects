@@ -113,7 +113,7 @@ export const HelpView = {
         <p class="help-summary">Guides for every feature<template v-if="ctx">, with pointers to what is happening in <b>{{ ctx.project.title }}</b></template>.</p>
         <p><button type="button" class="btn" @click="startTour"><icon name="help" :size="16"/> Take the guided tour</button></p>
         <section v-if="steps.length" class="help-live"><header><span class="help-dot"></span> Suggested next steps in this project</header>
-          <div class="help-next"><div v-for="s in steps" :key="s.text"><a :href="pointer(s.to)"><icon :name="s.icon" :size="16"/> <span>{{ s.text }}</span></a><a class="how" :href="articleHref(s.help)">How?</a></div></div></section>
+          <div class="help-next"><div v-for="s in steps" :key="s.text"><a :href="pointer(s.to)"><icon :name="s.icon" :size="16"/> <math-text :text="s.text"/></a><a class="how" :href="articleHref(s.help)">How?</a></div></div></section>
         <section v-if="!pid && projects.length" class="help-live"><header><span class="help-dot"></span> Open the help for a project</header>
           <div class="help-pointers"><a v-for="x in projects" :key="x.id" :href="'#/p/' + x.id + '/help'">{{ x.title }}</a></div></section>
         <div class="help-cards"><a v-for="g in groups" :key="g.id" :href="articleHref(g.articles[0].slug)"><span><icon :name="g.icon" :size="18"/></span><b>{{ g.title }}</b><small>{{ g.articles.length }} {{ g.articles.length === 1 ? 'article' : 'articles' }}</small></a></div>

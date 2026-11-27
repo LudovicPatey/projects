@@ -79,6 +79,14 @@ States are small icons that explain themselves on hover (`fact-badges.js`: statu
 its exact model on hover), with their word only where there is room. What nearly every item says, such as the label "conclusion",
 is not shown. A fact's key is there to cite it: the fact page's **Cite** copies it.
 
+What a reader came for gets the height of the window. The fact page is the example: its header (kind, title, one line of state, who
+endorsed it, tags) scrolls away; a slim bar with the parts of the fact and its actions stays on top. Actions of the same kind share one
+`action-menu` whose items each say what they do (disagree; ask the AI; cite, retract, delete), and only the main one, **Endorse**,
+stays a button. Notices that nearly every item would show (its dependency chain, its notation) are a word with an icon in the state
+line, their detail and their buttons on hover, never a banner. A section with nothing in it is not shown: its action moves beside the
+heading it belongs to. Labels and tabs follow the width of their column (`@container factcol`), not of the window. A hover list is
+placed by `placeHoverPop` in `main.js`, so it never leaves the window; formulas in a canvas go through `texToUnicode`.
+
 ## 7. Help follows the interface
 
 Each new notice, state or action has its explanation in the help center (`public/assets/js/help/content.js`), and the first-use tour

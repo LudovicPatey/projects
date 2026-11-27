@@ -217,6 +217,13 @@ export const FactsView = {
     shownRevision() { return this.fact.revisions.find((r) => r.revision_no === this.revView) || null; },
     content() { return this.shownRevision || this.fact; },
     externalRefs() { return parseExternalRefs(this.fact?.external_refs); },
+    // How it came here, said in full on hover of its method.
+    originTitle() {
+      const f = this.fact; const by = f.ai_model ? ` by ${f.ai_model}` : '';
+      if (f.basis === 'cited') return `A result of another work, entered${by} without its proof: accept it once you have read the source.`;
+      if (f.method === 'deduced') return `Deduced${by}: an AI proved it here. Check its proof before relying on it.`;
+      return `Extracted${by} from its source, below: check it against the source.`;
+    },
     headTitle() { return this.fact ? texLine(factTitle(this.fact.title, this.fact.statement_html, true)) : ''; },
     gridClass() {
       if (this.sidePanel) return 'facts-notation';
@@ -313,7 +320,7 @@ export const FactsView = {
           <fact-badges :f="f"/>
           <span class="kind-word" :class="'k-' + kindOf(f)">{{ kindLabel(kindOf(f)) }}</span>
           <label-chips v-if="quietLabels(f.labels).length" :labels="quietLabels(f.labels)"/>
-          <span v-for="t in (f.topics || []).slice(0, 2)" :key="t" class="topic-chip sm">{{ t }}</span>
+          <span v-if="f.topics?.length" class="topic-chip sm" :title="'Subject tags: ' + f.topics.join(', ')">{{ f.topics[0] }}</span><span v-if="f.topics?.length > 1" class="topic-more" :title="'Subject tags: ' + f.topics.join(', ')">+{{ f.topics.length - 1 }}</span>
           <span class="grow"></span>
           <span v-if="f.chain === 'broken'" class="chain-warn" :title="chainLabels.broken">⚠</span>
           <span v-if="f.lean !== 'none'" class="lean-tag" :class="f.lean" :title="leanLabels[f.lean]">Lean</span>
@@ -327,53 +334,66 @@ export const FactsView = {
 
   <section v-if="!sidePanel && (mode === 'list' || fact || factError)" class="col col-main">
     <template v-if="fact">
-      <div class="doc-banner" :class="fact.origin"><icon :name="fact.origin === 'ai' ? 'bot' : 'user'" :size="16"/>
-        <span><b>{{ banner.head }}</b> {{ banner.rest }}</span></div>
+     <div class="fact-scroll" ref="factScroll">
       <div v-if="fact.retracted_at" class="fact-alert red"><b>Retracted</b> by {{ fact.retracted_by_name }}, {{ timeAgo(fact.retracted_at) }}: {{ fact.retract_reason }}</div>
-      <div v-else-if="fact.chain !== 'ok'" class="fact-alert" :class="fact.chain === 'broken' ? 'red' : 'amber'">{{ chainLabels[fact.chain] }} in its dependency chain.</div>
-      <header class="doc-head">
-        <div class="doc-title">
-          <div class="fact-id"><span class="kind-tag" :class="'k-' + kindOf(fact)">{{ kindLabel(kindOf(fact)) }}</span><span>{{ fact.method }}</span><span v-if="fact.tool">{{ fact.tool }}</span><span>revision {{ fact.current_revision }}</span><span class="grow"></span>
-            <button class="btn xs ghost" :title="'Copies its key, ' + fact.label + ', to cite it in a text or a paper; type @ in any text of the platform to link it'" @click="cite"><icon name="link" :size="12"/> Cite</button></div>
-          <h2 :title="fact.title"><math-text :text="headTitle"/></h2>
-          <div class="fact-chips"><fact-badges :f="fact" verbose/><label-chips v-if="quietLabels(fact.labels).length" :labels="quietLabels(fact.labels)"/><span class="lean-tag" :class="fact.lean" v-if="fact.lean !== 'none'">{{ leanLabels[fact.lean] }}</span></div>
-          <div class="fact-topics"><icon name="tag" :size="13"/>
-            <template v-if="topicDraft === null"><a v-for="t in fact.topics" :key="t" class="topic-chip" :href="link('facts', null, {topic: t})">{{ t }}</a><span v-if="!fact.topics.length" class="muted small">No subject tag</span><button class="link-btn small" @click="topicDraft = fact.topics.join(', ')">{{ fact.topics.length ? 'Edit' : 'Add tags' }}</button></template>
-            <template v-else><input v-model="topicDraft" class="topic-input" placeholder="Subjects, separated by commas" aria-label="Subject tags, separated by commas" @keydown.enter="saveTopics" @keydown.esc="topicDraft = null"><button class="btn xs primary" @click="saveTopics">Save</button><button class="btn xs ghost" @click="topicDraft = null">Cancel</button></template></div>
-          <ai-pending :items="fact.ai_pending" :questions="fact.ai_questions"/>
-          <div v-if="fact.worth_reading" class="notation-banner t-info worth-reading"><icon name="sparkles" :size="14"/><span><b>Worth reading.</b> <math-text :text="fact.worth_reading.reason"/> <ai-meta compact :model="fact.worth_reading.model"/></span></div>
-          <div v-if="fact.merged_from" class="notation-banner t-info"><icon name="layers" :size="14"/><span>{{ fact.merged_from }} was merged into this fact, as the same result.</span></div>
-          <div v-else-if="mergedHere.length" class="notation-banner t-info"><icon name="layers" :size="14"/><span>{{ mergedHere.map((h) => h.other_label).join(', ') }} {{ mergedHere.length > 1 ? 'were' : 'was' }} merged into this fact, as the same result.</span><button class="btn xs" @click="tab = 'trace'; loadTrace()">History</button></div>
-          <div class="fact-byline"><ai-meta :model="fact.ai_model" :user="fact.ai_user_name" :ms="fact.ai_generation_ms"/><span class="muted small">added by {{ fact.author }} · updated {{ timeAgo(fact.updated_at) }}</span></div>
-          <div v-if="fact.status === 'definition'" class="notation-banner t-info"><icon name="book" :size="14"/><span>A definition: it belongs to the project notation, and it is not checked like a result.</span><button class="btn xs" @click="setMode('notation')">Open the notation</button></div>
-          <div v-if="fact.endorsed_by.length" class="endorsers"><icon name="check-circle" :size="14"/> Endorsed by
-            <a v-for="(e, i) in fact.endorsed_by" :key="e.id" :href="link('members', null, {user: e.id})">{{ e.name }}{{ i < fact.endorsed_by.length - 1 ? ', ' : '' }}</a></div>
-          <div v-if="fact.result_endorsed_by?.length" class="endorsers result-only"><icon name="check" :size="14"/> Result accepted, proof disputed, by
-            <a v-for="(e, i) in fact.result_endorsed_by" :key="e.id" :href="link('members', null, {user: e.id})">{{ e.name }}{{ i < fact.result_endorsed_by.length - 1 ? ', ' : '' }}</a></div>
-          <div v-if="fact.denied_by.length" class="endorsers denied"><icon name="x" :size="14"/> Denied by
-            <a v-for="(e, i) in fact.denied_by" :key="e.id" :href="link('members', null, {user: e.id})">{{ e.name }}{{ i < fact.denied_by.length - 1 ? ', ' : '' }}</a></div>
+      <header class="fact-head">
+        <div class="fact-id"><span class="kind-tag" :class="'k-' + kindOf(fact)">{{ kindLabel(kindOf(fact)) }}</span><span :title="originTitle">{{ fact.method }}<template v-if="fact.tool"> with {{ fact.tool }}</template></span><span :title="'Revision ' + fact.current_revision + ': its history is under Trace'">r{{ fact.current_revision }}</span><span class="fact-when" :title="'Added by ' + fact.author + (fact.ai_model ? ', written by ' + fact.ai_model : '')">updated {{ timeAgo(fact.updated_at) }}</span></div>
+        <h2><math-text :text="headTitle"/></h2>
+        <div class="fact-state">
+          <fact-badges :f="fact" verbose/>
+          <button v-if="fact.chain !== 'ok' && !fact.retracted_at" class="fb fb-btn" :class="fact.chain === 'broken' ? 't-bad' : 't-warn'" :title="chainLabels[fact.chain] + ' in its dependency chain. Trace lists what it rests on.'" @click="openTab('trace')"><icon name="link" :size="13"/><span class="fb-label">{{ chainShort[fact.chain] }}</span></button>
+          <label-chips v-if="quietLabels(fact.labels).length" :labels="quietLabels(fact.labels)"/>
+          <span v-if="fact.lean !== 'none'" class="lean-tag" :class="fact.lean">{{ leanLabels[fact.lean] }}</span>
         </div>
-        <div class="doc-actions">
-          <button class="btn sm star-toggle" :class="{on: fact.starred}" :aria-pressed="!!fact.starred" :title="fact.starred_by?.length ? 'Starred by ' + fact.starred_by.map((u) => u.name).join(', ') : 'Star this fact: it matters, and stands out in the graph'" @click="toggleStar(fact)"><icon name="star" :size="14"/> {{ fact.starred ? 'Starred' : 'Star' }}<b v-if="fact.stars" class="seg-n">{{ fact.stars }}</b></button>
-          <button v-if="!fact.retracted_at && cited" class="btn sm endorse" :class="{on: endorsed}" :aria-pressed="endorsed" :title="endorsed ? 'Withdraw your acceptance' : explain('fact.accept')" @click="toggleEndorse">
-            <icon name="check" :size="14"/> {{ endorsed ? 'Accepted' : 'Accept' }}</button>
-          <button v-else-if="!fact.retracted_at" class="btn sm endorse" :class="{on: endorsed}" :aria-pressed="endorsed" :title="endorsed ? 'Withdraw your endorsement' : explain('fact.endorse')" @click="toggleEndorse">
-            <icon name="check" :size="14"/> {{ endorsed ? 'Endorsed' : 'Endorse' }}</button>
-          <button v-if="!fact.retracted_at && !cited" class="btn sm result-only" :class="{on: resultOnlyOn}" :aria-pressed="resultOnlyOn" :title="resultOnlyOn ? 'Withdraw: you no longer say this' : explain('fact.resultOnly')" @click="toggleResultOnly"><icon name="check" :size="14"/> {{ resultOnlyOn ? 'Result only' : 'Result, not proof' }}</button>
-          <button v-if="!fact.retracted_at" class="btn sm deny" :class="{on: denied}" :aria-pressed="denied" :title="denied ? 'Withdraw your denial' : explain('fact.deny')" @click="toggleDeny"><icon name="x" :size="14"/> {{ denied ? 'Denied' : 'Deny' }}</button>
-          <ai-action v-if="!fact.retracted_at && !cited" kind="review" source-type="fact" :source-id="fact.id" label="AI review"/>
-          <ai-action v-if="!fact.retracted_at && cited" kind="source_check" source-type="fact" :source-id="fact.id" label="Check the source"/>
-          <ai-action v-if="!fact.retracted_at" kind="lean" source-type="fact" :source-id="fact.id" label="Lean proof"/>
-          <ai-action v-if="!fact.retracted_at" kind="ask" source-type="fact" :source-id="fact.id" label="Ask AI"/>
-          <ai-action v-if="!fact.retracted_at && !currentRephrasing && !notationState" kind="notation" source-type="fact" :source-id="fact.id" label="Project notation" title="Write this fact again in the notation agreed by the project"/>
-          <ai-action v-if="!fact.retracted_at" kind="derive" source-type="fact" :source-id="fact.id" label="Prove from this"/>
-          <button v-if="!fact.retracted_at" class="btn sm warn" :title="explain('fact.retract')" @click="retracting = {reason: ''}">Retract</button>
-          <button v-else class="btn sm" :title="explain('fact.reinstate')" @click="reinstate">Reinstate</button>
-          <button class="icon-btn" title="Mark as unread" @click="markItemUnread('fact', fact.id)"><icon name="mail-unread"/></button>
-          <button v-if="canDelete" class="icon-btn" :title="'Delete fact. ' + explain('fact.delete')" aria-label="Delete fact" @click="remove"><icon name="trash"/></button>
-          <button v-if="mode === 'graph'" class="icon-btn" title="Close" @click="closeFact"><icon name="x"/></button>
+        <div v-if="fact.endorsed_by.length || fact.result_endorsed_by?.length || fact.denied_by.length" class="fact-people">
+          <span v-if="fact.endorsed_by.length" class="endorsers"><icon name="check-circle" :size="13"/> Endorsed by <template v-for="(e, i) in fact.endorsed_by" :key="e.id"><a :href="link('members', null, {user: e.id})">{{ e.name }}</a><template v-if="i < fact.endorsed_by.length - 1">, </template></template></span>
+          <span v-if="fact.result_endorsed_by?.length" class="endorsers result-only" title="They accept the result, but not its proof"><icon name="check" :size="13"/> Result only: <template v-for="(e, i) in fact.result_endorsed_by" :key="e.id"><a :href="link('members', null, {user: e.id})">{{ e.name }}</a><template v-if="i < fact.result_endorsed_by.length - 1">, </template></template></span>
+          <span v-if="fact.denied_by.length" class="endorsers denied" title="They say the result is false: their reasons are under Reviews"><icon name="x" :size="13"/> Denied by <template v-for="(e, i) in fact.denied_by" :key="e.id"><a :href="link('members', null, {user: e.id})">{{ e.name }}</a><template v-if="i < fact.denied_by.length - 1">, </template></template></span>
         </div>
+        <p v-if="fact.worth_reading" class="fact-note t-info" :title="fact.worth_reading.model ? 'Marked by ' + fact.worth_reading.model + ', in a consolidation' : 'Marked by a member'"><icon name="eye" :size="13"/><span><b>Worth reading.</b> <math-text :text="fact.worth_reading.reason"/></span></p>
+        <p v-if="fact.merged_from" class="fact-note"><icon name="layers" :size="13"/><span>{{ fact.merged_from }} was merged into this fact, as the same result.</span></p>
+        <p v-else-if="mergedHere.length" class="fact-note"><icon name="layers" :size="13"/><span>{{ mergedHere.map((h) => h.other_label).join(', ') }} {{ mergedHere.length > 1 ? 'were' : 'was' }} merged into this fact, as the same result. <button class="link-btn" @click="openTab('trace')">History</button></span></p>
+        <p v-if="fact.status === 'definition'" class="fact-note t-info"><icon name="book" :size="13"/><span>A definition: it belongs to the project notation, and it is not checked like a result. <button class="link-btn" @click="setMode('notation')">Open the notation</button></span></p>
+        <ai-pending compact :items="fact.ai_pending" :questions="fact.ai_questions"/>
+        <div class="fact-topics"><icon name="tag" :size="13"/>
+          <template v-if="topicDraft === null"><a v-for="t in fact.topics" :key="t" class="topic-chip" :href="link('facts', null, {topic: t})">{{ t }}</a><button class="link-btn small" :title="fact.topics.length ? 'Change its subject tags: they only help to find facts' : 'Add subject tags: they only help to find facts'" @click="topicDraft = fact.topics.join(', ')">{{ fact.topics.length ? 'Edit' : 'Add subject tags' }}</button></template>
+          <template v-else><input v-model="topicDraft" class="topic-input" placeholder="Subjects, separated by commas" aria-label="Subject tags, separated by commas" @keydown.enter="saveTopics" @keydown.esc="topicDraft = null"><button class="btn xs primary" @click="saveTopics">Save</button><button class="btn xs ghost" @click="topicDraft = null">Cancel</button></template></div>
       </header>
+      <div class="fact-bar">
+        <nav class="fact-tabs" aria-label="Parts of this fact">
+          <button :class="{on: tab==='content'}" :aria-pressed="tab==='content'" title="Statement, proof, sources and notation" @click="openTab('content')"><icon name="eye" :size="14"/><span class="ft-l">Fact</span></button>
+          <button :class="{on: tab==='reviews'}" :aria-pressed="tab==='reviews'" :title="currentReviews.length + ' review' + (currentReviews.length === 1 ? '' : 's') + ' of this revision, and yours'" @click="openTab('reviews')"><icon name="check-circle" :size="14"/><span class="ft-l">Reviews</span><b v-if="currentReviews.length" class="count">{{ currentReviews.length }}</b></button>
+          <button :class="{on: tab==='lean'}" :aria-pressed="tab==='lean'" :title="fact.lean_proofs.length + ' Lean proof' + (fact.lean_proofs.length === 1 ? '' : 's')" @click="openTab('lean')"><icon name="code" :size="14"/><span class="ft-l">Lean</span><b v-if="fact.lean_proofs.length" class="count">{{ fact.lean_proofs.length }}</b></button>
+          <button :class="{on: tab==='deps'}" :aria-pressed="tab==='deps'" :title="'Relies on ' + fact.deps.length + ', used by ' + fact.dependents.length + ', and where it is mentioned'" @click="openTab('deps')"><icon name="graph" :size="14"/><span class="ft-l">Links</span><b v-if="fact.deps.length + fact.dependents.length" class="count">{{ fact.deps.length + fact.dependents.length }}</b></button>
+          <button :class="{on: tab==='trace'}" :aria-pressed="tab==='trace'" title="Origin, what it rests on, credits and history" @click="openTab('trace')"><icon name="history" :size="14"/><span class="ft-l">Trace</span></button>
+        </nav>
+        <div class="fact-acts">
+          <button class="icon-btn star-toggle" :class="{on: fact.starred}" :aria-pressed="!!fact.starred" :title="(fact.starred ? 'Remove your star. ' : 'Star this fact: it matters, and stands out in the graph. ') + (fact.starred_by?.length ? 'Starred by ' + fact.starred_by.map((u) => u.name).join(', ') + '.' : 'Nobody starred it yet.')" :aria-label="fact.starred ? 'Remove your star' : 'Star this fact'" @click="toggleStar(fact)"><icon name="star" :size="15"/><b v-if="fact.stars" class="fb-n">{{ fact.stars }}</b></button>
+          <template v-if="!fact.retracted_at">
+            <button class="btn sm endorse" :class="{on: endorsed}" :aria-pressed="endorsed" :title="cited ? (endorsed ? 'Withdraw your acceptance' : explain('fact.accept')) : (endorsed ? 'Withdraw your endorsement' : explain('fact.endorse'))" @click="toggleEndorse"><icon name="check" :size="14"/> {{ cited ? (endorsed ? 'Accepted' : 'Accept') : (endorsed ? 'Endorsed' : 'Endorse') }}</button>
+            <action-menu icon="x" :label="denied ? 'Denied' : resultOnlyOn ? 'Result only' : ''" :on="denied || resultOnlyOn" :tone="denied ? 'bad' : resultOnlyOn ? 'warn' : ''" title="Disagree: the proof has a flaw, or the result is false">
+              <button v-if="!cited" class="menu-item" role="menuitem" :title="explain('fact.resultOnly')" @click="toggleResultOnly"><icon name="check" :size="14"/><span><b>{{ resultOnlyOn ? 'Withdraw: result, not proof' : 'Result, not proof' }}</b><small>The result is right, but its proof has a gap or an error.</small></span></button>
+              <button class="menu-item" role="menuitem" :title="explain('fact.deny')" @click="toggleDeny"><icon name="x" :size="14"/><span><b>{{ denied ? 'Withdraw your denial' : 'Deny' }}</b><small>The result itself is false. The fact stays, with your reason.</small></span></button>
+            </action-menu>
+            <action-menu icon="sparkles" label="AI" title="Ask an AI client to work on this fact: each request joins the AI queue">
+              <ai-action v-if="!cited" menu kind="review" source-type="fact" :source-id="fact.id" label="Independent review"/>
+              <ai-action v-else menu kind="source_check" source-type="fact" :source-id="fact.id" label="Check the source"/>
+              <ai-action menu kind="lean" source-type="fact" :source-id="fact.id" label="Lean proof"/>
+              <ai-action menu kind="ask" source-type="fact" :source-id="fact.id" label="Ask a question"/>
+              <ai-action v-if="!currentRephrasing && !notationState" menu kind="notation" source-type="fact" :source-id="fact.id" label="Write it in the project notation" title="Write this fact again in the notation agreed by the project"/>
+              <ai-action menu kind="derive" source-type="fact" :source-id="fact.id" label="Prove new facts from it"/>
+            </action-menu>
+          </template>
+          <action-menu icon="more" title="Cite, mark as unread, retract or delete">
+            <button class="menu-item" role="menuitem" :title="'Copies its key, ' + fact.label + ', to cite it in a text or a paper'" @click="cite"><icon name="link" :size="14"/><span><b>Cite</b><small>Copies its key, {{ fact.label }}. Type @ in any text here to link it.</small></span></button>
+            <button class="menu-item" role="menuitem" @click="markItemUnread('fact', fact.id)"><icon name="mail" :size="14"/><span><b>Mark as unread</b><small>For you only.</small></span></button>
+            <button v-if="!fact.retracted_at" class="menu-item warn" role="menuitem" :title="explain('fact.retract')" @click="retracting = {reason: ''}"><icon name="archive" :size="14"/><span><b>Retract</b><small>Withdraws it for everyone and flags what relies on it. Reinstate undoes it.</small></span></button>
+            <button v-else class="menu-item" role="menuitem" :title="explain('fact.reinstate')" @click="reinstate"><icon name="restore" :size="14"/><span><b>Reinstate</b><small>Brings it back for everyone.</small></span></button>
+            <button v-if="canDelete" class="menu-item danger" role="menuitem" :title="explain('fact.delete')" @click="remove"><icon name="trash" :size="14"/><span><b>Delete</b><small>Removes it for good: nothing relies on it.</small></span></button>
+          </action-menu>
+          <button v-if="mode === 'graph'" class="icon-btn" title="Close this fact" aria-label="Close" @click="closeFact"><icon name="x"/></button>
+        </div>
+      </div>
       <modal v-if="denying" title="Deny this fact" @close="denying = null">
         <p class="muted small">Deny means that the result itself is false. If you believe the result but not its proof, use <b>Result, not proof</b> instead. Denying records your verdict: the fact stays in the database for everyone, unlike <b>Retract</b>.</p>
         <label class="field"><span>What is wrong? Point to the exact step, or give a counterexample.</span><textarea v-model="denying.reason" rows="4" autofocus></textarea></label>
@@ -398,27 +418,27 @@ export const FactsView = {
         <label class="field"><span>Point to the exact step.</span><textarea v-model="proofCheck.reason" rows="4" autofocus></textarea></label>
         <template #footer><button class="btn ghost" @click="proofCheck = null">Cancel</button><button class="btn primary" :disabled="!proofCheck.reason.trim()" @click="submitProofCheck">Save the review</button></template>
       </modal>
-      <nav class="tabs">
-        <button :class="{on: tab==='content'}" @click="tab='content'"><icon name="eye" :size="14"/> Fact</button>
-        <button :class="{on: tab==='reviews'}" @click="tab='reviews'"><icon name="check-circle" :size="14"/> Reviews <span class="count">{{ currentReviews.length }}</span></button>
-        <button :class="{on: tab==='lean'}" @click="tab='lean'"><icon name="code" :size="14"/> Lean <span class="count">{{ fact.lean_proofs.length }}</span></button>
-        <button :class="{on: tab==='deps'}" @click="tab='deps'"><icon name="graph" :size="14"/> Links <span class="count">{{ fact.deps.length + fact.dependents.length }}</span></button>
-        <button :class="{on: tab==='trace'}" @click="tab='trace'; loadTrace()"><icon name="history" :size="14"/> Trace</button>
-      </nav>
 
-      <div v-if="tab==='content'" class="pad scroll fact-body">
+      <div v-if="tab==='content'" class="pad fact-body">
         <div v-if="shownRevision" class="fact-alert amber">Viewing revision {{ revView }}. <button class="link-btn" @click="revView = null">Back to current</button></div>
         <nav v-if="readable && outline.length > 1" class="fact-outline" aria-label="In this fact"><button v-for="(x, i) in outline" :key="i" :class="'k-' + x.type" @click="jump(x)">{{ x.title }}</button></nav>
-        <div class="fact-view-switch"><div class="seg small" role="group" aria-label="How the text is shown"><button :class="{on: readable}" :aria-pressed="readable" title="Same content, with headings, lists and formulas typeset in LaTeX" @click="setReadable(true)">Readable</button><button :class="{on: !readable}" :aria-pressed="!readable" title="The text exactly as stored" @click="setReadable(false)">Original</button></div>
-          <div v-if="currentRephrasing && !shownRevision" class="seg small" role="group" aria-label="Notation"><button :class="{on: projectNotation}" :aria-pressed="projectNotation" title="Written again in the notation agreed by the project" @click="setNotation(true)">Project notation</button><button :class="{on: !projectNotation}" :aria-pressed="!projectNotation" title="The notation of its source, as it was reviewed" @click="setNotation(false)">As written</button></div></div>
-        <div v-if="notationState && !shownRevision" class="notation-banner" :class="'t-' + notationState.tone"><icon name="book" :size="14"/><span><math-text :text="notationState.text"/><template v-if="currentRephrasing?.check_verdict && !checkedByAi(currentRephrasing)"> {{ currentRephrasing.check_verdict === 'faithful' ? 'Confirmed' : 'Reported' }} by {{ currentRephrasing.checked_by_name }}.</template><ai-meta v-else-if="currentRephrasing?.check_verdict" compact :model="currentRephrasing.check_ai_model" :user="currentRephrasing.check_ai_user_name" :ms="currentRephrasing.check_ai_generation_ms"/></span>
-          <template v-if="currentRephrasing && (!currentRephrasing.check_verdict || checkedByAi(currentRephrasing))"><button class="btn xs endorse" :title="explain('fact.sameMeaning')" @click="checkRephrasing('faithful')"><icon name="check" :size="12"/> Same meaning</button><button class="btn xs deny" :title="explain('fact.notSame')" @click="unfaithful = {note: ''}">Not the same</button></template>
-          <button v-else-if="currentRephrasing" class="btn xs" :title="explain('fact.undoCheck')" @click="checkRephrasing('')">Undo</button>
-          <ai-action v-if="notationState.tone === 'warn' || notationState.tone === 'bad'" kind="notation" source-type="fact" :source-id="fact.id" label="Rewrite again"/></div>
-        <div v-if="rephrasing?.uses?.length" class="notation-uses"><span class="muted small">In its source:</span><span v-for="(u, i) in rephrasing.uses" :key="i" class="notation-use"><math-text :text="asMath(u.symbol)"/> <small><math-text :text="u.meaning_here"/></small><template v-if="u.project_symbol && u.project_symbol !== u.symbol"> → <math-text :text="asMath(u.project_symbol)"/></template></span></div>
-        <div v-if="cited && !shownRevision" class="notation-banner t-info"><icon name="book" :size="14"/><span>Proofs that use this result rely on its source. <template v-if="fact.status === 'accepted'">A member who read the source accepted it.</template><template v-else>Nobody has accepted it yet: read the source, then click <b>Accept</b>. You can also propose a proof below.</template></span></div>
+        <div class="fact-readbar">
+          <span v-if="notationState && !shownRevision" class="hover-list fact-nstate" :class="'t-' + notationState.tone" tabindex="0" :aria-label="notationState.text"><icon name="book" :size="13"/><span class="fns-l">{{ notationState.short }}</span>
+            <span class="hover-pop" role="group">
+              <span><math-text :text="notationState.text"/><template v-if="currentRephrasing?.check_verdict && !checkedByAi(currentRephrasing)"> {{ currentRephrasing.check_verdict === 'faithful' ? 'Confirmed' : 'Reported' }} by {{ currentRephrasing.checked_by_name }}.</template> <ai-meta v-if="currentRephrasing?.check_verdict && checkedByAi(currentRephrasing)" compact :model="currentRephrasing.check_ai_model" :user="currentRephrasing.check_ai_user_name" :ms="currentRephrasing.check_ai_generation_ms"/></span>
+              <span v-if="rephrasing?.uses?.length" class="notation-uses"><b>In its source</b><span v-for="(u, i) in rephrasing.uses" :key="i" class="notation-use"><math-text :text="asMath(u.symbol)"/> <small><math-text :text="u.meaning_here"/></small><template v-if="u.project_symbol && u.project_symbol !== u.symbol"> → <math-text :text="asMath(u.project_symbol)"/></template></span></span>
+              <span v-if="currentRephrasing || notationState.tone === 'warn' || notationState.tone === 'bad'" class="row-gap">
+                <template v-if="currentRephrasing && (!currentRephrasing.check_verdict || checkedByAi(currentRephrasing))"><button class="btn xs endorse" :title="explain('fact.sameMeaning')" @click="checkRephrasing('faithful')"><icon name="check" :size="12"/> Same meaning</button><button class="btn xs deny" :title="explain('fact.notSame')" @click="unfaithful = {note: ''}">Not the same</button></template>
+                <button v-else-if="currentRephrasing" class="btn xs" :title="explain('fact.undoCheck')" @click="checkRephrasing('')">Undo</button>
+                <ai-action v-if="notationState.tone === 'warn' || notationState.tone === 'bad'" kind="notation" source-type="fact" :source-id="fact.id" label="Rewrite again"/></span>
+            </span></span>
+          <span class="grow"></span>
+          <div v-if="currentRephrasing && !shownRevision" class="seg small" role="group" aria-label="Notation"><button :class="{on: projectNotation}" :aria-pressed="projectNotation" title="Written again in the notation agreed by the project" @click="setNotation(true)">Project</button><button :class="{on: !projectNotation}" :aria-pressed="!projectNotation" title="The notation of its source, as it was reviewed" @click="setNotation(false)">As written</button></div>
+          <div class="seg small" role="group" aria-label="How the text is shown"><button :class="{on: readable}" :aria-pressed="readable" title="Same content, with headings, lists and formulas typeset in LaTeX" @click="setReadable(true)">Readable</button><button :class="{on: !readable}" :aria-pressed="!readable" title="The text exactly as stored" @click="setReadable(false)">Original</button></div>
+        </div>
+        <p v-if="cited && !shownRevision" class="fact-note t-info"><icon name="book" :size="13"/><span>Proofs that use this result rely on its source. <template v-if="fact.status === 'accepted'">A member who read the source accepted it.</template><template v-else>Nobody has accepted it yet: read the source, then click <b>Accept</b>. You can also propose a proof below.</template></span></p>
         <section class="fact-sec statement"><h4>Statement</h4><rich-content :html="shown(statementHtml)" :notation="notationMarks" :fact-refs="fact.text_refs"/></section>
-        <section class="fact-sec" v-if="content.proof_html"><h4>Proof<span v-if="!shownRevision && mainFlawed" class="tag amber">Disputed</span><span v-if="!shownRevision && proofs.length" class="tag">1 of {{ proofs.length + 1 }}</span></h4><rich-content :html="shown(proofHtml)" :notation="notationMarks" :fact-refs="fact.text_refs"/></section>
+        <section class="fact-sec" v-if="content.proof_html"><h4>Proof<span v-if="!shownRevision && mainFlawed" class="tag amber">Disputed</span><span v-if="!shownRevision && proofs.length" class="tag">1 of {{ proofs.length + 1 }}</span><span class="grow"></span><button v-if="!shownRevision && !fact.retracted_at && !proofs.length && !oldProofs.length && !mainFlawed && fact.status !== 'proof_disputed'" class="link-btn small" title="Propose a different argument, reviewed on its own: one accepted proof is enough for the fact to count as checked" @click="proposing = {proof: null}"><icon name="plus" :size="12"/> Another proof</button></h4><rich-content :html="shown(proofHtml)" :notation="notationMarks" :fact-refs="fact.text_refs"/></section>
         <section v-if="!shownRevision && fact.outside_refs?.length" class="fact-sec outside-refs"><h4>Results used from other works<span class="count">{{ fact.outside_refs.length }}</span></h4>
           <p class="muted small">A proof relies only on facts of the database, so that it can be checked against them. Link each result the proof takes from another work to the fact that states it, usually a cited result. A consolidation proposes these links, and writes the cited results that are missing.</p>
           <div v-for="r in fact.outside_refs" :key="r.key" class="outside-ref" :class="{open: !r.resolved}">
@@ -441,7 +461,7 @@ export const FactsView = {
             <rich-content v-if="c.body_html" :html="c.body_html"/>
           </article>
         </section>
-        <section v-if="!shownRevision && !fact.retracted_at" class="fact-sec other-proofs" id="other-proofs">
+        <section v-if="!shownRevision && !fact.retracted_at && (proofs.length || oldProofs.length || cited || mainFlawed || fact.status === 'proof_disputed')" class="fact-sec other-proofs" id="other-proofs">
           <h4>{{ cited ? 'Proofs' : 'Other proofs' }}<span v-if="proofs.length" class="count">{{ proofs.length }}</span><span class="grow"></span><button class="btn sm" @click="proposing = {proof: null}"><icon name="plus" :size="13"/> {{ cited ? 'Propose a proof' : 'Propose another proof' }}</button></h4>
           <p v-if="!proofs.length && cited" class="muted small">With a proof here, this result no longer rests on its source: it becomes a proved fact, checked like the others.</p>
           <p v-else-if="!proofs.length" class="muted small">{{ mainFlawed || fact.status === 'proof_disputed' ? 'The proof above is disputed. A correct proof here is enough for the fact to count as checked.' : 'A different argument can be proposed here, by a person or an AI client, and reviewed on its own.' }}</p>
@@ -491,7 +511,7 @@ export const FactsView = {
         </template>
       </div>
 
-      <div v-if="tab==='reviews'" class="pad scroll">
+      <div v-if="tab==='reviews'" class="pad">
         <div v-if="canWriteReview" class="card review-form">
           <h4>{{ myReview ? 'Update your review' : 'Review revision ' + fact.current_revision }}</h4>
           <div class="field"><span>{{ cited ? 'The citation' : 'The proof' }}</span><div class="seg" role="group" :aria-label="cited ? 'The citation' : 'The proof'"><button v-for="(v, k) in verdicts" :key="k" :class="{on: reviewVerdict === k}" :aria-pressed="reviewVerdict === k" @click="reviewVerdict = k">{{ cited ? citedVerdicts[k] : v.label }}</button></div></div>
@@ -516,7 +536,7 @@ export const FactsView = {
             <rich-content v-if="v.body_html" :html="v.body_html"/></article></template>
       </div>
 
-      <div v-if="tab==='lean'" class="pad scroll">
+      <div v-if="tab==='lean'" class="pad">
         <div class="row-gap lean-head"><p class="muted small">AI clients submit Lean proofs. The platform stores them but does not run Lean: compile status is what a member or client reports. Also check that the Lean statement says the same thing as the informal one.</p></div>
         <div v-if="!fact.lean_proofs.length" class="empty">No Lean proof yet.</div>
         <article v-for="l in fact.lean_proofs" :key="l.id" class="lean-card" :class="{old: l.revision_no !== fact.current_revision}">
@@ -544,7 +564,7 @@ export const FactsView = {
         </article>
       </div>
 
-      <div v-if="tab==='deps'" class="pad scroll">
+      <div v-if="tab==='deps'" class="pad">
         <h4>Depends on <span class="count">{{ fact.deps.length }}</span></h4>
         <div v-if="!fact.deps.length" class="muted small pad-b">No dependencies.</div>
         <a v-for="d in fact.deps" :key="d.id" class="row-link" :href="factLink(d.id)" :title="d.label"><fact-badges :f="d" :only="['status']"/><span class="ellipsis"><math-text :text="d.title"/></span></a>
@@ -557,7 +577,7 @@ export const FactsView = {
           <icon :name="b.kind === 'message' ? 'mail' : b.kind === 'question' ? 'target' : 'comment'" :size="14"/> {{ b.label }} <span class="muted small">{{ timeAgo(b.at) }}</span></a>
       </div>
 
-      <div v-if="tab==='trace'" class="pad scroll">
+      <div v-if="tab==='trace'" class="pad">
         <section class="trace-sec"><h4>Origin</h4>
           <div class="row-gap"><proof-tag :origin="fact.proof_origin"/><span class="tag">{{ fact.method }}</span><span v-if="fact.tool" class="tag">{{ fact.tool }}</span>
             <span class="small">Entry written by</span> <ai-meta :model="fact.ai_model" :user="fact.ai_user_name" :ms="fact.ai_generation_ms"/></div>
@@ -613,6 +633,7 @@ export const FactsView = {
           </div></template></div>
         </template>
       </div>
+     </div>
     </template>
     <div v-else-if="factError" class="placeholder">{{ factError }}</div>
     <section-home v-else kind="facts"/>
@@ -645,7 +666,7 @@ export const FactsView = {
     </form>
   </modal>
 </div>`,
-  created() { this.graphViews = GRAPH_VIEWS; this.proofStates = PROOF_STATE; this.basis = BASIS; this.covers = COVERS; this.statuses = STATUS; this.verdicts = VERDICTS; this.leanLabels = LEAN; this.chainLabels = CHAIN; this.sourceChecks = SOURCE_CHECK; this.confidenceLabels = CONFIDENCE; this.citedVerdicts = { correct: 'Source states it', gap: 'Not as written', incorrect: 'Result is false' }; },
+  created() { this.graphViews = GRAPH_VIEWS; this.proofStates = PROOF_STATE; this.basis = BASIS; this.covers = COVERS; this.statuses = STATUS; this.verdicts = VERDICTS; this.leanLabels = LEAN; this.chainLabels = CHAIN; this.chainShort = { broken: 'Rests on a disputed fact', unproved: 'Rests on a disputed proof', unchecked: 'Rests on unchecked facts', incomplete: 'Rests on an outside result' }; this.sourceChecks = SOURCE_CHECK; this.confidenceLabels = CONFIDENCE; this.citedVerdicts = { correct: 'Source states it', gap: 'Not as written', incorrect: 'Result is false' }; },
   methods: {
     factTitle, texLine, kindOf, kindLabel, stance, asMath, checkedByAi,
     setNotation(on) { this.projectNotation = on; this.refreshOutline(); try { localStorage.setItem('oq-fact-notation', on ? 'project' : 'source'); } catch { /* the choice lasts for this page only */ } },
@@ -748,6 +769,13 @@ export const FactsView = {
     },
     pretty(l) { return l.replaceAll('_', ' '); },
     creditText(a) { return [...new Set(a.credits.map((c) => c.name))].join('; ') || (a.ai_model ? `entered by ${a.ai_model}` : ''); },
+    // A tab of the fact, its top just under the bar: the header above it may have scrolled away.
+    openTab(t) {
+      this.tab = t;
+      if (t === 'trace') this.loadTrace();
+      const box = this.$refs.factScroll; const head = box?.querySelector('.fact-head');
+      if (box && head && box.scrollTop > head.offsetHeight) box.scrollTop = head.offsetHeight;
+    },
     async loadTrace() {
       const id = this.fact?.id;
       if (!id) return;

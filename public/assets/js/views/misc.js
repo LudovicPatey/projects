@@ -134,7 +134,7 @@ export const OverviewView = {
           <a v-for="q in d.questions.roots" :key="q.id" class="big-q" :href="link('questions', q.id)">
             <div class="big-q-top"><i v-if="q.priority === 'high'" class="q-high" title="High priority">!</i><b><math-text :text="q.title"/></b><span v-if="!qStatus[q.status]?.quiet" class="q-ico" :class="'qs-' + (qStatus[q.status]?.cls || 'off')" role="img" :title="qStatus[q.status]?.hint" :aria-label="qStatus[q.status]?.hint"><icon :name="qStatus[q.status]?.icon || 'help'" :size="14"/></span></div>
             <div class="big-q-meta"><span v-if="q.total" class="big-q-bar" :title="q.done + ' of ' + q.total + ' sub-questions settled'"><i><span :style="{width: 100 * q.done / q.total + '%'}"></span></i><small>{{ q.done }}/{{ q.total }}</small></span>
-              <span class="q-count" :title="q.strategies ? q.strategies + (q.strategies === 1 ? ' strategy' : ' strategies') : 'No strategy yet'"><icon name="route" :size="12"/> {{ q.strategies }}</span></div></a>
+              <span v-if="q.strategies" class="q-count" :title="q.strategies + (q.strategies === 1 ? ' proof strategy' : ' proof strategies')"><icon name="route" :size="12"/> {{ q.strategies }}</span></div></a>
           <div v-if="!d.questions.roots.length" class="d-empty"><icon name="target" :size="20"/> <a :href="link('questions')">State the first question</a></div></section>
         <section class="panel"><header><h2><icon name="graph" :size="15"/> State of knowledge</h2><a :href="link('facts', null, {mode: 'graph'})">Fact graph ›</a></header>
           <div class="chart-grid"><div><h3>Questions</h3><stack-bar :counts="d.questions.by_status" :segments="seg.QUESTION_SEGMENTS" label="Questions by status"/></div>

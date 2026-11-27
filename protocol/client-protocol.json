@@ -1,7 +1,7 @@
 {
  "min_version": "1.0.0",
  "client_version": "1.21.0",
- "fingerprint": "5bd14914a7860106dee1848e76bf1fada93b61c0044cdae987ac04bcd3907111",
+ "fingerprint": "9556335461813fdf483d98ad937528efef0773bb5247cc3d60f02fa747dda88f",
  "routes": [
   "GET /api/ai/procedures AiTaskController::procedures",
   "GET /api/bib/{id}/pdf BibController::pdf",
@@ -295,6 +295,7 @@
   "FactController::credit": "215111b6c3dd8774ef7ee66eafeb1296fc922999d3e0e103657fd0b74bb8f396",
   "FactController::deps": "97e51f43dde1619bc50a0b989a4f285a973b4a4762c6653675f40e9ead74cf68",
   "FactController::doubtsStatement": "8905f899253ae7fc0fba941e9c66749cd7cb699edb5d13437a38df2f123e6f84",
+  "FactController::excerpt": "5760882b2c592efb91724e6c0a45555ecbe16dd44cec4768fb3c030b1051b7fe",
   "FactController::fromDanus": "db2168a954fe33348139699071eff83059e44ad510715b6555be38262039e9b4",
   "FactController::graph": "4ab91493a5496205f148caec28be03f602913cbed4c8354308b064db41879118",
   "FactController::graphFact": "901ba9d2fca8dddd22883cec08918fefa5abc57f926d1c4a932d2770ce813027",
@@ -308,7 +309,7 @@
   "FactController::leanIncomplete": "ef7de1f148263693ae2b604a6ccd95450199c32a0f7be156d0cc3026f66af398",
   "FactController::leanState": "8c504c750a43b83d052eee1045f4b07082a03ab5891df6996e652d39796aec8b",
   "FactController::linkComment": "b6f15829a6e4e32d95ff286800199a4b1a494fec49a8d669aafcc6aab4846e94",
-  "FactController::list": "a9a8bb203dda9b317be761f9155ac79a96bcd6cce2042568c5ef452cf3c0f648",
+  "FactController::list": "01463751e735b16e440b4a10f136f79f057324c8e02eac9f9b77032df2eaa6de",
   "FactController::listVersion": "cc3e23d6677c8edc5d52aabc6d40448904745fa209f776207d7dc3cf4cc7e7b6",
   "FactController::mark": "6554dddf62eca896dfe6281495800123430af16cfd3f57563cdd3d52afd17c4e",
   "FactController::notifyMentions": "815bedeb8165cf7198bf00f6b60bf31748671febeb28d1442a72e420dbf7567d",
@@ -1567,6 +1568,17 @@
     "+Verification::company",
     "+Verification::level",
     "+Verification::rank"
+   ]
+  },
+  {
+   "date": "2026-11-27",
+   "decision": "compatible",
+   "client_version": "1.21.0",
+   "min_version": "1.0.0",
+   "note": "The list's statement excerpts are cut between words and never inside a formula; the overview's suggestions to verify carry a short reason and why_title. Clients do not read either.",
+   "changed": [
+    "FactController::list",
+    "+FactController::excerpt"
    ]
   }
  ]

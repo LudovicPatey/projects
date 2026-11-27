@@ -58,6 +58,7 @@
   // Lists shown on hover (.hover-pop): opened one at a time to measure them, since the audit cannot hover.
   for (const pop of document.querySelectorAll('.hover-pop')) {
     if (!visible(pop.parentElement)) continue;
+    pop.parentElement.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })); // as a pointer would: the app places it then
     const before = pop.style.display; pop.style.display = 'grid';
     const r = pop.getBoundingClientRect();
     if (r.right > vw + 1 || r.left < -1) problems.push(`list shown on hover outside the window: ${name(pop.parentElement)} spans ${Math.round(r.left)}–${Math.round(r.right)}px`);

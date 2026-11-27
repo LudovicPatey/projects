@@ -29,6 +29,28 @@ test('no template escapes a quote: \\\' inside a backtick string becomes a bare 
   assert.deepEqual(bad, [], 'write ’ or use other quotes');
 });
 
+/** The template text of each backtick string, as the browser sees it: escapes resolved, ${…} left out. */
+function templatesAsRendered(src) {
+  return templateStrings(src).map((t) => t.replace(/\\(n|t|\\|`|'|"|\$)/g, (_, c) => ({ n: '\n', t: '\t' }[c] ?? c)));
+}
+
+test('every expression of every template compiles: one that does not leaves its whole page blank', () => {
+  const bad = [];
+  const check = (f, e) => {
+    if (!e.trim()) return;
+    try { new Function(`return (${e})`); } catch { try { new Function(e); } catch (err) { bad.push(`${f}: ${err.message}: ${e.slice(0, 120)}`); } }
+  };
+  for (const f of files('public/assets/js')) {
+    for (const t of templatesAsRendered(fs.readFileSync(f, 'utf8'))) {
+      if (!/<[a-z]/i.test(t)) continue; // not a template
+      // Bound attributes and events; v-for, v-slot and #slots have their own syntax.
+      for (const m of t.matchAll(/\s(?::|@|v-(?!for|slot)[\w-]+)[\w.:-]*(?:\[[^\]]*\])?="([^"]*)"/g)) check(f, m[1]);
+      for (const m of t.matchAll(/\{\{([\s\S]*?)\}\}/g)) check(f, m[1]);
+    }
+  }
+  assert.deepEqual(bad, []);
+});
+
 test('every interface module parses', () => {
   const broken = files('public/assets/js').filter((f) => spawnSync(process.execPath, ['--check', f], { encoding: 'utf8' }).status !== 0);
   assert.deepEqual(broken, []);

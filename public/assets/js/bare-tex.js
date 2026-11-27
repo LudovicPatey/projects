@@ -21,3 +21,33 @@ export function bareTex(text) {
     return '$' + b + sets.replace(/[ΣΠΔΓΛΩΦΨΘαβγδελμωσπ]/gu, (g) => GREEK[g] + ' ') + '$';
   });
 }
+
+/**
+ * A word written as a subscript or a superscript is a label, set upright: `\mathcal U_{idem}` reads "U idem", not the product
+ * i·d·e·m in italics. Four letters or more, so that indices such as `_{ij}` or `_{n+1}` stay variables. For KaTeX's preProcess.
+ */
+export const uprightScriptWords = (tex) => String(tex).replace(/(?<!\\[a-zA-Z]*)([_^])\{([a-zA-Z]{4,})\}/g, '$1{\\mathrm{$2}}');
+
+const SUP = { 0: '⁰', 1: '¹', 2: '²', 3: '³', 4: '⁴', 5: '⁵', 6: '⁶', 7: '⁷', 8: '⁸', 9: '⁹', '+': '⁺', '-': '⁻', '=': '⁼', '(': '⁽', ')': '⁾', n: 'ⁿ', i: 'ⁱ', k: 'ᵏ', "'": '′', '′': '′', '*': '*' };
+const SUB = { 0: '₀', 1: '₁', 2: '₂', 3: '₃', 4: '₄', 5: '₅', 6: '₆', 7: '₇', 8: '₈', 9: '₉', '+': '₊', '-': '₋', '=': '₌', '(': '₍', ')': '₎',
+  a: 'ₐ', e: 'ₑ', o: 'ₒ', x: 'ₓ', h: 'ₕ', k: 'ₖ', l: 'ₗ', m: 'ₘ', n: 'ₙ', p: 'ₚ', s: 'ₛ', t: 'ₜ', i: 'ᵢ', j: 'ⱼ', r: 'ᵣ', u: 'ᵤ', v: 'ᵥ' };
+const SYMBOL = { emptyset: '∅', varnothing: '∅', le: '≤', leq: '≤', ge: '≥', geq: '≥', ne: '≠', in: '∈', notin: '∉', subseteq: '⊆', subset: '⊂', cup: '∪', cap: '∩', to: '→',
+  infty: '∞', omega: 'ω', alpha: 'α', beta: 'β', gamma: 'γ', delta: 'δ', varepsilon: 'ε', epsilon: 'ε', lambda: 'λ', mu: 'μ', sigma: 'σ', pi: 'π',
+  Sigma: 'Σ', Pi: 'Π', Delta: 'Δ', Gamma: 'Γ', Lambda: 'Λ', Omega: 'Ω', Phi: 'Φ', Psi: 'Ψ', Theta: 'Θ', mathbb: '', prime: '′', cdot: '·', times: '×', ldots: '…', dots: '…' };
+
+/**
+ * A title with formulas as plain Unicode, for a canvas that cannot typeset: "ACA_0^+" becomes "ACA₀⁺", "\Pi^1_1" "Π¹₁", "0'" stays.
+ * A script with a character Unicode has no small form for keeps its caret or underscore. Bare titles are read as bareTex reads them.
+ */
+export function texToUnicode(text) {
+  let t = String(text || '').replace(/\$/g, '');
+  t = t.replace(/\\mathbb\{N\}/g, 'ℕ').replace(/\\mathbb\{Z\}/g, 'ℤ').replace(/\\mathbb\{R\}/g, 'ℝ');
+  t = t.replace(/\\(?:math[a-z]+|text[a-z]*|operatorname)\{([^{}]*)\}/g, '$1');
+  t = t.replace(/\\([a-zA-Z]+)\s?/g, (m, n) => (n in SYMBOL ? SYMBOL[n] : n));
+  const script = (map, mark) => (_, braced, single) => {
+    const s = braced ?? single;
+    return [...s].every((c) => map[c]) ? [...s].map((c) => map[c]).join('') : `${mark}${braced !== undefined ? `(${s})` : s}`;
+  };
+  t = t.replace(/\^(?:\{([^{}]*)\}|([^\s{}]))/g, script(SUP, '^')).replace(/_(?:\{([^{}]*)\}|([^\s{}]))/g, script(SUB, '_'));
+  return t.replace(/[{}]/g, '').replace(/\s{2,}/g, ' ').trim();
+}

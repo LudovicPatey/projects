@@ -2,6 +2,8 @@
 // thousands of facts. Layered layout: a fact sits below everything it depends on.
 // Only what is on screen is drawn, labels are fitted once, and a grid finds the fact under the pointer.
 // Starred facts stand out, and keep their name when the graph is zoomed out.
+import { texToUnicode } from './bare-tex.js';
+
 export const STATUS = {
   unchecked: { label: 'Unchecked', color: '#667085', bg: '#f2f4f7' },
   ai_checked: { label: 'AI-checked', color: '#7c3aed', bg: '#f3edff' },
@@ -38,8 +40,11 @@ function layout(nodes, edges) {
       if (!left.get(u)) queue.push(u);
     }
   }
+  // Facts linked to nothing are set apart, in a grid below: in the first layer they would make one row of hundreds.
+  const alone = nodes.filter((n) => !deps.get(n.id).length && !users.get(n.id).length).map((n) => n.id);
+  const lone = new Set(alone);
   const layers = [];
-  for (const n of nodes) (layers[level.get(n.id)] ||= []).push(n.id);
+  for (const n of nodes) if (!lone.has(n.id)) (layers[level.get(n.id)] ||= []).push(n.id);
   // Barycenter sweeps reduce edge crossings.
   const order = new Map();
   const index = () => layers.forEach((l) => l?.forEach((id, i) => order.set(id, i - (l.length - 1) / 2)));
@@ -57,8 +62,19 @@ function layout(nodes, edges) {
       l.forEach((id, i) => order.set(id, i - (l.length - 1) / 2));
     }
   }
+  // A layer wider than the screen is wrapped: rows of at most `wide` facts, in their order, the layer's rows kept together.
+  const wide = Math.max(8, Math.ceil(Math.sqrt(nodes.length) * 1.6));
   const pos = new Map();
-  layers.forEach((l, y) => l?.forEach((id) => pos.set(id, { x: order.get(id) * (W + GAP_X), y: y * (H + GAP_Y) })));
+  let y = 0;
+  const row = (ids) => { ids.forEach((id, i) => pos.set(id, { x: (i - (ids.length - 1) / 2) * (W + GAP_X), y })); y += H + GAP_Y; };
+  for (const l of layers) {
+    if (!l) continue;
+    for (let i = 0; i < l.length; i += wide) row(l.slice(i, i + wide));
+  }
+  if (alone.length) {
+    if (y) y += GAP_Y; // a gap between the linked facts and the others
+    for (let i = 0; i < alone.length; i += wide) row(alone.slice(i, i + wide));
+  }
   // A grid of the canvas, so that finding the fact under the pointer does not scan them all.
   const grid = new Map();
   for (const [id, q] of pos) {
@@ -90,6 +106,14 @@ function roundRect(c, x, y, w, h, r) {
   c.closePath();
 }
 
+/** A title on two lines of a node: words kept whole, the second line cut with an ellipsis. */
+function twoLines(c, text, max) {
+  const words = String(text).split(/\s+/); let first = '';
+  while (words.length && c.measureText(first ? `${first} ${words[0]}` : words[0]).width <= max) first = first ? `${first} ${words.shift()}` : words.shift();
+  if (!first) return [fit(c, words.join(' '), max), ''];
+  return [first, words.length ? fit(c, words.join(' '), max) : ''];
+}
+
 function fit(c, text, max) {
   if (c.measureText(text).width <= max) return text;
   let lo = 0, hi = text.length;
@@ -114,7 +138,7 @@ export const FactGraph = {
       <button class="btn xs" @click="fitView">Fit</button>
     </div>
     <div v-if="hint" class="fg-hint" :style="{left: hint.x + 'px', top: hint.y + 'px'}">
-      <b>{{ hint.n.label }}</b><span v-if="hint.n.stars" class="fg-hint-star"> ★ {{ hint.n.stars }}</span><div>{{ hint.n.title }}</div>
+      <b><math-text :text="hint.n.title || hint.n.label"/></b><span v-if="hint.n.stars" class="fg-hint-star"> ★ {{ hint.n.stars }}</span><div class="muted small">Key {{ hint.n.label }}, for citing</div>
       <div class="muted small">{{ proofLabel[hint.n.proof_origin] }} · entered by {{ hint.n.ai_model }} · {{ status[hint.n.status].label }}</div>
       <div class="muted small" v-if="hint.n.labels.length">{{ hint.n.labels.join(', ').replaceAll('_', ' ') }}</div>
     </div>
@@ -247,17 +271,16 @@ export const FactGraph = {
       if (d && !d.moved) this.$emit('select', this.at(e));
     },
     leave() { this.hover = null; this.hint = null; this.draw(); },
+    // A node shows its title, the most telling: its key, only for citing, is in the card on hover.
     labelOf(c, n, reserved) {
-      const key = `${n.id}:${reserved}:${n.label}:${n.title}`;
+      const key = `${n.id}:${reserved}:${n.title}`;
       let v = this.labels.get(n.id);
       if (!v || v.key !== key) {
-        c.font = '600 12px ui-monospace, Menlo, monospace';
-        const label = fit(c, n.label, W - 14 - reserved);
-        c.font = '11px -apple-system, "Segoe UI", sans-serif';
-        v = { key, label, title: fit(c, n.title, W - 20) };
+        c.font = '600 11.5px -apple-system, "Segoe UI", sans-serif';
+        const [a, b] = twoLines(c, texToUnicode(n.title || n.label), W - 18 - reserved);
+        v = { key, lines: [a, b] };
         this.labels.set(n.id, v);
       }
-      c.font = '600 12px ui-monospace, Menlo, monospace';
       return v;
     },
     draw() {
@@ -336,16 +359,15 @@ export const FactGraph = {
         c.restore();
         if (k < 0.32) continue;
         c.textBaseline = 'middle'; c.textAlign = 'left';
-        c.fillStyle = '#1c2230'; c.font = '600 12px ui-monospace, Menlo, monospace';
         const right = n.lean === 'compiled' ? 34 : 8;
-        const starW = star ? 34 : 0;
+        const starW = star ? 30 : 0;
         const fitted = this.labelOf(c, n, right + starW);
-        c.fillText(fitted.label, nx + 11, p.y - 11);
-        c.fillStyle = '#475467'; c.font = '11px -apple-system, "Segoe UI", sans-serif';
-        c.fillText(fitted.title, nx + 11, p.y + 9);
+        c.fillStyle = '#1c2230'; c.font = '600 11.5px -apple-system, "Segoe UI", sans-serif';
+        if (fitted.lines[1]) { c.fillText(fitted.lines[0], nx + 11, p.y - 8); c.fillText(fitted.lines[1], nx + 11, p.y + 9); }
+        else c.fillText(fitted.lines[0], nx + 11, p.y);
         if (star) {
           c.fillStyle = '#a16207'; c.font = '700 11px -apple-system, sans-serif'; c.textAlign = 'right';
-          c.fillText(`★ ${n.stars}`, nx + W - 8 - right, p.y - 11);
+          c.fillText(`★ ${n.stars}`, nx + W - 8 - right, p.y - 8);
           c.textAlign = 'left';
         }
         if (n.lean === 'compiled') {
@@ -362,7 +384,8 @@ export const FactGraph = {
         c.font = `700 ${fs}px -apple-system, "Segoe UI", sans-serif`; c.textAlign = 'center'; c.textBaseline = 'bottom';
         for (const n of starred) {
           const p = pos.get(n.id);
-          const t = `★ ${n.title.length > 40 ? n.title.slice(0, 39) + '…' : n.title}`;
+          const name = texToUnicode(n.title || n.label);
+          const t = `★ ${name.length > 40 ? name.slice(0, 39) + '…' : name}`;
           const tw = c.measureText(t).width + 8 / k;
           roundRect(c, p.x - tw / 2, p.y - H / 2 - fs * 1.45, tw, fs * 1.3, 4 / k);
           c.fillStyle = 'rgba(255, 251, 235, .95)'; c.fill();

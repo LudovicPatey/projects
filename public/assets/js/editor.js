@@ -4,6 +4,7 @@ import { store } from './store.js';
 import { REF_TYPES, parseRefQuery, sortRefs } from './references.js';
 import { hydrateChips, openChip, searchRefs } from './refs-client.js';
 import { escapeHtml, markTerms } from './util.js';
+import { uprightScriptWords } from './bare-tex.js';
 import { mentionMatches, mentionQuery } from './questions-model.js';
 import { askAiPrefix, offersAskAi } from './ai-model.js';
 import { notationMarker, trustMarks } from './notation-marks.js';
@@ -25,7 +26,7 @@ class MentionBlot extends Embed {
     node.setAttribute('data-id', value.id);
     node.setAttribute('data-label', value.label);
     node.textContent = '@' + value.label;
-    if (String(value.label).includes('$') && window.renderMathInElement) window.renderMathInElement(node, { delimiters: [{ left: '$', right: '$', display: false }], throwOnError: false });
+    if (String(value.label).includes('$') && window.renderMathInElement) window.renderMathInElement(node, { delimiters: [{ left: '$', right: '$', display: false }], throwOnError: false, preProcess: uprightScriptWords });
     return node;
   }
 
@@ -214,7 +215,7 @@ const MATH_DELIMITERS = [
 /** Renders the formulas of an element. `marker` (from notationMarker) marks the uses of notation in them. */
 export function renderMath(el, marker = null) {
   if (window.renderMathInElement) {
-    const marks = marker?.count ? { preProcess: marker.preProcess, trust: trustMarks } : {};
+    const marks = marker?.count ? { preProcess: (t) => marker.preProcess(uprightScriptWords(t)), trust: trustMarks } : { preProcess: uprightScriptWords };
     window.renderMathInElement(el, { delimiters: MATH_DELIMITERS, throwOnError: false, ignoredClasses: ['mention'], ...marks });
   }
 }
@@ -251,7 +252,7 @@ function showNotation(target, entry) {
     p.append(where);
   }
   p.hidden = false;
-  if (window.renderMathInElement) window.renderMathInElement(p, { delimiters: MATH_DELIMITERS, throwOnError: false });
+  if (window.renderMathInElement) window.renderMathInElement(p, { delimiters: MATH_DELIMITERS, throwOnError: false, preProcess: uprightScriptWords });
   const r = target.getBoundingClientRect(); const w = Math.min(340, window.innerWidth - 16);
   p.style.width = `${w}px`;
   const left = Math.max(8, Math.min(r.left + r.width / 2 - w / 2, window.innerWidth - w - 8));
@@ -276,7 +277,7 @@ export const MathText = {
       el.textContent = bareTex(String(this.text || '').replace(/@\{\w+:([^}]+)\}/g, '$1').replace(/\$\$/g, '$'));
       if (el.textContent.includes('$') || el.textContent.includes('\\(')) {
         if (window.renderMathInElement) {
-          window.renderMathInElement(el, { delimiters: [{ left: '$', right: '$', display: false }, { left: '\\(', right: '\\)', display: false }], throwOnError: false });
+          window.renderMathInElement(el, { delimiters: [{ left: '$', right: '$', display: false }, { left: '\\(', right: '\\)', display: false }], throwOnError: false, preProcess: uprightScriptWords });
         } else {
           this.retry = setTimeout(() => this.paint(), 400); // KaTeX is loaded with defer
         }

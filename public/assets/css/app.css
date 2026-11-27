@@ -1757,7 +1757,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: non
 .btn.at-limit { opacity: .55; }
 
 /* When the AI settles a symbol defined in several facts, or that it left it to the members. */
-.shared-state { display: flex; align-items: center; gap: 5px; margin-top: 3px; color: var(--muted); }
+.shared-state { display: inline-flex; align-items: center; gap: 4px; margin-left: 8px; padding: 1px 8px; border-radius: 999px; background: var(--line-2); color: #475467; font-weight: 600; cursor: help; white-space: nowrap; }
+.shared-state.s-left { background: var(--warn-bg); color: var(--warn); }
 
 /* An object not in its final state: an AI pass is still due on it (Sweeps::pendingForFact, pendingItems). */
 .ai-pending { display: flex; align-items: flex-start; gap: 7px; margin: 6px 0 10px; padding: 7px 10px; border: 1px dashed var(--line); border-radius: 8px; background: var(--panel-2); color: var(--muted); font-size: 13px; line-height: 1.45; }
@@ -1806,3 +1807,82 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: non
 
 .cons-help { margin: 0 0 6px; }
 .cons-help .hover-pop { width: min(460px, calc(100vw - 48px)); }
+
+/* The fact page: one scrolling column. Its header scrolls away; a slim bar with the parts of the fact and its actions stays on top,
+   so that the statement and the proof get the height of the window. */
+.fact-scroll { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; }
+.fact-head { display: flex; flex-direction: column; gap: 6px; padding: 16px 20px 12px; }
+.fact-head h2 { font-size: 19px; line-height: 1.3; letter-spacing: -.01em; margin: 0; overflow-wrap: anywhere; }
+.fact-head .fact-id { gap: 4px 8px; }
+.fact-when { cursor: help; }
+.fact-state { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; }
+.fb { background: none; }
+.fb-btn { border: 0; padding: 0; font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; }
+.fb-btn .fb-label { color: inherit; font-weight: 500; text-decoration: underline dotted; text-underline-offset: 3px; }
+.fact-people { display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.fact-people .endorsers { display: inline-flex; }
+.fact-note { display: flex; align-items: flex-start; gap: 7px; margin: 0; font-size: 13px; color: var(--muted); background: none; }
+.fact-note > svg { flex: none; margin-top: 3px; }
+.fact-note > span { flex: 1; min-width: 0; }
+.fact-note.t-info { background: none; color: var(--text); }
+.fact-note.t-info > svg { color: var(--info); }
+.fact-head .ai-pending.compact { margin: 0; }
+.fact-head .fact-topics { margin: 0; }
+.fact-bar { position: sticky; top: 0; z-index: 6; display: flex; align-items: center; gap: 8px; padding: 0 12px 0 8px; min-height: 44px; background: var(--panel-2); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.fact-tabs { display: flex; flex: 1 1 auto; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.fact-tabs button { flex: none; display: inline-flex; align-items: center; gap: 5px; height: 43px; padding: 0 10px; border: 0; border-bottom: 2px solid transparent; background: none; color: var(--muted); font-weight: 600; font-size: 13px; cursor: pointer; }
+.fact-tabs button:hover { color: var(--text); }
+.fact-tabs button.on { color: var(--accent); border-bottom-color: var(--accent); }
+.fact-tabs .count { font-size: 11px; font-weight: 600; padding: 0 6px; border-radius: 9px; background: var(--line-2); color: #475467; }
+.fact-tabs button.on .count { background: var(--accent-2); color: var(--accent); }
+.fact-acts { display: flex; flex: none; align-items: center; gap: 6px; }
+.fact-acts .icon-btn.star-toggle { display: inline-flex; align-items: center; gap: 3px; width: auto; padding: 0 6px; color: var(--muted); }
+.fact-acts .icon-btn.star-toggle.on { color: #a16207; }
+.fact-acts .icon-btn.star-toggle.on svg { fill: #facc15; stroke: #a16207; }
+/* Menus of actions: each item says what it does. */
+.act-menu { position: relative; }
+.act-menu-btn { display: inline-flex; align-items: center; gap: 5px; }
+.act-menu-btn .am-chev { opacity: .55; margin-left: -1px; }
+.act-menu-btn.icon-only { padding-left: 8px; padding-right: 7px; }
+.act-menu-btn.on.t-bad { background: var(--bad-bg); border-color: #f5b5ae; color: var(--bad); }
+.act-menu-btn.on.t-warn { background: var(--warn-bg); border-color: #f3cf8f; color: var(--warn); }
+.act-pop { position: fixed; z-index: 60; display: grid; max-height: min(70vh, 520px); overflow: auto; padding: 6px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); box-shadow: var(--shadow-lg); }
+.menu-item { display: flex; align-items: flex-start; gap: 10px; width: 100%; padding: 8px 10px; border: 0; border-radius: 7px; background: none; color: var(--text); text-align: left; font: inherit; cursor: pointer; }
+.menu-item:hover:not(:disabled), .menu-item:focus-visible { background: var(--panel-2); outline: none; }
+.menu-item:disabled { opacity: .5; cursor: default; }
+.menu-item > svg { flex: none; margin-top: 2px; color: var(--muted); }
+.menu-item > span { display: grid; gap: 1px; min-width: 0; }
+.menu-item b { font-size: 13px; font-weight: 600; }
+.menu-item small { font-size: 12px; line-height: 1.35; color: var(--muted); }
+.menu-item.warn b, .menu-item.warn > svg { color: var(--warn); }
+.menu-item.danger b, .menu-item.danger > svg { color: var(--bad); }
+/* Above the statement: how the text is shown, in one line. */
+.fact-readbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.fact-nstate { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: 999px; font-size: 12.5px; font-weight: 600; text-decoration: none; }
+.fact-nstate .fns-l { text-decoration: underline dotted; text-underline-offset: 3px; }
+.fact-readbar { position: relative; }
+.fact-readbar .fact-nstate { position: static; }
+.fact-nstate .hover-pop { font-weight: 400; color: var(--text); width: min(460px, 100%); }
+.fact-nstate .notation-uses { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 0; }
+.fact-nstate .notation-uses > b { flex-basis: 100%; font-size: 12px; }
+.fact-sec h4 { display: flex; align-items: center; gap: 8px; }
+@media (max-width: 640px) {
+  .fact-scroll { overflow: visible; }
+  .fact-bar { top: 42px; }
+  .fact-head { padding: 14px 14px 10px; }
+}
+/* The tabs and actions fit the column, whatever the window: words go first, then all but the open tab's. */
+.col-main { container: factcol / inline-size; }
+.fact-readbar .seg button { white-space: nowrap; }
+@container factcol (max-width: 760px) { .fact-tabs .ft-l { display: none; } .fact-tabs button.on .ft-l { display: inline; } }
+@container factcol (max-width: 560px) {
+  .fact-bar { flex-wrap: wrap; row-gap: 0; padding: 0 10px 6px; }
+  .fact-tabs { flex: 1 1 100%; }
+  .fact-tabs button { padding: 0 9px; height: 40px; }
+  .fact-acts { flex: 1 1 100%; flex-wrap: wrap; row-gap: 6px; justify-content: flex-end; }
+}
+@container factcol (max-width: 380px) { .fact-tabs button.on .ft-l, .act-menu-btn .am-l { display: none; } }
+
+/* A card's subject tags: the first one, cut to fit, and how many more, all of them on hover. */
+.li-foot .topic-chip.sm { min-width: 0; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; }
+.topic-more { flex: none; font-size: 11px; font-weight: 600; color: var(--muted); cursor: help; }

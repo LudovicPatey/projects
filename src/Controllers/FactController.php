@@ -69,13 +69,27 @@ final class FactController
             $text = (string)$f['statement_text'];
             $short = mb_strlen($text) > self::EXCERPT;
             $f = array_intersect_key($f, array_flip(self::COMPACT)) + ['used_by' => count($f['dependents']),
-                'statement_text' => $short ? mb_substr($text, 0, self::EXCERPT) . '…' : $text, 'statement_truncated' => $short];
+                'statement_text' => $short ? self::excerpt($text) : $text, 'statement_truncated' => $short];
         }
         unset($f);
         if (!$compact) Response::json($g + ['compact' => false]);
         // Columns, so that each field name is sent once rather than once per fact.
         $columns = array_merge(self::COMPACT, ['used_by', 'statement_text', 'statement_truncated']);
         Response::json(['compact' => true, 'columns' => $columns, 'rows' => array_map(fn($f) => array_map(fn($c) => $f[$c] ?? null, $columns), $g['facts']), 'edges' => $g['edges']]);
+    }
+
+    /**
+     * The start of a statement for the list, cut between words and never inside a formula: a formula cut in two would show its
+     * dollar and its raw LaTeX. A formula that the cut would split is left out whole.
+     */
+    public static function excerpt(string $text, int $max = self::EXCERPT): string
+    {
+        $cut = mb_substr($text, 0, $max);
+        $cut = preg_replace('/\s+\S*$/u', '', rtrim($cut)) ?: rtrim($cut); // between words
+        // Unescaped dollars before the cut: an odd number means that the cut falls inside a formula, which is then left out.
+        preg_match_all('/(?<!\\\\)\$/u', $cut, $m, PREG_OFFSET_CAPTURE);
+        if (count($m[0]) % 2 === 1) $cut = substr($cut, 0, (int)end($m[0])[1]);
+        return rtrim($cut, " ,;:(") . '…';
     }
 
     /** Changes whenever the list could: a fact, review, proof, comment, star or rewrite, for this person. */

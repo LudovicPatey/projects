@@ -14,6 +14,7 @@ export function loadAiUsage(again = false) {
 export const ICONS = {
   sparkles: '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 15v4"/><path d="M17 17h4"/><path d="M5 3v3"/><path d="M3.5 4.500h3"/>',
   clock: '<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>',
+  more: '<circle cx="5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="19" cy="12" r="1.4"/>',
   terminal: '<path d="m4 17 6-6-6-6"/><path d="M12 19h8"/>',
   bug: '<rect width="8" height="14" x="8" y="6" rx="4"/><path d="m19 7-3 2"/><path d="m5 7 3 2"/><path d="m19 19-3-2"/><path d="m5 19 3-2"/><path d="M20 13h-4"/><path d="M4 13h4"/><path d="m10 4 1 2"/><path d="m14 4-1 2"/>',
   lightbulb: '<path d="M15 14c.2-1 .7-1.7 1.5-2.5A4.6 4.6 0 0 0 18 8 6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5"/><path d="M9 18h6"/><path d="M10 22h4"/>',
@@ -115,7 +116,7 @@ export const AiPending = {
     passes() { return pendingView(this.items); },
     asks() { return (this.questions || []).map(questionView).filter(Boolean); },
   },
-  template: `<div v-if="compact && (passes.length || asks.length)" class="ai-pending compact" role="note" :title="[...passes.map((p) => p.name + ': ' + p.text), ...asks.map((q) => q.who + ': ' + q.text)].join('\n')"><icon name="clock" :size="13"/><span><b>Not final yet:</b> {{ [...passes.map((p) => p.name), ...asks.length ? ['a question for a person'] : []].join(', ') }}</span></div>
+  template: `<div v-if="compact && (passes.length || asks.length)" class="ai-pending compact" role="note" :title="[...passes.map((p) => p.name + ': ' + p.text), ...asks.map((q) => q.who + ': ' + q.text)].join('\\n')"><icon name="clock" :size="13"/><span><b>Not final yet:</b> {{ [...passes.map((p) => p.name), ...asks.length ? ['a question for a person'] : []].join(', ') }}</span></div>
   <div v-else-if="passes.length || asks.length" class="ai-pending" role="note"><icon name="clock" :size="13"/><span><b>Not final yet.</b>
     <span v-if="passes.length" class="ai-pending-group"><span class="ai-pending-head">Waiting for {{ passes.length > 1 ? 'AI passes' : 'an AI pass' }}</span>
       <template v-for="p in passes" :key="p.sweep"> <span class="ai-pending-pass" :title="p.text"><b>{{ p.name }}</b><template v-if="!compact">: {{ p.text }}</template></span></template></span>
@@ -125,7 +126,7 @@ export const AiPending = {
 
 /** The same AI request from anywhere it is relevant. It joins the queue shown on the AI page. */
 export const AiAction = {
-  props: { kind: String, sourceType: String, sourceId: Number, label: String, disabled: Boolean, title: String },
+  props: { kind: String, sourceType: String, sourceId: Number, label: String, disabled: Boolean, title: String, menu: Boolean },
   data() { return { busy: false, asking: false, prompt: '' }; },
   computed: {
     info() { return AI_KINDS[this.kind]; },
@@ -153,12 +154,41 @@ export const AiAction = {
     },
   },
   emits: ['queued'],
-  template: `<button class="btn sm" :class="{'at-limit': full}" :disabled="busy || disabled || full" :title="tip" @click="click"><icon :name="info.icon === 'files' ? 'sparkles' : info.icon" :size="14"/> {{ text }}</button>
+  template: `<button v-if="menu" class="menu-item" role="menuitem" :class="{'at-limit': full}" :disabled="busy || disabled || full" :title="tip" @click="click"><icon :name="info.icon === 'files' ? 'sparkles' : info.icon" :size="14"/><span><b>{{ text }}</b><small>{{ full ? usage.label : (title || info.hint) }}</small></span></button>
+  <button v-else class="btn sm" :class="{'at-limit': full}" :disabled="busy || disabled || full" :title="tip" @click="click"><icon :name="info.icon === 'files' ? 'sparkles' : info.icon" :size="14"/> {{ text }}</button>
   <modal v-if="asking" :title="text" @close="asking = false">
     <label class="field"><span>Your question</span><textarea v-model="prompt" rows="4" maxlength="4000"></textarea></label>
     <p class="muted small">The answer appears on the AI work page.</p>
     <template #footer><button class="btn ghost" @click="asking = false">Cancel</button><button class="btn primary" :disabled="busy || !prompt.trim()" @click="send">Add to the queue</button></template>
   </modal>`,
+};
+
+/**
+ * One button that opens a short list of actions, each with what it does, for a toolbar that would otherwise hold a row of buttons.
+ * Click or Enter opens it; a click outside, Escape or choosing an item closes it. `on` and `tone` show a choice already made.
+ */
+export const ActionMenu = {
+  props: { icon: String, label: String, title: String, on: Boolean, tone: String },
+  data() { return { open: false, pos: {} }; },
+  mounted() { this.away = (e) => { if (this.open && !this.$el.contains(e.target)) this.open = false; }; this.esc = (e) => { if (e.key === 'Escape') this.open = false; }; this.drift = () => { this.open = false; }; document.addEventListener('click', this.away, true); document.addEventListener('keydown', this.esc); window.addEventListener('scroll', this.drift, true); window.addEventListener('resize', this.drift); },
+  unmounted() { document.removeEventListener('click', this.away, true); document.removeEventListener('keydown', this.esc); window.removeEventListener('scroll', this.drift, true); window.removeEventListener('resize', this.drift); },
+  methods: {
+    toggle() {
+      this.open = !this.open;
+      if (!this.open) return;
+      // Opens where it fits, inside the main area: under the button unless near the bottom, its right edge on the button's unless
+      // that would cross the left of the area, as on a phone. Fixed, so that no scrolling column cuts it.
+      const r = this.$el.getBoundingClientRect();
+      const area = document.querySelector('.main')?.getBoundingClientRect() || { left: 0, right: window.innerWidth };
+      const width = Math.min(320, area.right - area.left - 16);
+      const left = Math.max(area.left + 8, Math.min(r.right - width, area.right - width - 8));
+      const up = r.bottom > window.innerHeight - 280 && r.top > 300;
+      this.pos = { left: left + 'px', width: width + 'px', ...(up ? { bottom: window.innerHeight - r.top + 6 + 'px' } : { top: r.bottom + 6 + 'px' }) };
+    },
+    picked(e) { if (e.target.closest('.menu-item')) this.open = false; },
+  },
+  template: `<div class="act-menu" :class="{open}"><button class="btn sm act-menu-btn" :class="[{on}, tone ? 't-' + tone : '', {'icon-only': !label}]" aria-haspopup="menu" :aria-expanded="open" :title="title" :aria-label="label || title" @click="toggle"><icon :name="icon" :size="14"/><span v-if="label" class="am-l">{{ label }}</span><icon name="chevron" :size="12" class="am-chev"/></button>
+    <div v-if="open" class="act-pop" :style="pos" role="menu" @click="picked"><slot/></div></div>`,
 };
 
 /** Red counter, like the badge of an iPhone app. */
@@ -210,6 +240,7 @@ export function registerCommon(app) {
   app.component('ai-meta', AiMeta);
   app.component('ai-action', AiAction);
   app.component('ai-pending', AiPending);
+  app.component('action-menu', ActionMenu);
   app.component('unread-badge', UnreadBadge);
   app.component('mark-all-read', MarkAllRead);
 }

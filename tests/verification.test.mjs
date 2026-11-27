@@ -36,7 +36,7 @@ test('what an answer rests on comes first, then what many facts rely on, directl
   // The overview suggests the same facts, with the reason.
   const d = (await app.call(ann, 'GET', `/api/projects/${pid}/dashboard`)).data;
   const todo = d.actions.filter((a) => a.kind === 'review');
-  assert.equal(todo[0].title, 'answer'); assert.match(todo[0].why, /An answer to “Is it so\?” rests on it/);
+  assert.equal(todo[0].title, 'answer'); assert.equal(todo[0].why, 'An answer rests on it'); assert.match(todo[0].why_title, /“Is it so\?”/);
   // A person's endorsement takes it off the list.
   await app.call(ann, 'POST', `/api/facts/${id.answer}/reviews`, { verdict: 'correct', body_text: 'Checked.' });
   assert.equal((await list(pid)).answer.verify, null);

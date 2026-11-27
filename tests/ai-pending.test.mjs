@@ -24,7 +24,7 @@ test('the notice names the pass, what it does, when it runs and what a person sh
   assert.match(v.text, /referees the proof.*Queued now.*People can review it too\./);
   assert.match(pendingView([{ sweep: 'rewrite', open: false }])[0].text, /once nobody has added facts for a while.*No need to rewrite it by hand\./);
   for (const k of ['rewrite', 'check', 'source', 'review', 'types', 'second']) assert.ok(PENDING_PASSES[k], k);
-  for (const [file, re] of [['views/facts.js', /<ai-pending :items="fact.ai_pending" :questions="fact.ai_questions"\/>/], ['views/notation.js', /<ai-pending :items="e.ai_pending"\/>/], ['views/consolidation.js', /<ai-pending v-if="s.status === 'proposed'" :items="s.ai_pending"/]]) {
+  for (const [file, re] of [['views/facts.js', /<ai-pending (?:compact )?:items="fact.ai_pending" :questions="fact.ai_questions"\/>/], ['views/notation.js', /<ai-pending :items="e.ai_pending"\/>/], ['views/consolidation.js', /<ai-pending v-if="s.status === 'proposed'" :items="s.ai_pending"/]]) {
     assert.match(fs.readFileSync(`public/assets/js/${file}`, 'utf8'), re, file);
   }
 });
