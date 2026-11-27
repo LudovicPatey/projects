@@ -111,3 +111,13 @@ test('a source check batch keeps its other results when one of them was deleted 
   assert.equal(done.status, 200, JSON.stringify(done.data));
   assert.match(done.data.summary_text, /^1 cited result checked/);
 });
+
+test('a source check that checks none of its batch is refused, and its results stay to check', async () => {
+  const p = (await app.call(ann, 'POST', '/api/projects', { title: 'Unread', question_html: '<p>Q</p>' })).data.id;
+  const bib = (await app.call(ann, 'POST', `/api/projects/${p}/bib`, { fields: { title: 'A book', author: 'X, Y.', year: '2000' }, cite_key: 'xy01' })).data.created[0];
+  await app.call(key, 'POST', `/api/projects/${p}/facts/batch`, { format: 'native', ai_model: 'm', facts: [{ ref: 'c', title: 'c', kind: 'theorem', labels: ['conclusion'], method: 'extracted', statement_text: 'S.', proof_text: '', sources: [{ type: 'bib', id: bib, quote: 'Theorem', covers: 'statement' }] }] });
+  const take = () => app.call(key, 'POST', '/api/ai/tasks/claim', { client_name: 'c', ai_model: 'gpt-5.5', project_id: p, kinds: ['source_check'], features: ['procedures'], capabilities: ['web_search', 'document'] });
+  const t = (await take()).data.task;
+  const r = await app.call(key, 'POST', `/api/ai/tasks/${t.id}/answer`, { lease: t.lease, ai_model: 'gpt-5.5', answer: { summary: 'I could not read task.json.', checks: [] } });
+  assert.equal(r.status, 422); assert.match(r.data.error, /checks none of the items/);
+});

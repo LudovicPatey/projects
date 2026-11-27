@@ -416,6 +416,12 @@ TXT,
         if ($why !== null) throw new HttpError(422, "The answer does not follow the procedure's schema: $why.");
         $pid = (int)$t['project_id'];
         $said = trim((string)($answer['summary'] ?? ''));
+        // A check must give each item of its batch a verdict ("unreadable" when the source could not be read). One that gives none,
+        // as when the model could not read its task, did nothing: refused, so that the task is tried again and its items are not
+        // counted as checked.
+        foreach (['source_check_batch' => [AiTaskController::batchFacts($t), 'checks'], 'rewrite_check' => [AiTaskController::batchItems($t), 'checks']] as $variant => [$items, $list]) {
+            if ($v === $variant && $items && !($answer[$list] ?? [])) throw new HttpError(422, 'The answer checks none of the items of its batch: nothing was recorded, and the task will be tried again. ' . mb_substr($said, 0, 300));
+        }
         switch ($v) {
             case 'ask':
                 if (trim((string)$answer['reply']) === '') throw new HttpError(422, 'The answer has no reply.');

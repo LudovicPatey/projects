@@ -32,6 +32,19 @@ final class Verification
         return preg_split('/[-_:\/\s.]/', $m)[0] ?: $m;
     }
 
+    /** Short names a client may send for a model, standing for any of its versions: "opus" is claude-opus-5-5 as well. */
+    private const ALIASES = ['opus', 'sonnet', 'haiku', 'fable'];
+
+    /** Whether two names may be the same model: equal, or one an alias and the other a version of it. */
+    public static function sameModel(?string $a, ?string $b): bool
+    {
+        $a = mb_strtolower(trim((string)$a)); $b = mb_strtolower(trim((string)$b));
+        if ($a === '' || $b === '') return false;
+        if ($a === $b) return true;
+        foreach ([[$a, $b], [$b, $a]] as [$x, $y]) if (in_array($x, self::ALIASES, true) && preg_match('/(^|[-_])' . preg_quote($x, '/') . '([-_]|$)/', $y)) return true;
+        return false;
+    }
+
     /**
      * How far the current revision is checked, from the reviews that found its proof correct: by a person, by an AI of another
      * company than its author, or only by one of the same company. A proof written by a person is checked independently by any AI.

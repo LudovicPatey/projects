@@ -6,6 +6,7 @@
 //                                    [--second-provider codex] [--tasks 12] [--timeout 900]
 //
 // --second-provider runs the proof reviews again with another tool, as a second model would on the platform.
+// --no-limits lifts the usage limits of the bench's own client (see below).
 // --repair (with --second-provider) then alternates the two tools on the repairs of proofs the reviews found flawed, as clients of
 // two companies would, until no step is due or 2 × ProofRepair::ROUNDS runs have passed.
 import { spawnSync } from 'node:child_process';
@@ -68,6 +69,9 @@ const cfg = fs.mkdtempSync(path.join(os.tmpdir(), 'oq-bench-'));
 const env = { ...process.env, OQ_CONFIG_DIR: cfg, OQ_URL: app.base, OQ_KEY: key, PATH: `${path.join(os.homedir(), '.local/bin')}:${process.env.PATH}` };
 const client = (argv) => spawnSync('python3', [path.join(ROOT, 'client/oq.py'), ...argv], { env, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
 client(['procedures', '--on', 'proof_review']); client(['procedures', '--auto', 'on']);
+// --no-limits: this throwaway client may use the whole subscription and has no daily cap (0), so that a long run is not cut short.
+// The limits of the computer's own client, in its own configuration folder, are not touched.
+if (args.includes('--no-limits')) client(['limits', '--max-session-percent', '100', '--max-weekly-percent', '100', '--tasks-per-day', '0', '--minutes-per-day', '0', '--tokens-per-day', '0']);
 const run = (prov, limit, only = null) => {
   const started = Date.now();
   const r = client(['run', '--once', '--project', String(pid), '--provider', prov, ...(model && prov === provider ? ['--model', model] : []), '--limit', String(limit), '--timeout', String(timeout), '--name', 'bench', ...(only ? ['--only', only] : [])]);

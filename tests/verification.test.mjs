@@ -86,3 +86,11 @@ test('the list says why a fact matters only when something rests on it', () => {
   const many = verifyBadge({ answers: [], answer_count: 0, worth: 0, rests: 7, waits: 'person' });
   assert.equal(many.count, 7); assert.match(many.title, /It waits for a person/);
 });
+
+test('a client that names its model by an alias is still recognised as the author, and a refusal is not a read', async () => {
+  const pid = await project('Aliases');
+  const id = await facts(pid, [F('mine')]); // written by claude-opus-5-5
+  assert.equal((await claim(pid, ['opus'])).data.task, null, '"opus" wrote what claude-opus-5-5 wrote: no batch for it');
+  const t = (await claim(pid, ['gpt-5.5'])).data.task;
+  assert.deepEqual(t.context.facts.map((f) => f.fact_id), [id.mine], 'another company gets it');
+});

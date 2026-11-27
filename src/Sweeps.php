@@ -207,11 +207,14 @@ final class Sweeps
         $rank ??= Verification::rank($pid, $graph);
         $tried = self::tried($pid, 'proof_review', null);
         $revision = array_column($graph['facts'], 'current_revision', 'id');
+        $author = array_column($graph['facts'], 'ai_model', 'id');
         $around = null;
         $out = [];
         foreach ($rank as $id => $x) {
             if (!in_array($x['level'], ['none', 'same_ai'], true)) continue;
-            if (count(array_unique($tried[$id . ':' . (int)$revision[$id]] ?? [])) >= self::REVIEW_READERS) continue;
+            // A model that wrote the proof was refused, not left it out: it does not count as one of the readers.
+            $readers = array_filter(array_unique($tried[$id . ':' . (int)$revision[$id]] ?? []), fn($m) => !Verification::sameModel($m, $author[$id] ?? null));
+            if (count($readers) >= self::REVIEW_READERS) continue;
             if ($x['level'] === 'same_ai' && !array_diff($around ??= array_merge(Verification::companiesAround($pid), $alsoAround), $x['checked_by'])) continue;
             $out[] = (int)$id;
         }
@@ -235,7 +238,7 @@ final class Sweeps
         // The client asking is around too: its model may be the first of its company here.
         foreach (self::reviewCandidates($pid, $graph, $rank, array_filter([$company])) as $fid) {
             $f = $byId[$fid]; $rev = (int)$f['current_revision'];
-            if ($model !== '' && mb_strtolower(trim((string)$f['ai_model'])) === $model) continue;
+            if ($model !== '' && Verification::sameModel((string)$f['ai_model'], $model)) continue; // "opus" wrote what claude-opus-5-5 wrote
             if ($model !== '' && in_array($model, $readers[$fid . ':' . $rev] ?? [], true)) continue;
             if ($company !== null && in_array($company, $rank[$fid]['checked_by'], true)) continue;
             $size = (int)Db::value('SELECT LENGTH(statement_html) + LENGTH(COALESCE(proof_html, \'\')) FROM fact_revisions WHERE fact_id = ? AND revision_no = ?', [$fid, $rev]);

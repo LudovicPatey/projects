@@ -119,7 +119,7 @@ final class ProofRepair
         $mine = Verification::company($model); $theirs = Verification::company($other);
         if ($mine !== $theirs) return true;
         if (array_diff($around, [$theirs])) return false; // another company is around: the step waits for it
-        return mb_strtolower(trim($model)) !== mb_strtolower(trim($other));
+        return !Verification::sameModel($model, $other);
     }
 
     /** The repairs a model would take in one task of this step. @return array{0: list<int>, 1: bool} ids, and whether more was left */
