@@ -57,7 +57,6 @@ export const QuestionsView = {
     linkOptions() {
       const m = store.mentionables;
       const t = this.linkForm?.type;
-      if (t === 'fact') return m.facts.map((x) => ({ id: x.id, label: `${x.label} — ${x.title}` }));
       if (t === 'document') return m.documents.map((x) => ({ id: x.id, label: x.title }));
       if (t === 'bib') return m.bib.map((x) => ({ id: x.id, label: `${x.cite_key} — ${x.title}` }));
       return [];
@@ -71,6 +70,8 @@ export const QuestionsView = {
     closedAnswers() { return (this.question?.answers || []).filter((a) => !['proposed', 'ratified'].includes(a.state)); },
     shownAnswers() { return (this.question?.answers || []).filter((a) => this.showClosed || ['proposed', 'ratified'].includes(a.state)); },
     factOptions() { return store.mentionables.facts || []; },
+    // The facts already linked where the link would go: linking one twice changes nothing.
+    linkedFacts() { const f = this.linkForm; if (!f || !this.question) return []; const links = f.strategy ? this.question.strategies?.find((s) => s.id === f.strategy)?.links : this.question.links; return (links || []).filter((l) => l.target_type === 'fact').map((l) => +l.target_id); },
     noteTitle() { return { reject: 'Reject answer', revoke: 'Revoke ratification', deny: 'Deny fact' }[this.noteForm?.mode]; },
   },
   watch: {
@@ -242,7 +243,7 @@ export const QuestionsView = {
   <modal v-if="answerForm" title="Propose an answer" wide @close="answerForm = null">
     <p class="muted small">Nothing changes on the question until a human ratifies this answer.</p>
     <div class="field"><span>Answer</span><div class="seg"><button type="button" :class="{on: answerForm.answer === 'positive'}" @click="answerForm.answer = 'positive'">Positive (yes)</button><button type="button" :class="{on: answerForm.answer === 'negative'}" @click="answerForm.answer = 'negative'">Negative (no)</button></div></div>
-    <label class="field"><span>Fact that answers it</span><select v-model.number="answerForm.fact"><option :value="0" disabled>Choose a fact…</option><option v-for="f in factOptions" :key="f.id" :value="f.id">{{ f.label }} — {{ f.title }}</option></select></label>
+    <div class="field"><span>Fact that answers it</span><fact-picker v-model="answerForm.fact" label="Fact that answers it" effect="The answer rests on this fact: once a person ratifies it, the question is settled by it. The fact itself is left as it is."/></div>
     <p v-if="!factOptions.length" class="muted small">The fact database is empty. Facts are added by AI clients.</p>
     <div class="field"><span>Why does this fact answer the question?</span><rich-editor ref="aEd" :min-height="100" placeholder="Explain the link between the fact and the question… (@ mentions, $…$ LaTeX)" @submit="saveAnswer"/></div>
     <template #footer><button class="btn ghost" @click="answerForm = null">Cancel</button><button class="btn primary" :disabled="busy || !answerForm.fact" @click="saveAnswer">Propose</button></template>
@@ -257,8 +258,9 @@ export const QuestionsView = {
   <modal v-if="linkForm" title="Link an item" @close="linkForm = null">
     <div>
       <label class="field"><span>Type</span><select v-model="linkForm.type" @change="linkForm.target = 0"><option v-for="(l, k) in linkGroups" :key="k" :value="k">{{ l }}</option></select></label>
-      <label class="field"><span>Item</span><select v-model.number="linkForm.target"><option :value="0" disabled>Choose…</option><option v-for="o in linkOptions" :key="o.id" :value="o.id">{{ o.label }}</option></select></label>
-      <p v-if="!linkOptions.length" class="muted small">Nothing of this type in the project yet.</p>
+      <div v-if="linkForm.type === 'fact'" class="field"><span>Fact</span><fact-picker v-model="linkForm.target" label="Fact" :exclude="linkedFacts" :effect="'Lists the fact under this ' + (linkForm.strategy ? 'strategy' : 'question') + ', for its readers. The fact and the status of the question are left as they are; remove the link with its ×.'"/></div>
+      <label v-else class="field"><span>Item</span><select v-model.number="linkForm.target"><option :value="0" disabled>Choose…</option><option v-for="o in linkOptions" :key="o.id" :value="o.id">{{ o.label }}</option></select></label>
+      <p v-if="linkForm.type !== 'fact' && !linkOptions.length" class="muted small">Nothing of this type in the project yet.</p>
     </div>
     <template #footer><button class="btn ghost" @click="linkForm = null">Cancel</button><button class="btn primary" :disabled="busy || !linkForm.target" @click="saveLink">Link</button></template>
   </modal>

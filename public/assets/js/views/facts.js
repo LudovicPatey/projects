@@ -141,8 +141,7 @@ export const FactsView = {
     cited() { return this.fact?.basis === 'cited'; },
     // What an outside reference can be linked to: the cited results first, then the other facts.
     linkOptions() {
-      const others = this.results.filter((f) => f.id !== this.fact?.id);
-      return [...others.filter((f) => f.basis === 'cited'), ...others.filter((f) => f.basis !== 'cited')];
+      return [...this.results.filter((f) => f.basis === 'cited'), ...this.results.filter((f) => f.basis !== 'cited')];
     },
     starCount() { return this.results.filter((f) => f.stars > 0).length; },
     graphView() { return this.gView || defaultView(this.results.length, this.starCount > 0); },
@@ -504,7 +503,7 @@ export const FactsView = {
             <div v-if="r.fact" class="row-gap small"><span class="muted">Stated by</span><a :href="factLink(r.fact.id)" :title="r.fact.label"><fact-badges :f="r.fact" :only="['status']"/> <math-text :text="r.fact.title"/></a><button class="link-btn small" :title="explain('fact.unlink')" @click="clearRef(r)">Unlink</button></div>
             <div v-else-if="r.not_used" class="row-gap small"><span class="muted">Not used as a result: background only.</span><button class="link-btn small" @click="clearRef(r)">Undo</button></div>
             <div v-else class="outside-ref-act">
-              <select v-model="refPick[r.key]" class="sm" :aria-label="'Fact that states ' + r.label"><option :value="undefined" disabled>Fact that states it…</option><option v-for="f in linkOptions" :key="f.id" :value="f.id">{{ f.basis === 'cited' ? 'Cited · ' : '' }}{{ f.label }}: {{ f.title }}</option></select>
+              <fact-picker v-model="refPick[r.key]" sm :facts="linkOptions" :exclude="[fact.id]" label="Fact that states it" placeholder="Search the fact that states it" :clearable="false"/>
               <button class="btn sm" :disabled="!refPick[r.key]" :title="explain('fact.link')" @click="linkRef(r)">Link</button>
               <button class="btn sm ghost" :title="explain('fact.notUsed')" @click="linkRef(r, true)">Not used</button>
             </div>

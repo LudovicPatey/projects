@@ -2,6 +2,7 @@ import { initials, colorFor, formatDuration } from './util.js';
 import { store, unreadCount, markAllRead, attempt } from './store.js';
 import { api } from './api.js';
 import { AI_KINDS, pendingView, questionView, usageView } from './ai-model.js';
+import { FactPicker } from './fact-picker.js';
 
 let usageLoad = null;
 /** The person's AI requests of the last 24 hours, fetched once for every AI button of the page, again when asked. */
@@ -244,4 +245,5 @@ export function registerCommon(app) {
   app.component('action-menu', ActionMenu);
   app.component('unread-badge', UnreadBadge);
   app.component('mark-all-read', MarkAllRead);
+  app.component('fact-picker', FactPicker);
 }

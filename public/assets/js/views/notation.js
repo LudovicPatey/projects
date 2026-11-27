@@ -83,7 +83,8 @@ export const NotationPanel = {
     remaining() { return toRewrite(this.d?.progress); },
     talkEntry() { return (this.d?.entries || []).find((e) => e.id === this.talk) || null; },
     error() { return entryError(this.draft); },
-    definitions() { return this.facts.filter((f) => !f.retracted_at); },
+    // Definitions first: an entry is usually defined by one.
+    definitions() { const ok = this.facts.filter((f) => !f.retracted_at); const def = (f) => f.status === 'definition' || f.kind === 'definition' || f.display_kind === 'definition'; return [...ok.filter(def), ...ok.filter((f) => !def(f))]; },
     labels() { return new Map(this.facts.map((f) => [f.id, f.label])); },
     titles() { return new Map(this.facts.map((f) => [f.id, f.title])); },
     candidates() { return (this.d?.shared || []).filter((s) => !s.entry); },
@@ -279,7 +280,7 @@ export const NotationPanel = {
             <label v-if="inferParams(draft.symbol).length" class="field"><span>What {{ inferParams(draft.symbol).join(', ') }} stand{{ inferParams(draft.symbol).length > 1 ? '' : 's' }} for</span><textarea v-model="draft.params" rows="2" :placeholder="inferParams(draft.symbol).join(', ') + ': infinite block sequences'"></textarea>
               <small class="muted">The entry applies to these objects only: the same symbol between other objects keeps its own meaning.</small></label>
             <label class="field"><span>How sources differ (optional)</span><textarea v-model="draft.note" rows="2" placeholder="Some papers exclude 0. Here that set is written $\\mathrm{NS}(X)$."></textarea></label>
-            <label class="field"><span>Definition fact (optional)</span><select v-model="draft.fact"><option value="">None</option><option v-for="f in definitions" :key="f.id" :value="f.id">{{ f.label }}: {{ f.title }}</option></select></label>
+            <div class="field"><span>Definition fact (optional)</span><fact-picker v-model="draft.fact" :facts="definitions" label="Definition fact" placeholder="Search definitions first, by label, title or statement" effect="The entry points to this fact as where the symbol is defined. The fact itself is left as it is."/></div>
             <button class="btn primary block" :disabled="!!error || busy" @click="propose">Propose</button>
           </section>
         </aside>
