@@ -215,7 +215,13 @@ const MATH_DELIMITERS = [
 /** Renders the formulas of an element. `marker` (from notationMarker) marks the uses of notation in them. */
 export function renderMath(el, marker = null) {
   if (window.renderMathInElement) {
-    const marks = marker?.count ? { preProcess: (t) => marker.preProcess(uprightScriptWords(t)), trust: trustMarks } : { preProcess: uprightScriptWords };
+    // A mark must never break a formula: one KaTeX cannot read once marked is shown unmarked, as its author wrote it.
+    const safe = (t) => {
+      const plain = uprightScriptWords(t); const marked = marker.preProcess(plain);
+      if (marked === plain || !window.katex) return marked;
+      try { window.katex.renderToString(marked, { throwOnError: true, trust: trustMarks }); return marked; } catch { return plain; }
+    };
+    const marks = marker?.count ? { preProcess: safe, trust: trustMarks } : { preProcess: uprightScriptWords };
     window.renderMathInElement(el, { delimiters: MATH_DELIMITERS, throwOnError: false, ignoredClasses: ['mention'], ...marks });
   }
 }

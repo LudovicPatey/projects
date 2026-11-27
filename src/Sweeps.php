@@ -147,15 +147,15 @@ final class Sweeps
     {
         $f = Db::one('SELECT id, deleted_at, retracted_at FROM facts WHERE id = ? AND project_id = ?', [$fid, $pid]);
         if (!$f || $f['deleted_at'] !== null || $f['retracted_at'] !== null) return [];
+        $w = self::$waiting[$pid] ?? self::waiting($pid);
         $out = [];
-        if (in_array($fid, array_column(self::rewriteCandidates($pid), 0), true)) $out[] = 'rewrite';
+        if (isset($w['rewrite'][$fid])) $out[] = 'rewrite';
         else {
             $mine = array_map('intval', array_column(Db::all('SELECT id FROM fact_rephrasings WHERE fact_id = ?', [$fid]), 'id'));
-            if (array_intersect($mine, self::checkCandidates($pid))) $out[] = 'check';
+            if (array_intersect_key(array_flip($mine), $w['check'])) $out[] = 'check';
         }
-        $graph = FactController::graph($pid); // read once: the project's graph is the costly part of this page
-        foreach (self::sourceCandidates($pid, $graph) as $group) if (in_array($fid, array_column($group, 0), true)) { $out[] = 'source'; break; }
-        if (in_array($fid, self::reviewCandidates($pid, $graph), true)) $out[] = 'review';
+        if (isset($w['source'][$fid])) $out[] = 'source';
+        if (isset($w['review'][$fid])) $out[] = 'review';
         $step = ProofRepair::pendingStep($fid);
         if ($step) $out[] = $step === 'repair' ? 'repair' : 'recheck';
         $fix = StatementFix::pendingStep($fid);
@@ -163,6 +163,28 @@ final class Sweeps
         $rel = Relink::pendingStep($fid);
         if ($rel) $out[] = $rel === 'relink' ? 'relink' : 'relcheck';
         return array_map(fn($s) => ['sweep' => $s, 'open' => self::open($pid, $s) !== null], $out);
+    }
+
+    /** The project-wide lists pendingForFact reads, kept for the request by readMany(). @var array<int, array<string, array<int, true>>> */
+    private static array $waiting = [];
+
+    /** What waits for each pass in the whole project, as sets of ids: the costly part of pendingForFact. */
+    private static function waiting(int $pid): array
+    {
+        $graph = FactController::graph($pid);
+        $source = [];
+        foreach (self::sourceCandidates($pid, $graph) as $group) foreach (array_column($group, 0) as $id) $source[(int)$id] = true;
+        return ['rewrite' => array_fill_keys(array_map('intval', array_column(self::rewriteCandidates($pid), 0)), true), 'check' => array_fill_keys(self::checkCandidates($pid), true),
+            'source' => $source, 'review' => array_fill_keys(self::reviewCandidates($pid, $graph), true)];
+    }
+
+    /**
+     * For a request that reads many facts and changes none, such as the audit export: the project-wide lists are computed once, not
+     * once per fact. A page that writes then reads keeps computing them afresh.
+     */
+    public static function readMany(int $pid): void
+    {
+        self::$waiting[$pid] = self::waiting($pid);
     }
 
     /**

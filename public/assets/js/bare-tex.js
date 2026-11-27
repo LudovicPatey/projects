@@ -28,6 +28,17 @@ export function bareTex(text) {
  */
 export const uprightScriptWords = (tex) => String(tex).replace(/(?<!\\[a-zA-Z]*)([_^])\{([a-zA-Z]{4,})\}/g, '$1{\\mathrm{$2}}');
 
+// Titles spell Greek letters out before a script, as in Pi^1_1-CA_0 or ISigma^0_2, and infinity as a script word: the letters they
+// stand for, so that the formula reads Π¹₁ and not the word "Pi".
+const SPELLED = { Sigma: 'Σ', Pi: 'Π', Delta: 'Δ', Gamma: 'Γ', Lambda: 'Λ', Omega: 'Ω', Phi: 'Φ', Psi: 'Ψ', Theta: 'Θ' };
+// Lowercase ones only where a formula is plain, so that prose keeps its words: next to a script, an operator or a bracket
+// (alpha^(omega+1), (omega+1)-st), or before "-model" (beta-model). A script in parentheses keeps them: alpha^(omega) is α^{(ω)}.
+const SMALL = { alpha: 'α', beta: 'β', gamma: 'γ', delta: 'δ', epsilon: 'ε', kappa: 'κ', lambda: 'λ', omega: 'ω', sigma: 'σ', theta: 'θ', varphi: 'φ', phi: 'φ', psi: 'ψ', xi: 'ξ' };
+const SMALL_RE = new RegExp(`(?<![A-Za-z\\\\])(${Object.keys(SMALL).join('|')})(?![A-Za-z])(?=[_^+)]|-model)|(?<=[(^_{+])(${Object.keys(SMALL).join('|')})(?![A-Za-z])`, 'g');
+export const spelledGreek = (t) => t.replace(/(?<![A-Za-z\\])([A-Z]?)(Sigma|Pi|Delta|Gamma|Lambda|Omega|Phi|Psi|Theta)(?=[_^])/g, (m, pre, g) => pre + SPELLED[g])
+  .replace(/([_^])infty\b/g, '$1∞').replace(SMALL_RE, (m, a, b) => SMALL[a || b])
+  .replace(/([_^])\(([^()\s]+)\)/g, '$1{($2)}');
+
 const SUP = { 0: '⁰', 1: '¹', 2: '²', 3: '³', 4: '⁴', 5: '⁵', 6: '⁶', 7: '⁷', 8: '⁸', 9: '⁹', '+': '⁺', '-': '⁻', '=': '⁼', '(': '⁽', ')': '⁾', n: 'ⁿ', i: 'ⁱ', k: 'ᵏ', "'": '′', '′': '′', '*': '*' };
 const SUB = { 0: '₀', 1: '₁', 2: '₂', 3: '₃', 4: '₄', 5: '₅', 6: '₆', 7: '₇', 8: '₈', 9: '₉', '+': '₊', '-': '₋', '=': '₌', '(': '₍', ')': '₎',
   a: 'ₐ', e: 'ₑ', o: 'ₒ', x: 'ₓ', h: 'ₕ', k: 'ₖ', l: 'ₗ', m: 'ₘ', n: 'ₙ', p: 'ₚ', s: 'ₛ', t: 'ₜ', i: 'ᵢ', j: 'ⱼ', r: 'ᵣ', u: 'ᵤ', v: 'ᵥ' };
@@ -40,13 +51,13 @@ const SYMBOL = { emptyset: '∅', varnothing: '∅', le: '≤', leq: '≤', ge: 
  * A script with a character Unicode has no small form for keeps its caret or underscore. Bare titles are read as bareTex reads them.
  */
 export function texToUnicode(text) {
-  let t = String(text || '').replace(/\$/g, '');
+  let t = spelledGreek(String(text || '')).replace(/\$/g, '');
   t = t.replace(/\\mathbb\{N\}/g, 'ℕ').replace(/\\mathbb\{Z\}/g, 'ℤ').replace(/\\mathbb\{R\}/g, 'ℝ');
   t = t.replace(/\\(?:math[a-z]+|text[a-z]*|operatorname)\{([^{}]*)\}/g, '$1');
   t = t.replace(/\\([a-zA-Z]+)\s?/g, (m, n) => (n in SYMBOL ? SYMBOL[n] : n));
   const script = (map, mark) => (_, braced, single) => {
     const s = braced ?? single;
-    return [...s].every((c) => map[c]) ? [...s].map((c) => map[c]).join('') : `${mark}${braced !== undefined ? `(${s})` : s}`;
+    return [...s].every((c) => map[c]) ? [...s].map((c) => map[c]).join('') : `${mark}${braced !== undefined && !/^\(.*\)$/.test(s) ? `(${s})` : s}`;
   };
   t = t.replace(/\^(?:\{([^{}]*)\}|([^\s{}]))/g, script(SUP, '^')).replace(/_(?:\{([^{}]*)\}|([^\s{}]))/g, script(SUB, '_'));
   return t.replace(/[{}]/g, '').replace(/\s{2,}/g, ' ').trim();

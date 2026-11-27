@@ -133,3 +133,22 @@ test('a preview is never cut inside a formula, so it still typesets', async () =
   assert.equal(clipMath('a cost of \\$5 and more words here', 12), 'a cost of…', 'an escaped dollar is text');
   assert.equal(clipMath('$$\\sum_i x_i$$ and then a long tail of words', 20), '$$\\sum_i x_i$$ and…');
 });
+
+test('titles that spell a Greek letter out read as that letter, and the hyphen of a system name stays a hyphen', () => {
+  assert.equal(texLine("provable in Pi^1_1-CA_0"), 'provable in $\\Pi ^{1}_{1}\\text{-}\\mathrm{CA}_{0}$');
+  assert.equal(texLine('Pi^1_infty-TI_0'), '$\\Pi ^{1}_{\\infty }\\text{-}\\mathrm{TI}_{0}$');
+  assert.equal(texLine('over RCA_0 + ISigma^0_2'), 'over $\\mathrm{RCA}_{0} + \\mathrm{I}\\Sigma ^{0}_{2}$');
+  assert.equal(texLine('ACA_0^+'), '$\\mathrm{ACA}_{0}^{+}$');
+  assert.equal(texLine('Pi is a number'), 'Pi is a number', 'a word without a script is prose');
+});
+
+test('LaTeX a title already writes is left as it is', () => {
+  assert.equal(texLine('Strong $\\Sigma^0_1$-bounding in $\\mathsf{RCA}_0$'), 'Strong $\\Sigma^0_1$-bounding in $\\mathsf{RCA}_0$');
+});
+
+test('lowercase letters spelled out in a formula, and scripts in parentheses, as live titles write them', () => {
+  assert.equal(texLine('computable in alpha^(omega+1)'), 'computable in $\\alpha ^{(\\omega +1)}$');
+  assert.equal(texLine('solution computable in the (omega+1)-st jump'), 'solution computable in the $(\\omega +1)$-st jump');
+  assert.equal(texLine('a countable coded beta-model'), 'a countable coded $\\beta $-model');
+  assert.equal(texLine('the alpha and omega of it'), 'the alpha and omega of it', 'prose keeps its words');
+});

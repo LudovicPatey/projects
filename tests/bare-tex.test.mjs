@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { test } from 'node:test';
-import { bareTex } from '../public/assets/js/bare-tex.js';
+import { bareTex, texToUnicode } from '../public/assets/js/bare-tex.js';
 
 test('bare formulas in titles become formulas, names upright, sets kept as braces', () => {
   assert.equal(bareTex('HT^{∃{a,b}}_2 with 2-apartness is equivalent to ACA_0'), '$\\mathsf{HT}^{∃\\{a,b\\}}_2$ with 2-apartness is equivalent to $\\mathsf{ACA}_0$');
@@ -15,4 +15,10 @@ test('bare formulas in titles become formulas, names upright, sets kept as brace
 test('prose, and texts that already have their dollars, are left as they are', () => {
   for (const t of ['No bound on the size of half-matching sets', 'a snake_case word', '$\\lambda$regHT^{=n} as written', 'Hindman (1974)']) assert.equal(bareTex(t), t);
   assert.match(fs.readFileSync('public/assets/js/editor.js', 'utf8'), /bareTex\(/, 'every math text goes through it');
+});
+
+test('the graph draws spelled-out letters as the letters', () => {
+  assert.equal(texToUnicode('Solutions computable in alpha^(omega+1)'), 'Solutions computable in α^(ω+1)');
+  assert.equal(texToUnicode('Hindman provable in Pi^1_1-CA_0'), 'Hindman provable in Π¹₁-CA₀');
+  assert.equal(texToUnicode('countable coded beta-model'), 'countable coded β-model');
 });

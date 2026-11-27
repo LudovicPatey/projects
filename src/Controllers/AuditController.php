@@ -75,6 +75,7 @@ final class AuditController
         $ids = array_map('intval', array_column(Db::all('SELECT id FROM facts WHERE project_id = ? AND deleted_at IS NULL ORDER BY id LIMIT ' . self::PAGE . ' OFFSET ' . $offset, [$pid]), 'id'));
         $total = (int)Db::value('SELECT COUNT(*) FROM facts WHERE project_id = ? AND deleted_at IS NULL', [$pid]);
         $byId = $ids ? array_column(FactController::graph($pid)['facts'], null, 'id') : [];
+        if ($ids) \App\Sweeps::readMany($pid); // read-only: what waits for each AI pass, computed once for the page
         $out = [];
         foreach ($ids as $id) {
             $f = FactController::present(Db::one('SELECT * FROM facts WHERE id = ?', [$id]), $byId);

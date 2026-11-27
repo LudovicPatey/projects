@@ -1,5 +1,6 @@
 // A reading view of facts. It adds layout and typesets formulas in LaTeX. Each formula is read back
 // and compared with the stored text; if they differ, the original is shown. Dependency-free for tests.
+import { spelledGreek } from './bare-tex.js';
 
 const HEAD = /^(PROOF OF [^.]{1,30}\.|Proof of (?:the )?[^.:]{1,50}[.:]|Proof[.:]|(?:Main )?(?:Theorem|Lemma|Proposition|Corollary|Definition|Conventions?|Notation|Setup)(?: \d+(?:\.\d+)*)?[.:])(?:\s+|$)/;
 const LEAD = /^(?!(?:By|Using|From|Then|Since|Apply|Applying|See|In|Thus|Hence|Now|And|Let|With|Note|Recall|Given|Following|As|If|For|To|This|The)\b)((?:[A-Z][\w-]* ){0,2}(?:Claim|Lemma|Fact|Observation|Remark|Case \d+|Step \d+)(?: \d+)?[.:]|[A-Z][a-z]{3,}\.)\s+/;
@@ -39,7 +40,7 @@ function toTex(s) {
         if (j >= s.length) throw new Error('unbalanced');
         arg = s.slice(i + 2, j); next = j + 1;
       } else {
-        const m = s.slice(i + 1).match(/^(\d+|\p{L})/u);
+        const m = s.slice(i + 1).match(/^(\d+|\p{L}|[+∞*])/u);
         if (!m) throw new Error('empty script');
         arg = m[1]; next = i + 1 + m[1].length;
       }
@@ -56,6 +57,10 @@ function toTex(s) {
       i += w.length; last = '';
       continue;
     }
+    // The induction or comprehension of a scheme, IΣ^0_2: its letter is a name, upright.
+    if (/[A-Z]/.test(c) && /^[ΣΠΔ]/.test(s[i + 1] || '')) { out += `\\mathrm{${c}}`; i++; last = ''; continue; }
+    // The hyphen of a system's name, Π^1_1-CA_0, is not a minus.
+    if (c === '-' && (last === '_' || last === '^' || /[}]$/.test(out)) && /^-[A-Z]{2,}/.test(rest)) { out += '\\text{-}'; i++; last = ''; continue; }
     if (/[A-Za-z0-9\s()[\]+\-=/,:;|!'*.]/.test(c) || c === '′') { out += c === '′' ? "'" : c; i++; if (c !== "'" && c !== '′') last = ''; continue; }
     throw new Error('unsupported');
   }
@@ -110,7 +115,7 @@ function mathSpans(text) {
     }
     let body = core(raw); let tail = raw.slice(body.length);
     if (balance(body)[1] < 0 && body.endsWith(')') && balance(body.slice(0, -1))[1] === 0) { tail = `)${tail}`; body = body.slice(0, -1); }
-    const suffix = body.match(/^(.+?)(-[a-z]{3,}.*)$/);
+    const suffix = body.match(/^(.+?)(-(?:[a-z]{3,}|st|nd|rd|th)\b.*)$/);
     if (suffix && !/\s/.test(body)) { tail = suffix[2] + tail; body = suffix[1]; }
     const [bx, by] = balance(body);
     const tex = bx === 0 && by === 0 ? safeTex(body) : null;
@@ -140,7 +145,7 @@ const readBack = (html) => String(html).replace(/<span class="ff-math">\$([\s\S]
 
 /** One line of plain text, such as a title, with its formulas in LaTeX. */
 export function texLine(text) {
-  const escaped = String(text || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const escaped = spelledGreek(String(text || '')).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   return inline(escaped).replace(/<span class="ff-math">|<\/span>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
 }
 
