@@ -3,12 +3,14 @@ const { app, BrowserWindow, Menu, Tray, nativeImage, shell } = require('electron
 const { spawn, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
+const { prepareEngine, startFailure } = require('./engine.js');
 
 let win = null; let tray = null; let engine = null; let pageUrl = null; let quitting = false;
 
 function engineCommand() {
   const packaged = path.join(process.resourcesPath || '', 'engine', process.platform === 'win32' ? 'oq.exe' : 'oq');
-  if (app.isPackaged && fs.existsSync(packaged)) return [packaged, ['app', '--no-open']];
+  // A downloaded engine is cleared of macOS's quarantine mark first: marked, it can hang at load with no window (engine.js).
+  if (app.isPackaged && fs.existsSync(packaged)) return [prepareEngine(packaged, app.getPath('userData')).file, ['app', '--no-open']];
   const script = path.join(__dirname, '..', 'oq.py');
   const python = ['python3', 'py', 'python'].find((p) => spawnSync(p, ['--version']).status === 0);
   if (!python) throw new Error('The engine of the app is missing.');
@@ -19,7 +21,8 @@ function startEngine() {
   return new Promise((resolve, reject) => {
     const [cmd, args] = engineCommand();
     engine = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
-    const timer = setTimeout(() => reject(new Error('The engine did not start.')), 20000);
+    // Twenty seconds without the engine's address: it is stuck, and the user is told how to fix it rather than left waiting.
+    const timer = setTimeout(() => { quitting = true; engine?.kill(); reject(new Error(startFailure(app.isPackaged ? path.resolve(process.resourcesPath, '..', '..') : app.getAppPath()))); }, 20000);
     engine.stdout.on('data', (d) => {
       const m = String(d).match(/OQ_APP_URL=(http:\/\/127\.0\.0\.1:\d+\/\?t=[\w-]+)/);
       if (m) { clearTimeout(timer); resolve(m[1]); }

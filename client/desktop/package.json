@@ -1,7 +1,7 @@
 {
   "name": "open-questions-ai",
   "productName": "Open Questions AI",
-  "version": "1.22.0",
+  "version": "1.22.1",
   "private": true,
   "description": "Desktop client of the Open Questions research platform",
   "license": "AGPL-3.0-only",
@@ -20,6 +20,7 @@
     "appId": "org.openquestions.ai",
     "files": [
       "main.js",
+      "engine.js",
       "package.json",
       "assets/trayTemplate.png",
       "assets/trayTemplate@2x.png",
