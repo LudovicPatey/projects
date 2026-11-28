@@ -307,10 +307,13 @@ final class FactController
      * each fact with its text (in the project's notation when a faithful version exists), dependencies, status and whether
      * it may be built on; the strategies of the question; the agreed notation. Proofs and statements are plain text.
      */
-    public static function provingContext(Request $r): never
+    /**
+     * Each fact of the project for a proof search: its text (in the project's notation when a faithful version exists), dependencies,
+     * status, and whether it may be built on (trusted: established with its whole chain; usable: what a proof search may build on).
+     * @return list<array>
+     */
+    public static function provingFacts(int $pid): array
     {
-        $pid = $r->int('pid');
-        Access::member($pid);
         $byId = array_column(self::graph($pid)['facts'], null, 'id');
         $rev = [];
         foreach (Db::all('SELECT r.fact_id, r.revision_no, r.statement_html, r.proof_html, r.glossary_json, r.external_refs_json FROM fact_revisions r
@@ -347,6 +350,14 @@ final class FactController
                 'glossary' => is_array($glossary) ? array_map(fn($v) => is_string($v) ? $v : json_encode($v, JSON_UNESCAPED_UNICODE), $glossary) : null,
                 'external_refs' => json_decode((string)$x['external_refs_json'], true) ?: null, 'in_project_notation' => $n !== null];
         }
+        return $facts;
+    }
+
+    public static function provingContext(Request $r): never
+    {
+        $pid = $r->int('pid');
+        Access::member($pid);
+        $facts = self::provingFacts($pid);
         $qid = (int)($r->query['question'] ?? 0);
         $strategies = [];
         if ($qid && Db::value('SELECT 1 FROM open_questions WHERE id = ? AND project_id = ? AND deleted_at IS NULL', [$qid, $pid])) {

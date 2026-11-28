@@ -1,7 +1,7 @@
 {
  "min_version": "1.0.0",
  "client_version": "1.22.11",
- "fingerprint": "a12ab7494fb9a8f8043b174515576d508184dcfb529dc12d2d2a7f3eeff8a5a3",
+ "fingerprint": "31de4069f033a1efe5e6bac7b16474e7acb29c15b8afdfd4016c2463c8635095",
  "routes": [
   "GET /api/ai/procedures AiTaskController::procedures",
   "GET /api/bib/{id}/pdf BibController::pdf",
@@ -111,7 +111,7 @@
   "AiTaskController::complete": "14649896d16f0ea92e077574c6cc23551b603cc748c2c80b72f835af4af99161",
   "AiTaskController::computeSummary": "a8b57a62535a0c6a88dc28ae65cef5b9402f8f9780a255496fd4957e5d637912",
   "AiTaskController::computers": "077278c83c71633481710259b9c80d4b7d24714599d7ab525dd13b4d6c2fc7e5",
-  "AiTaskController::context": "21d8ee5d4fe1f2c30efbcf7793eed8ea82416adc9d649376196b83b670d908aa",
+  "AiTaskController::context": "f17d17d64131fdd2a0f8d5d4cd3b1263e65773dcd8859a39e1a481b0a19e3f4d",
   "AiTaskController::conversationBlocked": "f32758b0c318c285be52be714f866a1368c141c814a73ed17274f29767916a6e",
   "AiTaskController::conversationComments": "5e6966d4aa5a5837698eb6f45632134ce5f7512306728fcf630e3e229a582f33",
   "AiTaskController::conversationHash": "edee696dcf4e3013026a75be4b20f37b502f78bc1eed6128113f66a7d8af0276",
@@ -331,7 +331,8 @@
   "FactController::proof": "d7e3d8c35694e57b80ffe49a074be6df196d3cb67dfbcc5a60f7bc8e212d2f1c",
   "FactController::proposeProof": "5fac4e0914d1988066dda73e48a190264f969627db75b7de0afdbf38ade18953",
   "FactController::provenance": "ee075c6f9668905f148a9797b608c2908934fbbecbcf3131d0a0f3ea4fe5ae7b",
-  "FactController::provingContext": "81b94f2f3a06cea56d6511a2d0aa2a5a73561aa9080aedad8731c89082055f70",
+  "FactController::provingContext": "1982b5b1394c2e03e24574e2044fe6617e45ea39d8469f35923577da1a58a204",
+  "FactController::provingFacts": "c7cd7873113316073834037b216bf20b117392aff5a6e32286dc022ff603209d",
   "FactController::recordReview": "5461fda5a3175a31c33af767d985b501810d82a3c4ee9031287a5cfeccc90933",
   "FactController::replaceDependency": "aa6d45a4bc4c2cb3636e0844800577349360a6a11a416e648ab8fa78cba10dc6",
   "FactController::requireAi": "93402e521b4ce6bcc9fe56d4629494537eef316f6651ed64125cbbf5b6f8217b",
@@ -2105,6 +2106,18 @@
    "note": "Files assembled from facts are not extracted, and their description names the fact by its title; nothing older clients use changed",
    "changed": [
     "AiTaskController::document"
+   ]
+  },
+  {
+   "date": "2026-11-28",
+   "decision": "compatible",
+   "client_version": "1.22.11",
+   "min_version": "1.0.0",
+   "note": "Proof search tasks receive each fact's statement, proof and usability instead of titles only, and the question's proposed answers; the fields are added, older clients pass them to the model as they are",
+   "changed": [
+    "AiTaskController::context",
+    "FactController::provingContext",
+    "+FactController::provingFacts"
    ]
   }
  ]

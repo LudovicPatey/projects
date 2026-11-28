@@ -1215,6 +1215,22 @@ final class AiTaskController
         if ($t['kind'] === 'ask') self::askFacts($t, $ctx);
         if ($t['kind'] === 'instruct' && $type === 'comment') $ctx += \App\Instructions::context($pid, $id);
         if ($type === 'question') $ctx['question'] = Db::one('SELECT id, title, statement_html AS body_html, status FROM open_questions WHERE id = ?', [$id]);
+        // What a proof search builds on: each fact's statement and proof, and whether it may be built on, not only its title. A search toward a
+        // question also sees the answers proposed for it, and the people's verdicts on them: closing the gap of an almost answer is the best step.
+        if ($t['kind'] === 'derive') {
+            $keep = array_flip(['id', 'label', 'title', 'kind', 'basis', 'status', 'usable', 'deps', 'statement', 'proof', 'glossary', 'external_refs', 'in_project_notation']);
+            $ctx['facts'] = array_values(array_map(fn($f) => array_intersect_key($f, $keep), array_filter(FactController::provingFacts($pid), fn($f) => $f['status'] !== 'retracted')));
+            $ctx['facts_note'] = 'Each fact has its statement and proof. Build on facts whose "usable" is true: their proofs were checked or their sources are cited, '
+                . 'with everything they rely on. Name a fact you use by its label in your proof and in "depends_on". You may adapt a proof of the database to a new setting.';
+            if ($type === 'question' && $ctx['question']) {
+                $ctx['question']['answers'] = array_map(fn($a) => ['fact_id' => (int)$a['fact_id'], 'answer' => $a['answer'], 'state' => $a['state'],
+                    'rationale' => Sanitizer::toText((string)$a['rationale_html']), 'note' => $a['closed_note']],
+                    Db::all("SELECT fact_id, answer, state, rationale_html, closed_note FROM question_answers WHERE question_id = ? AND state IN ('proposed', 'ratified', 'rejected') ORDER BY id", [$id]));
+                if ($ctx['question']['answers']) $ctx['question']['answers_note'] = 'Facts already proposed as answers. Read them first: when one almost settles the question but not as it is asked '
+                    . '(a stronger base system than the question names, for example ACA_0 or ZFC where it asks for RCA_0; a special case; an extra hypothesis), '
+                    . 'the most useful new facts close that gap, for example the same result proved over the base system of the question, checking the induction and comprehension each step uses.';
+            }
+        }
         if ($type === 'strategy') {
             $ctx['strategy'] = Db::one('SELECT id, question_id, title, status FROM proof_strategies WHERE id = ?', [$id]);
             $ctx['strategy']['body'] = Sanitizer::toText((string)Db::value('SELECT body_html FROM strategy_revisions WHERE strategy_id = ? ORDER BY revision_no DESC LIMIT 1', [$id]));
