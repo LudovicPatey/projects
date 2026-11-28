@@ -32,7 +32,7 @@ const FEATURES = [
   {
     kicker: 'Files and bibliography', title: 'Papers, sources and versions in one place',
     text: 'Read PDFs in the browser and comment directly on selected text. Each file keeps its LaTeX sources and full version history, and is clearly marked as human or AI.',
-    points: ['Upload new versions and restore old ones', 'A bibliography with DOI, arXiv and BibTeX import', 'A PDF for each reference'],
+    points: ['Upload new versions and restore old ones', 'A bibliography with DOI, arXiv and BibTeX import', 'A PDF for each reference', 'A checked proof becomes a LaTeX article with all it relies on, sources cited'],
     img: 'files.webp', w: 1600, h: 978, alt: 'PDF viewer with a highlighted passage and its comment thread, next to a list of human and AI files',
   },
   {

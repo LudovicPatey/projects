@@ -4,7 +4,7 @@ import { store } from './store.js';
 import { REF_TYPES, parseRefQuery, sortRefs } from './references.js';
 import { hydrateChips, openChip, searchRefs } from './refs-client.js';
 import { escapeHtml, markTerms } from './util.js';
-import { uprightScriptWords } from './bare-tex.js';
+import { COMMON_MACROS, uprightScriptWords } from './bare-tex.js';
 import { mentionMatches, mentionQuery } from './questions-model.js';
 import { askAiPrefix, offersAskAi } from './ai-model.js';
 import { notationMarker, trustMarks } from './notation-marks.js';
@@ -26,7 +26,7 @@ class MentionBlot extends Embed {
     node.setAttribute('data-id', value.id);
     node.setAttribute('data-label', value.label);
     node.textContent = '@' + value.label;
-    if (String(value.label).includes('$') && window.renderMathInElement) window.renderMathInElement(node, { delimiters: [{ left: '$', right: '$', display: false }], throwOnError: false, preProcess: uprightScriptWords });
+    if (String(value.label).includes('$') && window.renderMathInElement) window.renderMathInElement(node, { delimiters: [{ left: '$', right: '$', display: false }], throwOnError: false, macros: { ...COMMON_MACROS }, preProcess: uprightScriptWords });
     return node;
   }
 
@@ -219,10 +219,10 @@ export function renderMath(el, marker = null) {
     const safe = (t) => {
       const plain = uprightScriptWords(t); const marked = marker.preProcess(plain);
       if (marked === plain || !window.katex) return marked;
-      try { window.katex.renderToString(marked, { throwOnError: true, trust: trustMarks }); return marked; } catch { return plain; }
+      try { window.katex.renderToString(marked, { throwOnError: true, trust: trustMarks, macros: { ...COMMON_MACROS } }); return marked; } catch { return plain; }
     };
     const marks = marker?.count ? { preProcess: safe, trust: trustMarks } : { preProcess: uprightScriptWords };
-    window.renderMathInElement(el, { delimiters: MATH_DELIMITERS, throwOnError: false, ignoredClasses: ['mention'], ...marks });
+    window.renderMathInElement(el, { delimiters: MATH_DELIMITERS, throwOnError: false, ignoredClasses: ['mention'], macros: { ...COMMON_MACROS }, ...marks });
   }
 }
 
@@ -258,7 +258,7 @@ function showNotation(target, entry) {
     p.append(where);
   }
   p.hidden = false;
-  if (window.renderMathInElement) window.renderMathInElement(p, { delimiters: MATH_DELIMITERS, throwOnError: false, preProcess: uprightScriptWords });
+  if (window.renderMathInElement) window.renderMathInElement(p, { delimiters: MATH_DELIMITERS, throwOnError: false, macros: { ...COMMON_MACROS }, preProcess: uprightScriptWords });
   const r = target.getBoundingClientRect(); const w = Math.min(340, window.innerWidth - 16);
   p.style.width = `${w}px`;
   const left = Math.max(8, Math.min(r.left + r.width / 2 - w / 2, window.innerWidth - w - 8));
@@ -284,8 +284,8 @@ export const MathText = {
       el.textContent = bareTex(String(this.text || '').replace(/@\{\w+:([^}]+)\}/g, '$1').replace(/\$\$/g, '$'));
       if (el.textContent.includes('$') || el.textContent.includes('\\(')) {
         if (window.renderMathInElement) {
-          window.renderMathInElement(el, { delimiters: [{ left: '$', right: '$', display: false }, { left: '\\(', right: '\\)', display: false }], throwOnError: false, preProcess: uprightScriptWords,
-            ...(this.macros && Object.keys(this.macros).length ? { macros: { ...this.macros } } : {}) });
+          window.renderMathInElement(el, { delimiters: [{ left: '$', right: '$', display: false }, { left: '\\(', right: '\\)', display: false }], throwOnError: false, macros: { ...COMMON_MACROS }, preProcess: uprightScriptWords,
+            macros: { ...COMMON_MACROS, ...(this.macros || {}) } });
         } else {
           this.retry = setTimeout(() => this.paint(), 400); // KaTeX is loaded with defer
         }

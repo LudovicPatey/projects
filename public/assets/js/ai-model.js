@@ -10,6 +10,7 @@ export const AI_KINDS = {
   consolidate: { label: 'Consolidate the facts', short: 'Consolidation', icon: 'layers', hint: 'Reads the whole facts database and proposes what no single extraction sees: the same result in two sources, missing dependencies, remarks that are open questions, subject tags, and the cited results that proofs use. Queued after each round of extractions. People decide.', needs: null },
   source_check: { label: 'Check the source', short: 'Source check', icon: 'book', hint: 'Reads the source of a result cited without proof, and says whether it states the result as written. Evidence only: a person still accepts the citation.', needs: 'fact' },
   lean: { label: 'Lean proof', short: 'Lean', icon: 'code', hint: 'Writes a Lean proof, kept only if it compiles. A person must still compare the Lean statement with the fact.', needs: 'fact' },
+  latex: { label: 'LaTeX document', short: 'LaTeX', icon: 'pdf', hint: 'Assembles this fact and every fact its proof relies on into a LaTeX article, results of other works cited with their sources. An AI client with LaTeX compiles it, and it joins the files as AI-generated. Asked again, it becomes a new version.', needs: 'fact' },
 };
 
 /** "3 h 20 min", "12 min": how long until a moment. */

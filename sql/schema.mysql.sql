@@ -102,6 +102,7 @@ CREATE TABLE IF NOT EXISTS documents (
   origin VARCHAR(10) NOT NULL,            -- 'human' | 'ai'
   ai_model VARCHAR(120) NULL,             -- e.g. model used when origin = 'ai'
   current_version_id INT UNSIGNED NULL,
+  exported_fact_id INT UNSIGNED NULL,     -- a LaTeX document assembled from this fact and its dependencies
   created_by INT UNSIGNED NOT NULL,
   created_at DATETIME NOT NULL,
   updated_at DATETIME NOT NULL,
@@ -514,6 +515,7 @@ CREATE TABLE IF NOT EXISTS fact_lean (
   ai_user_id INT UNSIGNED NULL,           -- user this AI output was produced for
   ai_generation_ms INT UNSIGNED NULL,     -- generation time, when the client measured it
   incomplete TINYINT(1) NOT NULL DEFAULT 0,
+  assumes_json TEXT NULL,                 -- dependencies taken as hypotheses: [{fact_id, hypothesis}]
   check_status VARCHAR(10) NOT NULL DEFAULT 'unchecked',
   check_log TEXT NULL,
   checked_by INT UNSIGNED NULL,

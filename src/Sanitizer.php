@@ -62,13 +62,42 @@ final class Sanitizer
         $html = '';
         foreach (preg_split('/\n\s*\n/', $text) as $para) {
             $p = htmlspecialchars($para, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+            // A formula is LaTeX, not markup: x^* or a_{**} must reach KaTeX as written.
+            $math = [];
+            $p = preg_replace_callback(self::MATH, function ($m) use (&$math) { $math[] = $m[0]; return "\x00" . (count($math) - 1) . "\x00"; }, $p) ?? $p;
             $p = preg_replace('/`([^`\n]+)`/', '<code>$1</code>', $p);
             $p = preg_replace('/\*\*([^*\n]+)\*\*/', '<strong>$1</strong>', $p);
             $p = preg_replace('/(?<![*\w$\\\\])\*([^*\n$]+)\*(?![*\w])/', '<em>$1</em>', $p);
+            $p = preg_replace_callback('/\x00(\d+)\x00/', fn($m) => $math[(int)$m[1]], $p) ?? $p;
             $p = preg_replace_callback('/@\{(' . implode('|', References::TYPES) . '):([^}\s]+)\}/', fn($m) => self::mentionSpan($m[1], $m[2], $projectId), $p);
             $html .= '<p>' . nl2br($p, false) . '</p>';
         }
         return $html;
+    }
+
+    /** Formulas in text: $$...$$, \[...\], \(...\) and $...$, where \$ is a dollar sign, not a delimiter. */
+    private const MATH = '/\$\$.+?\$\$|\\\\\[.+?\\\\\]|\\\\\(.+?\\\\\)|(?<!\\\\)\$(?:\\\\.|[^$\\\\])+\$/s';
+
+    /**
+     * Undoes the markup that older conversions put inside formulas (x^<em>...</em> for x^*...*), in stored HTML.
+     * Emphasis never crossed a dollar, so each tag pair lies in one formula.
+     */
+    public static function unmarkMath(string $html): string
+    {
+        return preg_replace_callback(self::MATH, fn($m) => strtr($m[0], ['<em>' => '*', '</em>' => '*', '<strong>' => '**', '</strong>' => '**', '<code>' => '`', '</code>' => '`']), $html) ?? $html;
+    }
+
+    /** Repairs stored rich text written by agents before formulas were protected. Idempotent. */
+    public static function repairMathMarkup(): void
+    {
+        $cols = ['fact_revisions' => ['statement_html', 'proof_html', 'intuition_html'], 'fact_proofs' => ['body_html'], 'fact_reviews' => ['body_html'],
+                 'comments' => ['body_html'], 'messages' => ['body_html'], 'question_answers' => ['rationale_html']];
+        foreach ($cols as $table => $list) foreach ($list as $c) {
+            foreach (Db::all("SELECT id, $c AS h FROM $table WHERE $c LIKE '%$%' AND ($c LIKE '%<em>%' OR $c LIKE '%<strong>%' OR $c LIKE '%<code>%')") as $r) {
+                $fixed = self::unmarkMath((string)$r['h']);
+                if ($fixed !== $r['h']) Db::run("UPDATE $table SET $c = ? WHERE id = ?", [$fixed, $r['id']]);
+            }
+        }
     }
 
     private static function mentionSpan(string $type, string $ref, int $projectId): string

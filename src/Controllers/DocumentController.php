@@ -210,6 +210,34 @@ final class DocumentController
         return $vid;
     }
 
+    /**
+     * The LaTeX document of a fact, compiled by an AI client: a new file, or a new version of the one already made from that fact.
+     * It is not extracted: its facts are already the project's. @param array<string, string> $sources file name => content
+     */
+    public static function saveExport(int $pid, int $factId, string $title, string $description, string $pdfPath, array $sources, ?string $model, array $stamp): int
+    {
+        return Db::tx(function () use ($pid, $factId, $title, $description, $pdfPath, $sources, $model, $stamp) {
+            $now = Db::now();
+            $id = (int)Db::value('SELECT id FROM documents WHERE project_id = ? AND exported_fact_id = ? AND deleted_at IS NULL ORDER BY id DESC LIMIT 1', [$pid, $factId]);
+            $isNew = !$id;
+            if ($id) Db::update('documents', ['title' => mb_substr($title, 0, 255), 'description' => $description, 'ai_model' => $model, 'updated_at' => $now], 'id = :id', ['id' => $id]);
+            else $id = Db::insert('documents', ['project_id' => $pid, 'title' => mb_substr($title, 0, 255), 'description' => $description, 'origin' => 'ai', 'ai_model' => $model,
+                'exported_fact_id' => $factId, 'created_by' => Auth::id(), 'created_at' => $now, 'updated_at' => $now]);
+            $pdfBlob = Storage::storeFile($pdfPath, true, 'document.pdf');
+            $vid = self::insertVersion($id, 'Assembled from the facts of the project', null, $model, $stamp);
+            Db::insert('version_files', ['version_id' => $vid, 'role' => 'pdf', 'filename' => 'document.pdf', 'blob_id' => $pdfBlob]);
+            foreach ($sources as $name => $content) {
+                $tmp = tempnam(sys_get_temp_dir(), 'oqx');
+                file_put_contents($tmp, $content);
+                $role = str_ends_with($name, '.bib') ? 'bib' : 'source';
+                Db::insert('version_files', ['version_id' => $vid, 'role' => $role, 'filename' => $name, 'blob_id' => Storage::storeFile($tmp, false, $name)]);
+                @unlink($tmp);
+            }
+            Activity::touch($pid, 'document', $id, $isNew ? 'created' : 'version', $isNew ? null : $vid);
+            return $id;
+        });
+    }
+
     private static function newVersion(int $docId, array $pdf, array $sources, ?string $notes, ?string $model = null, array $stamp = []): int
     {
         $pdfBlob = Storage::storeUpload($pdf, true);
@@ -251,6 +279,8 @@ final class DocumentController
             $v['is_current'] = (int)$v['id'] === (int)$d['current_version_id'];
         }
         $d['versions'] = $versions;
+        // A document assembled from a fact links back to it: the facts are its content, and the file is redone from them.
+        $d['exported_fact'] = $d['exported_fact_id'] ? Db::one('SELECT id, label, title FROM facts WHERE id = ? AND deleted_at IS NULL', [$d['exported_fact_id']]) : null;
         $d['last_activity_id'] = Activity::latest((int)$d['project_id'], 'document', $id);
         // Its description, often an abstract pasted from the paper, renders with the paper's own macros and without its references.
         $d['tex_macros'] = \App\TexMacros::forDocument($id);

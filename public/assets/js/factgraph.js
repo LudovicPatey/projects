@@ -359,7 +359,7 @@ export const FactGraph = {
         c.restore();
         if (k < 0.32) continue;
         c.textBaseline = 'middle'; c.textAlign = 'left';
-        const right = n.lean === 'compiled' ? 34 : 8;
+        const right = n.lean === 'compiled' || n.lean === 'relative' ? 34 : 8;
         const starW = star ? 30 : 0;
         const fitted = this.labelOf(c, n, right + starW);
         c.fillStyle = '#1c2230'; c.font = '600 11.5px -apple-system, "Segoe UI", sans-serif';
@@ -370,10 +370,12 @@ export const FactGraph = {
           c.fillText(`★ ${n.stars}`, nx + W - 8 - right, p.y - 8);
           c.textAlign = 'left';
         }
-        if (n.lean === 'compiled') {
+        if (n.lean === 'compiled' || n.lean === 'relative') {
+          // Relative to its dependencies: the same badge, outlined.
           roundRect(c, nx + W - 35, ny + 5, 30, 15, 4);
-          c.fillStyle = '#1e40af'; c.fill();
-          c.fillStyle = '#fff'; c.font = '700 9.5px -apple-system, sans-serif';
+          if (n.lean === 'compiled') { c.fillStyle = '#1e40af'; c.fill(); c.fillStyle = '#fff'; }
+          else { c.fillStyle = '#e0e7ff'; c.fill(); c.strokeStyle = '#1e40af'; c.lineWidth = 1; c.stroke(); c.fillStyle = '#1e40af'; }
+          c.font = '700 9.5px -apple-system, sans-serif';
           c.fillText('Lean', nx + W - 31, ny + 13);
         }
       }

@@ -19,7 +19,7 @@ final class Auth
         'POST /api/projects/{pid}/questions', 'PATCH /api/questions/{id}', 'POST /api/questions/{id}/strategies',
         'POST /api/questions/{id}/links', 'PATCH /api/strategies/{id}',
         'POST /api/questions/{id}/answers', 'POST /api/answers/{id}/withdraw',
-        'POST /api/ai/tasks/claim', 'POST /api/ai/tasks/{id}/heartbeat', 'POST /api/ai/tasks/{id}/complete', 'POST /api/ai/tasks/{id}/answer', 'POST /api/ai/tasks/{id}/fail', 'POST /api/ai/tasks/{id}/release', 'POST /api/projects/{id}/ai/suggestions', 'POST /api/projects/{id}/consolidation', 'POST /api/projects/{id}/ai/tasks',
+        'POST /api/ai/tasks/claim', 'POST /api/ai/tasks/{id}/heartbeat', 'POST /api/ai/tasks/{id}/complete', 'POST /api/ai/tasks/{id}/document', 'POST /api/ai/tasks/{id}/answer', 'POST /api/ai/tasks/{id}/fail', 'POST /api/ai/tasks/{id}/release', 'POST /api/projects/{id}/ai/suggestions', 'POST /api/projects/{id}/consolidation', 'POST /api/projects/{id}/ai/tasks',
         'POST /api/projects/{pid}/prover/campaigns', 'POST /api/prover/campaigns/{id}/rounds', 'POST /api/prover/rounds/{id}/finish', 'POST /api/prover/rounds/{id}/lead',
         'POST /api/prover/rounds/{id}/notes', 'POST /api/prover/rounds/{id}/facts', 'POST /api/prover/rounds/{id}/rejected', 'POST /api/prover/rounds/{id}/cited',
     ];

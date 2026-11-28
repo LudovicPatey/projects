@@ -198,7 +198,7 @@ export const OverviewView = {
             <span v-if="m.c.ai_online" class="team-ai" title="Their AI client is running"><icon name="sparkles" :size="11"/> AI on</span>
             <span class="team-n" title="Facts entered and reviews"><icon name="graph" :size="12"/> {{ (m.c.facts || 0) + (m.c.reviews || 0) }}</span></a></section>
         <section class="panel"><header><h2><icon name="files" :size="15"/> Recent files</h2><a :href="link('files')">All files ›</a></header>
-          <a v-for="f in d.files.recent" :key="f.id" class="d-row" :href="link('files', f.id)"><origin-badge :origin="f.origin"/><span class="d-title">{{ f.title }}</span><small>{{ timeAgo(f.updated_at) }}</small></a>
+          <a v-for="f in d.files.recent" :key="f.id" class="d-row" :href="link('files', f.id)"><origin-badge :origin="f.origin"/><span class="d-title"><math-text :text="f.title"/></span><small>{{ timeAgo(f.updated_at) }}</small></a>
           <div v-if="!d.files.recent.length" class="d-empty">No file yet.</div></section>
       </div>
     </div>

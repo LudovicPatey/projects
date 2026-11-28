@@ -201,6 +201,8 @@ final class Db
         $migrations[] = 'ALTER TABLE projects ADD COLUMN consolidation_auto TINYINT(1) NOT NULL DEFAULT 1';
         foreach (['highlight_reason TEXT NULL', 'highlight_at DATETIME NULL', 'highlight_model VARCHAR(120) NULL', 'highlight_activity INT UNSIGNED NULL'] as $c) $migrations[] = "ALTER TABLE facts ADD COLUMN $c";
         $migrations[] = 'ALTER TABLE notations ADD COLUMN auto_suggestion_id INT UNSIGNED NULL';
+        $migrations[] = 'ALTER TABLE fact_lean ADD COLUMN assumes_json TEXT NULL';
+        $migrations[] = 'ALTER TABLE documents ADD COLUMN exported_fact_id INT UNSIGNED NULL';
         $migrations[] = 'ALTER TABLE ai_tasks ADD COLUMN priority SMALLINT NOT NULL DEFAULT 50';
         $migrations[] = 'ALTER TABLE projects ADD COLUMN sweeps_checked_at DATETIME NULL';
         // Upkeep queued one fact at a time, before sweeps: the sweeps take it over.
@@ -270,6 +272,7 @@ final class Db
         }
         // Pieces of symbols cut at a LaTeX thin space, X\\ out of X\\,\\tilde\\in\\,U, before the cut was fixed.
         \App\Controllers\NotationController::repairCut();
+        \App\Sanitizer::repairMathMarkup();
         // Existing AI content is attributed to the owner who issued the agent's token, or to its author.
         foreach (['messages' => 'author_id', 'comments' => 'author_id', 'bib_entries' => 'created_by', 'document_versions' => 'uploaded_by',
                   'fact_revisions' => 'author_id', 'fact_reviews' => 'reviewer_id', 'fact_lean' => 'created_by'] as $t => $col) {

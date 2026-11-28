@@ -44,7 +44,9 @@ const SUB = { 0: '₀', 1: '₁', 2: '₂', 3: '₃', 4: '₄', 5: '₅', 6: '�
   a: 'ₐ', e: 'ₑ', o: 'ₒ', x: 'ₓ', h: 'ₕ', k: 'ₖ', l: 'ₗ', m: 'ₘ', n: 'ₙ', p: 'ₚ', s: 'ₛ', t: 'ₜ', i: 'ᵢ', j: 'ⱼ', r: 'ᵣ', u: 'ᵤ', v: 'ᵥ' };
 const SYMBOL = { emptyset: '∅', varnothing: '∅', le: '≤', leq: '≤', ge: '≥', geq: '≥', ne: '≠', in: '∈', notin: '∉', subseteq: '⊆', subset: '⊂', cup: '∪', cap: '∩', to: '→',
   infty: '∞', omega: 'ω', alpha: 'α', beta: 'β', gamma: 'γ', delta: 'δ', varepsilon: 'ε', epsilon: 'ε', lambda: 'λ', mu: 'μ', sigma: 'σ', pi: 'π',
-  Sigma: 'Σ', Pi: 'Π', Delta: 'Δ', Gamma: 'Γ', Lambda: 'Λ', Omega: 'Ω', Phi: 'Φ', Psi: 'Ψ', Theta: 'Θ', mathbb: '', prime: '′', cdot: '·', times: '×', ldots: '…', dots: '…' };
+  Sigma: 'Σ', Pi: 'Π', Delta: 'Δ', Gamma: 'Γ', Lambda: 'Λ', Omega: 'Ω', Phi: 'Φ', Psi: 'Ψ', Theta: 'Θ', mathbb: '', prime: '′', cdot: '·', times: '×', ldots: '…', dots: '…',
+  vee: '∨', lor: '∨', wedge: '∧', land: '∧', neg: '¬', forall: '∀', exists: '∃', setminus: '∖', rightarrow: '→', Rightarrow: '⇒', leftrightarrow: '↔', iff: '⇔', implies: '⇒',
+  oplus: '⊕', upharpoonright: '↾', restriction: '↾', langle: '⟨', rangle: '⟩', ll: '≪', mid: '∣', le_T: '≤', equiv: '≡', sim: '∼', circ: '∘', varphi: 'φ', phi: 'φ', rho: 'ρ', tau: 'τ', theta: 'θ', kappa: 'κ', eta: 'η', zeta: 'ζ', xi: 'ξ', chi: 'χ', psi: 'ψ' };
 
 /**
  * A title with formulas as plain Unicode, for a canvas that cannot typeset: "ACA_0^+" becomes "ACA₀⁺", "\Pi^1_1" "Π¹₁", "0'" stays.
@@ -52,9 +54,9 @@ const SYMBOL = { emptyset: '∅', varnothing: '∅', le: '≤', leq: '≤', ge: 
  */
 export function texToUnicode(text) {
   let t = spelledGreek(String(text || '')).replace(/\$/g, '');
-  t = t.replace(/\\mathbb\{N\}/g, 'ℕ').replace(/\\mathbb\{Z\}/g, 'ℤ').replace(/\\mathbb\{R\}/g, 'ℝ');
+  t = t.replace(/\\mathbb\s*\{?N\}?(?![a-zA-Z])/g, 'ℕ').replace(/\\mathbb\s*\{?Z\}?(?![a-zA-Z])/g, 'ℤ').replace(/\\mathbb\s*\{?R\}?(?![a-zA-Z])/g, 'ℝ');
   t = t.replace(/\\(?:math[a-z]+|text[a-z]*|operatorname)\{([^{}]*)\}/g, '$1');
-  t = t.replace(/\\([a-zA-Z]+)\s?/g, (m, n) => (n in SYMBOL ? SYMBOL[n] : n));
+  t = t.replace(/\\([a-zA-Z]+)(\s?)/g, (m, n, sp) => (n in SYMBOL ? SYMBOL[n] + (SYMBOL[n] ? sp : '') : n));
   const script = (map, mark) => (_, braced, single) => {
     const s = braced ?? single;
     return [...s].every((c) => map[c]) ? [...s].map((c) => map[c]).join('') : `${mark}${braced !== undefined && !/^\(.*\)$/.test(s) ? `(${s})` : s}`;
@@ -62,3 +64,12 @@ export function texToUnicode(text) {
   t = t.replace(/\^(?:\{([^{}]*)\}|([^\s{}]))/g, script(SUP, '^')).replace(/_(?:\{([^{}]*)\}|([^\s{}]))/g, script(SUB, '_'));
   return t.replace(/[{}]/g, '').replace(/\s{2,}/g, ' ').trim();
 }
+
+/**
+ * Shorthands many papers define for themselves, known to every formula: a description or quote taken from a paper whose
+ * source was not uploaded (only its PDF) keeps them, and they would otherwise show in red. A paper's own macros win.
+ */
+export const COMMON_MACROS = {
+  '\\msf': '\\mathsf{#1}', '\\mrm': '\\mathrm{#1}', '\\mbf': '\\mathbf{#1}', '\\mbb': '\\mathbb{#1}', '\\mcal': '\\mathcal{#1}',
+  '\\mfrak': '\\mathfrak{#1}', '\\msc': '\\mathscr{#1}', '\\mtt': '\\mathtt{#1}', '\\mit': '\\mathit{#1}',
+};

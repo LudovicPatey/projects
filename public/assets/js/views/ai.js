@@ -1,6 +1,7 @@
 import { api, expandFacts } from '../api.js';
 import { store, link, attempt, refreshCounters, toast } from '../store.js';
 import { timeAgo, fullDate } from '../util.js';
+import { texToUnicode } from '../bare-tex.js';
 import { Pill, Kpi, StackBar } from '../dashboard.js';
 import { bibProgress, privateExtractionNotice, clientStatus, computeTime, timeByKind, CLIENT_PERIODS, AI_KINDS, TASK_SEGMENTS, TASK_STATUS, filterTasks, requestBody, requestError, resultLinks, suggestionLink, taskActions, taskTitle, queueGroups, groupSummary, kindInfo, usageView } from '../ai-model.js';
 
@@ -46,6 +47,7 @@ export const AiView = {
     'query.suggestion': { handler() { this.reveal(); } },
   },
   methods: {
+    plainTitle(t) { return texToUnicode(String(t || '')); }, // a select option cannot hold a formula
     link, timeAgo, fullDate, taskTitle, groupSummary, kindInfo, resultLinks, suggestionLink, clientStatus, computeTime,
     async load() {
       const r = await attempt(() => api.get(`api/projects/${this.pid}/ai`));
@@ -194,7 +196,7 @@ export const AiView = {
               <label v-for="(k, key) in kinds" :key="key" :class="{on: draft.kind === key}"><input type="radio" name="ai-kind" :value="key" v-model="draft.kind"><icon :name="k.icon" :size="15"/><span>{{ k.label }}</span></label>
             </div>
             <p class="ai-hint">{{ kinds[draft.kind].hint }}</p>
-            <label v-if="draft.kind === 'extract'" class="field"><span>File, reference or conversation</span><select v-model="draft.document"><option value="">Choose…</option><optgroup v-if="documents.length" label="Files"><option v-for="f in documents" :key="f.id" :value="f.id">{{ f.title }}</option></optgroup><optgroup v-if="references.length" label="References with a PDF"><option v-for="b in references" :key="b.id" :value="'bib:' + b.id">{{ b.title }}</option></optgroup><optgroup v-if="conversations.length" label="Your conversations"><option v-for="c in conversations" :key="c.id" :value="'conv:' + c.id">{{ c.subject }}{{ c.private ? ' (private)' : '' }}</option></optgroup></select></label>
+            <label v-if="draft.kind === 'extract'" class="field"><span>File, reference or conversation</span><select v-model="draft.document"><option value="">Choose…</option><optgroup v-if="documents.length" label="Files"><option v-for="f in documents" :key="f.id" :value="f.id">{{ plainTitle(f.title) }}</option></optgroup><optgroup v-if="references.length" label="References with a PDF"><option v-for="b in references" :key="b.id" :value="'bib:' + b.id">{{ plainTitle(b.title) }}</option></optgroup><optgroup v-if="conversations.length" label="Your conversations"><option v-for="c in conversations" :key="c.id" :value="'conv:' + c.id">{{ c.subject }}{{ c.private ? ' (private)' : '' }}</option></optgroup></select></label>
             <button v-if="draft.kind === 'extract' && bib.toQueue" class="btn block" :title="explain('bib.extract')" @click="extractAll"><icon name="sparkles" :size="14"/> Extract all {{ bib.toQueue }} remaining reference PDFs</button>
             <div v-if="kinds[draft.kind].needs === 'fact'" class="field"><span>Fact</span><fact-picker v-model="draft.fact" :facts="facts" label="Fact" effect="The AI works on this fact only; the request changes nothing until an AI client runs it."/></div>
             <label v-if="draft.kind === 'derive'" class="field"><span>Toward a question (optional)</span><select v-model="draft.question"><option value="">The whole project</option><option v-for="q in questions" :key="q.id" :value="q.id">{{ q.title }}</option></select></label>

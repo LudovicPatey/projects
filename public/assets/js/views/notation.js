@@ -3,7 +3,7 @@ import { link, attempt, toast } from '../store.js';
 import { timeAgo } from '../util.js';
 import { Kpi, StackBar } from '../dashboard.js';
 import { clipMath } from '../fact-format.js';
-import { uprightScriptWords } from '../bare-tex.js';
+import { COMMON_MACROS, uprightScriptWords } from '../bare-tex.js';
 import { NOTATION_SEGMENTS, actionEffects, asMath, colorMath, entryBody, entryError, entryScope, paramsText, sharedDraft, sharedState, sharedStateShort, wordingGroups, splitVariants, toRewrite } from '../notation-model.js';
 import { colorParams, inferParams, paramGroups, trustParams } from '../notation-params.js';
 
@@ -22,11 +22,11 @@ const NotationSymbol = {
       const text = params.length ? colorMath(asMath(this.symbol), params) : asMath(this.symbol);
       el.textContent = text;
       if (!window.renderMathInElement) { this.retry = setTimeout(() => this.paint(), 400); return; } // KaTeX is loaded with defer
-      window.renderMathInElement(el, { delimiters: [{ left: '$', right: '$', display: false }], throwOnError: false, trust: trustParams, preProcess: uprightScriptWords });
+      window.renderMathInElement(el, { delimiters: [{ left: '$', right: '$', display: false }], throwOnError: false, macros: { ...COMMON_MACROS }, trust: trustParams, preProcess: uprightScriptWords });
       if (params.length && el.querySelector('.katex-error')) {
         // Colors that KaTeX cannot place: the symbol as written, uncolored, rather than its source in red.
         el.textContent = asMath(this.symbol);
-        window.renderMathInElement(el, { delimiters: [{ left: '$', right: '$', display: false }], throwOnError: false, preProcess: uprightScriptWords });
+        window.renderMathInElement(el, { delimiters: [{ left: '$', right: '$', display: false }], throwOnError: false, macros: { ...COMMON_MACROS }, preProcess: uprightScriptWords });
         return;
       }
       el.querySelectorAll('.oq-pm').forEach((n) => {

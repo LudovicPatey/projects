@@ -480,6 +480,7 @@ h4.mt { margin-top: 18px; }
 .lean-tag { display: inline-flex !important; font-size: 10.5px; font-weight: 700; padding: 1px 6px; border-radius: 4px; background: var(--line-2); color: var(--muted); white-space: nowrap; }
 .lean-tag.compiled { background: #1e40af; color: #fff; }
 .lean-tag.partial, .lean-tag.failed { background: #fdecea; color: var(--danger); }
+.lean-tag.relative { background: #e0e7ff; color: #1e40af; }
 .chain-warn { color: var(--danger); font-weight: 700; }
 .fact-alert { padding: 7px 20px; font-size: 13px; border-bottom: 1px solid var(--line); }
 .fact-alert.red { background: #fdecea; color: var(--danger); }
@@ -495,6 +496,9 @@ h4.mt { margin-top: 18px; }
 .lean-head p { margin: 0; flex: 1; }
 .lean-card { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; }
 .lean-meta { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; margin: 5px 0; }
+.lean-assumes { display: grid; gap: 2px; margin: 6px 0; }
+.lean-assumes .row-link { display: flex; gap: 8px; align-items: center; min-width: 0; }
+.lean-assumes .row-link .ellipsis { flex: 1; min-width: 0; }
 .lean-code { background: #0f172a; color: #e2e8f0; padding: 10px 12px; border-radius: 6px; overflow: auto; max-height: 420px; font-size: 12px; margin: 6px 0 0; }
 .lean-log { background: var(--panel-2); border: 1px solid var(--line); padding: 8px 10px; border-radius: 6px; overflow: auto; max-height: 160px; font-size: 11.5px; margin: 6px 0 0; }
 .pad-b { padding-bottom: 6px; }

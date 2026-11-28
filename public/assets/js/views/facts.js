@@ -19,7 +19,7 @@ const VERDICTS = {
   incorrect: { label: 'Incorrect', cls: 'red' },
 };
 const LEAN = {
-  none: 'No Lean proof', compiled: 'Lean: reported compiling', unchecked: 'Lean: not checked yet',
+  none: 'No Lean proof', compiled: 'Lean: reported compiling', relative: 'Lean: compiles, assuming dependencies', unchecked: 'Lean: not checked yet',
   partial: 'Lean: contains sorry', failed: 'Lean: reported failing',
 };
 const CHAIN = {
@@ -318,7 +318,7 @@ export const FactsView = {
         <select v-model="fBasis" aria-label="Filter by basis"><option value="all">Proved or cited</option><option value="proved">Proved here ({{ basisCounts.proved }})</option><option value="cited">Cited results ({{ basisCounts.cited }})</option><option value="incomplete">Using an outside result ({{ basisCounts.incomplete }})</option></select>
         <select v-if="topicOptions.length || fTopic !== 'all'" v-model="fTopic" class="wide-filter" aria-label="Filter by subject tag"><option value="all">All subjects</option><option v-for="t in topicOptions" :key="t.topic" :value="t.topic">{{ t.topic }} ({{ t.n }})</option></select>
         <select v-model="fVerify" aria-label="Filter by what a check waits for" title="Proved facts no person has checked yet: those an AI review is due on, and those that wait for a person"><option value="all">Checked or not</option><option value="todo">To verify ({{ verifyCounts.todo }})</option><option value="ai">AI review due ({{ verifyCounts.ai }})</option><option value="person">Waiting for a person ({{ verifyCounts.person }})</option></select>
-        <select v-model="fLean" aria-label="Filter by Lean"><option value="all">Any Lean</option><option value="with">With Lean</option><option value="compiled">Compiling</option><option value="none">No Lean</option></select>
+        <select v-model="fLean" aria-label="Filter by Lean"><option value="all">Any Lean</option><option value="with">With Lean</option><option value="compiled">Compiling</option><option value="relative">Compiling, assuming dependencies</option><option value="none">No Lean</option></select>
       </div>
     </div>
     <div class="list">
@@ -392,6 +392,8 @@ export const FactsView = {
               <ai-action v-if="!cited" menu kind="review" source-type="fact" :source-id="fact.id" label="Independent review"/>
               <ai-action v-else menu kind="source_check" source-type="fact" :source-id="fact.id" label="Check the source"/>
               <ai-action menu kind="lean" source-type="fact" :source-id="fact.id" label="Lean proof"/>
+              <ai-action v-if="!cited" menu kind="latex" source-type="fact" :source-id="fact.id" :label="fact.latex?.document ? 'Update the LaTeX document' : 'LaTeX document'" :disabled="!!fact.latex?.problem"
+                :title="fact.latex?.problem ? 'Not available yet. ' + fact.latex.problem : fact.latex?.document ? 'Assembles it again from the current facts, as a new version of its file. The facts do not change.' : 'This fact and all it relies on, as a LaTeX article with its PDF, added to the files. The facts do not change.'"/>
               <ai-action menu kind="ask" source-type="fact" :source-id="fact.id" label="Ask a question"/>
               <ai-action v-if="!currentRephrasing && !notationState" menu kind="notation" source-type="fact" :source-id="fact.id" label="Write it in the project notation" title="Write this fact again in the notation agreed by the project"/>
               <ai-action menu kind="derive" source-type="fact" :source-id="fact.id" label="Prove new facts from it"/>
@@ -594,7 +596,7 @@ export const FactsView = {
       </div>
 
       <div v-if="tab==='lean'" class="pad">
-        <div class="row-gap lean-head"><p class="muted small">AI clients submit Lean proofs. The platform stores them but does not run Lean: compile status is what a member or client reports. Also check that the Lean statement says the same thing as the informal one.</p></div>
+        <div class="row-gap lean-head"><p class="muted small">AI clients submit Lean proofs. The platform stores them but does not run Lean: compile status is what a member or client reports. Also check that the Lean statement says the same thing as the informal one. A Lean proof may assume some dependencies, as the informal proof does: it then checks only this fact's step.</p></div>
         <div v-if="!fact.lean_proofs.length" class="empty">No Lean proof yet.</div>
         <article v-for="l in fact.lean_proofs" :key="l.id" class="lean-card" :class="{old: l.revision_no !== fact.current_revision}">
           <div class="row-gap">
@@ -602,6 +604,7 @@ export const FactsView = {
             <code v-if="l.decl_name">{{ l.decl_name }}</code>
             <span v-if="+l.incomplete" class="tag red">contains sorry / axiom</span>
             <span v-if="l.check_status === 'compiles'" class="tag green">reported compiling</span>
+            <span v-if="l.assumes?.length" class="tag" :title="'Assumes ' + l.assumes.map((a) => a.label).join(', ') + ' as hypotheses'">assumes {{ l.assumes.length }} {{ l.assumes.length === 1 ? 'fact' : 'facts' }}</span>
             <span v-else-if="l.check_status === 'fails'" class="tag red">reported failing</span>
             <span v-else class="tag">not checked</span>
             <span v-if="l.revision_no !== fact.current_revision" class="tag amber">older revision</span>
@@ -613,6 +616,10 @@ export const FactsView = {
             <by-line :name="l.created_by_name" :model="l.ai_model" :user="l.ai_user_name" :ms="l.ai_generation_ms"/>
             <span v-if="l.lean_version">Lean {{ l.lean_version }}</span><span v-if="l.mathlib_rev">Mathlib {{ l.mathlib_rev }}</span>
             <a v-if="l.url" :href="l.url" target="_blank" rel="noopener noreferrer"><icon name="external" :size="12"/> source</a>
+          </div>
+          <div v-if="l.assumes?.length" class="lean-assumes small">
+            <span class="muted">Assumed as hypotheses, so this proof is whole once each has its own Lean proof:</span>
+            <a v-for="a in l.assumes" :key="a.fact_id" class="row-link" :href="factLink(a.fact_id)" :title="a.label + ': ' + leanLabels[a.lean]"><code>{{ a.hypothesis }}</code><span class="ellipsis"><math-text :text="a.title"/></span><span class="lean-tag" :class="a.lean">{{ a.lean === 'none' ? 'waits for Lean' : leanLabels[a.lean].replace('Lean: ', '') }}</span></a>
           </div>
           <div v-if="l.checked_by" class="muted small">Checked by {{ l.checked_by_name }}, {{ timeAgo(l.checked_at) }} <ai-meta :model="l.check_model" :user="l.check_user_name" :ms="l.check_generation_ms"/></div>
           <pre class="lean-code">{{ l.code }}</pre>

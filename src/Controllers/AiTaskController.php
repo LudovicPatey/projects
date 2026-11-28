@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 namespace App\Controllers;
 
-use App\{Access, Activity, Auth, BibTex, ClientProtocol, Db, HttpError, ModelOrder, Notify, Procedures, Provenance, Request, Response, Sanitizer};
+use App\{Access, Activity, Auth, BibTex, ClientProtocol, Db, HttpError, LatexExport, ModelOrder, Notify, Procedures, Provenance, Request, Response, Sanitizer};
 
 /**
  * The AI work queue. The platform stores requests and results and never runs a model:
@@ -11,7 +11,7 @@ use App\{Access, Activity, Auth, BibTex, ClientProtocol, Db, HttpError, ModelOrd
  */
 final class AiTaskController
 {
-    public const KINDS = ['extract', 'ask', 'bib', 'derive', 'review', 'lean', 'notation', 'consolidate'];
+    public const KINDS = ['extract', 'ask', 'bib', 'derive', 'review', 'lean', 'notation', 'consolidate', 'latex'];
     /** Procedures that clients from before generic procedures handle with their own code, and the feature they announce. */
     private const BUILT_IN = ['ask' => null, 'notation' => 'notation', 'consolidate' => 'consolidate'];
     private const LEASE_SECONDS = 900;
@@ -42,7 +42,7 @@ final class AiTaskController
     private const MAX_CONVERSATION_MESSAGES = 1000;
     private const MAX_CONVERSATION_CHARS = 600000;
     /** Raise it when a client release needs new server features: older platforms are then not offered that release. */
-    public const API_LEVEL = 2;
+    public const API_LEVEL = 3;
 
     /** Every kind of work: the client's own, and the platform's procedures. */
     public static function kinds(): array
@@ -201,12 +201,13 @@ final class AiTaskController
         }
         if ($sourceType !== null && self::sourceProject($sourceType, $sourceId) !== $pid) throw new HttpError(404, 'This subject is not in the project.');
         if ($kind === 'extract' && !in_array($sourceType, ['document', 'bib', 'conversation'], true)) throw new HttpError(422, 'Choose the file, reference or conversation to extract facts from.');
+        if ($kind === 'extract' && $sourceType === 'document' && Db::value('SELECT exported_fact_id FROM documents WHERE id = ?', [$sourceId])) throw new HttpError(422, 'This file was assembled from facts of the project: extracting it would only copy them.');
         if (in_array($sourceType, ['bib', 'conversation'], true) && $kind !== 'extract') throw new HttpError(422, 'Invalid subject.');
         if ($kind === 'consolidate' && $sourceType !== null) throw new HttpError(422, 'Consolidation reads the whole facts database.');
         if ($kind === 'notation' && $sourceType !== null && $sourceType !== 'fact') throw new HttpError(422, 'Ask for a notation for the whole project, or for one fact.');
         if ($kind === 'notation' && $sourceType === 'fact' && NotationController::hash($pid) === sha1('')) throw new HttpError(422, 'Agree on at least one notation entry first.');
-        if (in_array($kind, ['review', 'lean', 'source_check'], true)) {
-            if ($sourceType !== 'fact') throw new HttpError(422, 'Choose the fact to check.');
+        if (in_array($kind, ['review', 'lean', 'source_check', 'latex'], true)) {
+            if ($sourceType !== 'fact') throw new HttpError(422, $kind === 'latex' ? 'Choose the fact to assemble.' : 'Choose the fact to check.');
             self::checkFactRequest($pid, $kind, (int)$sourceId);
         }
         if ($sourceType === 'bib' && !Db::value('SELECT pdf_blob_id FROM bib_entries WHERE id = ?', [$sourceId])) throw new HttpError(422, 'This reference has no PDF.');
@@ -244,6 +245,7 @@ final class AiTaskController
         $basis = FactController::graphFact($pid, $fid)['basis'] ?? null;
         if ($kind === 'review' && $basis === 'cited') throw new HttpError(422, 'A cited result has no proof to review. Ask the AI to check its source instead.');
         if ($kind === 'source_check' && $basis !== 'cited') throw new HttpError(422, 'Only a result cited without proof has a source to check.');
+        if ($kind === 'latex' && ($why = LatexExport::problem(array_column(FactController::graph($pid)['facts'], null, 'id'), $fid))) throw new HttpError(422, $why);
     }
 
     /**
@@ -701,7 +703,7 @@ final class AiTaskController
         // A client from before this feature would fail these tasks and use up their attempts.
         if (!in_array('extract_bib', (array)$r->input('features', []), true)) $where .= " AND (t.kind <> 'extract' OR t.source_type IS NULL OR t.source_type <> 'bib')";
         if (!in_array('extract_conversation', (array)$r->input('features', []), true)) $where .= " AND (t.kind <> 'extract' OR t.source_type IS NULL OR t.source_type <> 'conversation')";
-        foreach (['review', 'lean'] as $newKind) if (!in_array($newKind, $features, true)) $where .= " AND t.kind <> '$newKind'";
+        foreach (['review', 'lean', 'latex'] as $newKind) if (!in_array($newKind, $features, true)) $where .= " AND t.kind <> '$newKind'";
         // A procedure goes to a client that runs recipes and has what it needs, or to one with its own code for it.
         $generic = in_array('procedures', $features, true);
         if (!$generic) $where .= " AND (t.source_type IS NULL OR t.source_type <> 'sweep')"; // a sweep is a recipe
@@ -767,6 +769,35 @@ final class AiTaskController
         Db::update('ai_tasks', ['lease_until' => gmdate('Y-m-d H:i:s', time() + self::LEASE_SECONDS), 'updated_at' => Db::now()], 'id = :id', ['id' => $t['id']]);
         self::seen(Auth::id(), (string)$t['client_name'], $t['ai_model']);
         Response::json(['ok' => true, 'lease_seconds' => self::LEASE_SECONDS]);
+    }
+
+    /**
+     * The PDF of a LaTeX document task, compiled by the client from the source it was given. The platform keeps its own source:
+     * if the facts changed since, the PDF no longer matches and is refused, and the task can run again.
+     */
+    public static function document(Request $r): never
+    {
+        self::aiOnly();
+        $t = self::leased($r);
+        if ($t['kind'] !== 'latex' || $t['source_type'] !== 'fact') throw new HttpError(422, 'Only a LaTeX document task sends a PDF.');
+        $pid = (int)$t['project_id']; $fid = (int)$t['source_id'];
+        $x = LatexExport::build($pid, $fid);
+        if (!hash_equals($x['sha256'], $r->str('sha256'))) throw new HttpError(409, 'The facts changed while the document was compiled: run the task again to compile the new version.');
+        $pdf = base64_decode($r->str('pdf_base64'), true);
+        if ($pdf === false || !str_starts_with($pdf, '%PDF-')) throw new HttpError(422, 'pdf_base64 must be a PDF file.');
+        if (strlen($pdf) > 20 * 1024 * 1024) throw new HttpError(413, 'The PDF is too large (20 MB maximum).');
+        $tmp = tempnam(sys_get_temp_dir(), 'oqpdf');
+        file_put_contents($tmp, $pdf);
+        $model = Provenance::agentModel($r);
+        $facts = count($x['facts']);
+        $description = 'The proof of “' . $x['title'] . '” with the ' . ($facts - 1) . ' ' . ($facts === 2 ? 'fact' : 'facts') . ' it relies on, assembled from the facts of the project'
+            . ($x['models'] ? ', written by ' . implode(', ', $x['models']) : '') . '. Results of other works are cited, not proved. A new version replaces it when the facts change and the document is asked again.';
+        $docModel = mb_substr(implode(', ', $x['models']) ?: (string)$model, 0, 120) ?: null;
+        try {
+            $id = DocumentController::saveExport($pid, $fid, $x['title'], $description, $tmp, ['main.tex' => $x['tex']] + ($x['bib'] !== '' ? ['refs.bib' => $x['bib']] : []),
+                $docModel, Provenance::stamp($docModel, $r->input('generation_seconds')));
+        } finally { @unlink($tmp); }
+        Response::json(['document_id' => $id] + DocumentController::present($id), 201);
     }
 
     public static function complete(Request $r): never
@@ -1219,13 +1250,25 @@ final class AiTaskController
                 // What the proof may rely on: each dependency is assumed. A cited result is a result of another work, accepted or not by people.
                 $graph = array_column(FactController::graph($pid)['facts'], null, 'id');
                 $ctx['fact']['outside_refs'] = array_values(array_map(fn($x) => ['label' => $x['label'], 'settled' => $x['resolved']], $graph[$id]['outside_refs'] ?? []));
-                $ctx['dependencies'] = array_map(fn($d) => ['label' => $d['label'], 'title' => $d['title'], 'statement' => Sanitizer::toText((string)$d['statement_html']),
+                $ctx['dependencies'] = array_map(fn($d) => ['id' => (int)$d['id'], 'label' => $d['label'], 'title' => $d['title'], 'statement' => Sanitizer::toText((string)$d['statement_html']),
                     'basis' => $graph[(int)$d['id']]['basis'] ?? null, 'status' => $graph[(int)$d['id']]['status'] ?? null], Db::all(
                     'SELECT f.id, f.label, f.title, r.statement_html FROM fact_deps d JOIN facts f ON f.id = d.depends_on_id JOIN fact_revisions r ON r.fact_id = f.id AND r.revision_no = f.current_revision WHERE d.fact_id = ? LIMIT 50', [$id]));
                 // The meaning of its terms, and what an empty list of dependencies means: a referee without them reports false gaps.
                 $ctx['fact']['definitions'] = FactController::definitions($pid, $id, (int)$ctx['fact']['current_revision']);
+                // A Lean proof may take each dependency as a hypothesis; one that compiles already shows how it was stated in Lean.
+                if ($t['kind'] === 'lean') foreach ($ctx['dependencies'] as &$d) {
+                    $l = Db::one("SELECT l.code, l.decl_name FROM fact_lean l JOIN facts f ON f.id = l.fact_id AND l.revision_no = f.current_revision
+                                  WHERE l.fact_id = ? AND l.check_status = 'compiles' AND l.incomplete = 0 ORDER BY l.assumes_json IS NULL DESC, l.id DESC LIMIT 1", [$d['id']]);
+                    if ($l) $d['lean'] = ['decl_name' => $l['decl_name'], 'code' => mb_substr((string)$l['code'], 0, 60000)];
+                }
+                unset($d);
                 if (!$ctx['dependencies']) $ctx['dependencies_note'] = 'This proof relies on no other fact of the database: judge it on its own, with its definitions and standard facts.';
             }
+        }
+        // The document as the platform assembles it now: the client compiles it, and the platform accepts the PDF only of this source.
+        if ($t['kind'] === 'latex' && $t['source_type'] === 'fact') {
+            $x = LatexExport::build((int)$t['project_id'], (int)$t['source_id']);
+            $ctx['latex'] = ['files' => ['main.tex' => $x['tex']] + ($x['bib'] !== '' ? ['refs.bib' => $x['bib']] : []), 'sha256' => $x['sha256'], 'title' => $x['title'], 'facts' => $x['facts']];
         }
         if (isset($ctx['question']['body_html'])) { $ctx['question']['body'] = Sanitizer::toText((string)$ctx['question']['body_html']); unset($ctx['question']['body_html']); }
         return $ctx;
@@ -1437,7 +1480,7 @@ final class AiTaskController
     // Light work someone waits for goes before heavy background work: an @AI question before the extraction of a long paper.
 
     /** Lower runs sooner. */
-    private const PRIORITY = ['ask' => 10, 'instruct' => 10, 'review' => 20, 'source_check' => 30, 'bib' => 30, 'consolidate' => 40, 'notation' => 40, 'lean' => 40,
+    private const PRIORITY = ['ask' => 10, 'instruct' => 10, 'review' => 20, 'source_check' => 30, 'bib' => 30, 'consolidate' => 40, 'notation' => 40, 'lean' => 40, 'latex' => 40,
         'second_reading' => 45, 'notation_settle' => 45, 'derive' => 50, 'source_sweep' => 55, 'notation_rephrase' => 60, 'rewrite_check' => 65, 'proof_review' => 68, 'extract' => 70];
     /** A member's own request goes before the same work queued by the platform. */
     private const ASKED_BOOST = 10;

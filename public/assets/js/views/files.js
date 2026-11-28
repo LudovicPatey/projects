@@ -141,7 +141,7 @@ export const FilesView = {
       <a v-for="d in filtered" :key="d.id" class="li file-li" :class="['o-' + d.origin, {active: d.id === id, 'is-new': !!unreadOf(d.id)}]" :href="link('files', d.id)">
         <div class="file-icon" :class="d.origin"><icon :name="d.origin === 'ai' ? 'bot' : 'user'" :size="18"/></div>
         <div class="file-text">
-          <div class="li-subject li-with-badge"><span>{{ d.title }}</span><unread-badge type="document" :id="d.id"/></div>
+          <div class="li-subject li-with-badge"><span><math-text :text="d.title"/></span><unread-badge type="document" :id="d.id"/></div>
           <div class="li-snippet">v{{ d.current_version_no }} · {{ timeAgo(d.updated_at) }} · {{ d.created_by_name }}</div>
           <div class="li-meta">
             <origin-badge :origin="d.origin" :model="d.ai_model"/>
@@ -164,12 +164,13 @@ export const FilesView = {
     <template v-else-if="doc && version">
       <div class="doc-banner" :class="doc.origin">
         <icon :name="doc.origin === 'ai' ? 'bot' : 'user'" :size="16"/>
-        <span v-if="doc.origin === 'ai'"><b>AI-generated file.</b> <ai-meta :model="version.ai_model || doc.ai_model" :user="version.ai_user_name" :ms="version.ai_generation_ms"/> Check carefully before relying on it.</span>
+        <span v-if="doc.exported_fact"><b>AI-generated file, assembled from facts.</b> The proof of <a :href="link('facts', doc.exported_fact.id)"><math-text :text="doc.exported_fact.title"/></a> with every fact it relies on, as the project records them, written by <ai-meta :model="version.ai_model || doc.ai_model"/>. When they change, ask for it again from that fact's AI menu: it becomes a new version.</span>
+        <span v-else-if="doc.origin === 'ai'"><b>AI-generated file.</b> <ai-meta :model="version.ai_model || doc.ai_model" :user="version.ai_user_name" :ms="version.ai_generation_ms"/> Check carefully before relying on it.</span>
         <span v-else><b>Human-written file</b></span>
       </div>
       <header class="doc-head">
         <div class="doc-title">
-          <h2>{{ doc.title }}</h2>
+          <h2><math-text :text="doc.title" :macros="doc.tex_macros"/></h2>
           <div class="muted small">Created by {{ doc.created_by_name }} · {{ fullDate(doc.created_at) }}</div>
           <p v-if="doc.description" class="doc-desc"><math-text :text="doc.description_shown ?? doc.description" :macros="doc.tex_macros"/></p>
         </div>
@@ -178,7 +179,7 @@ export const FilesView = {
             <option v-for="v in doc.versions" :key="v.id" :value="v.id">v{{ v.version_no }}{{ v.is_current ? ' (current)' : '' }} — {{ timeAgo(v.created_at) }}</option>
           </select>
           <button class="btn sm" :title="explain('file.newVersion')" @click="newVersion = true"><icon name="upload" :size="14"/> New version</button>
-          <ai-action kind="extract" source-type="document" :source-id="doc.id"/>
+          <ai-action v-if="!doc.exported_fact" kind="extract" source-type="document" :source-id="doc.id"/>
           <ai-action kind="ask" source-type="document" :source-id="doc.id" label="Ask AI"/>
           <button v-if="!version.is_current" class="btn sm warn" :title="explain('file.restore')" @click="restore(version)"><icon name="restore" :size="14"/> Restore v{{ version.version_no }}</button>
           <a class="btn sm" :href="'api/versions/' + version.id + '/zip'" title="PDF + sources as .zip"><icon name="download" :size="14"/> .zip</a>

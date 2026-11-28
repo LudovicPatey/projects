@@ -89,7 +89,7 @@ export const ConversationsView = {
           <span class="li-time">{{ timeAgo(c.last_message_at) }}</span>
           <unread-badge type="conversation" :id="c.id"/>
         </div>
-        <div class="li-subject">{{ c.subject }}</div>
+        <div class="li-subject"><math-text :text="c.subject"/></div>
         <div class="li-snippet"><math-text :text="c.snippet"/></div>
         <div class="li-meta">
           <span v-if="c.message_count > 1"><icon name="mail" :size="12"/> {{ c.message_count }}</span>
@@ -134,7 +134,7 @@ export const ConversationsView = {
     <template v-else-if="conv">
       <header class="conv-head">
         <div class="conv-title">
-          <h2>{{ conv.subject }}</h2>
+          <h2><math-text :text="conv.subject"/></h2>
           <div class="conv-actions">
             <button class="btn sm" :disabled="extraction.disabled || extracting" :title="conv.extraction?.models?.length ? 'Extracted by ' + conv.extraction.models.join(', ') : 'Add the results stated in this conversation to Facts, with exact quotations'" @click="extractFacts"><icon name="sparkles" :size="14"/> {{ extraction.label }}</button>
             <button class="icon-btn" :class="{starred: conv.starred}" @click="flag({starred: !conv.starred})" :title="conv.starred ? 'Unstar' : 'Star'"><icon name="star"/></button>

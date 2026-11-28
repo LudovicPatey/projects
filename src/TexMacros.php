@@ -82,6 +82,8 @@ final class TexMacros
     /** Cross-references and citations point inside the paper: taken out of a text shown on its own. */
     public static function dropRefs(string $text): string
     {
+        // "(Lemma \ref{x})" says nothing once the number is gone: the whole parenthesis goes.
+        $text = preg_replace('/\s*\(\s*(?:[A-Za-z]+\.?\s*)?~?\\\\(?:(?:eq|auto|page|c|C|name)?ref|cite[pt]?)\*?(?:\[[^\]]*\])*\{[^{}]*\}\s*\)/', '', $text) ?? $text;
         $text = preg_replace('/\s*~?\\\\(?:eq|auto|page|c|C|name)?ref\*?\{[^{}]*\}/', '', $text) ?? $text;
         $text = preg_replace('/\s*~?\\\\cite[pt]?\*?(?:\[[^\]]*\])*\{[^{}]*\}/', '', $text) ?? $text;
         return preg_replace('/\(\s*\)/', '', $text) ?? $text;

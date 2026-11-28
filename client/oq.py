@@ -22,6 +22,7 @@ The AI runs in a read-only sandbox and never receives your API key. It returns a
 answer, which this program checks and sends to the platform. Python 3.8+, no dependency.
 """
 import argparse
+import base64
 import collections
 import getpass
 import hashlib
@@ -52,11 +53,11 @@ import webbrowser
 import zipfile
 import zlib
 
-VERSION = "1.22.10"
-API_LEVEL = 2  # raise with the server's AiTaskController::API_LEVEL when a client needs new server features
+VERSION = "1.22.11"
+API_LEVEL = 3  # raise with the server's AiTaskController::API_LEVEL when a client needs new server features
 GITHUB_REPO = "LudovicPatey/projects"
-KINDS = ["extract", "ask", "bib", "derive", "review", "lean", "notation", "consolidate"]
-KIND_NAMES = {"extract": "Extract facts", "ask": "Answer a question", "bib": "Suggest references", "derive": "Prove new facts", "review": "Independent review", "lean": "Lean proof", "notation": "Project notation", "consolidate": "Consolidate the facts"}
+KINDS = ["extract", "ask", "bib", "derive", "review", "lean", "notation", "consolidate", "latex"]
+KIND_NAMES = {"extract": "Extract facts", "ask": "Answer a question", "bib": "Suggest references", "derive": "Prove new facts", "review": "Independent review", "lean": "Lean proof", "notation": "Project notation", "consolidate": "Consolidate the facts", "latex": "LaTeX document"}
 FACT_KINDS = ["definition", "lemma", "proposition", "theorem", "corollary", "conjecture", "remark"]
 DANUS_LABELS = {"conclusion", "example", "counterexample", "proof_attempt", "plan", "dead_end",
                 "direction", "obstacle", "master_guidance", "verification", "elaboration"}
@@ -673,10 +674,117 @@ def process_review(api, task, opts, workdir):
     return {"lease": task["lease"], "ai_model": model, "generation_seconds": seconds, "fact_ids": [int(fact["id"])], "summary": f"Independent review by {model}: {label}. {answer.get('summary') or ''}"[:1000]}
 
 
-def lean_match(task, code, decl, author, opts, workdir):
+# ----- LaTeX documents -----
+
+TEX_DIRS = ["/Library/TeX/texbin", "/usr/local/bin", "/opt/homebrew/bin", "/usr/bin", "/usr/local/texlive/bin"]
+
+
+def tex_conf():
+    """latexmk and pdflatex, if this computer has a TeX distribution: a LaTeX document task needs no AI, only them."""
+    found = {}
+    for name in ("latexmk", "pdflatex", "bibtex"):
+        path = shutil.which(name) or next((str(pathlib.Path(d) / name) for d in TEX_DIRS if (pathlib.Path(d) / name).is_file()), None)
+        if path:
+            found[name] = os.path.abspath(path)  # not resolved: pdflatex is a link to pdftex, and its name picks the LaTeX format
+    return found if "pdflatex" in found else None
+
+
+def tex_profile(tmp):
+    """LaTeX can read and write files: it gets no network, writes only to its folder, and cannot read the user's files."""
+    home, work = (os.path.realpath(str(x)) for x in (pathlib.Path.home(), tmp))
+    if any('"' in x or "\\" in x for x in (home, work)):
+        raise RuntimeError("A folder name prevents safe compilation.")
+    return f'(version 1)(allow default)(deny network*)(deny file-write*)(allow file-write* (subpath "{work}") (literal "/dev/null"))(deny file-read* (subpath "{home}"))(allow file-read-metadata)(allow file-read* (subpath "{work}"))'
+
+
+def tex_compile(conf, work, timeout=600):
+    """Compiles main.tex in work, without shell escape, sandboxed on a Mac. Returns (pdf bytes or None, log)."""
+    env = {"PATH": os.pathsep.join([str(pathlib.Path(conf["pdflatex"]).parent), "/usr/bin", "/bin"]), "HOME": str(work), "TMPDIR": str(work), "LANG": "C.UTF-8",
+           "TEXMFVAR": str(work / ".texmf-var"), "TEXMFCONFIG": str(work / ".texmf-config"), "openout_any": "p", "openin_any": "p", "shell_escape": "f"}
+    flags = ["-interaction=nonstopmode", "-halt-on-error", "-no-shell-escape"]
+    if "latexmk" in conf:
+        steps = [[conf["latexmk"], "-pdf", "-norc", f"-pdflatex={conf['pdflatex']} {' '.join(flags)} %O %S", "main.tex"]]
+    else:  # pdflatex, bibtex when there is a bibliography, then twice for references
+        steps = [[conf["pdflatex"], *flags, "main.tex"]] + ([[conf["bibtex"], "main"]] if "bibtex" in conf and (work / "refs.bib").exists() else []) + [[conf["pdflatex"], *flags, "main.tex"]] * 2
+    log = ""
+    for cmd in steps:
+        if sys.platform == "darwin":
+            cmd = ["/usr/bin/sandbox-exec", "-p", tex_profile(work), *cmd]
+        p = subprocess.run(cmd, stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=str(work), env=env, timeout=timeout)
+        log += p.stdout[-6000:] + p.stderr[-2000:]
+        if p.returncode != 0:
+            break
+    pdf = work / "main.pdf"
+    return (pdf.read_bytes() if pdf.exists() and pdf.read_bytes()[:5] == b"%PDF-" else None), log
+
+
+def process_latex(api, task, opts, workdir):
+    """The platform assembles the document from the facts; this computer only compiles it, and the platform keeps the file."""
+    conf = tex_conf()
+    if not conf:
+        raise RuntimeError("LaTeX is not installed on this computer.")
+    doc = task["context"].get("latex") or {}
+    files = doc.get("files") or {}
+    if "main.tex" not in files:
+        raise RuntimeError("The platform sent no LaTeX source.")
+    for name, content in files.items():
+        if not re.fullmatch(r"[\w.-]+\.(tex|bib)", name):
+            raise RuntimeError(f"Unexpected file name {name!r}.")
+        (workdir / name).write_text(content, encoding="utf-8")
+    started = time.time()
+    pdf, log = tex_compile(conf, workdir)
+    if not pdf:
+        errors = [line for line in log.splitlines() if line.startswith("!")][:5]
+        raise RuntimeError("LaTeX could not compile the document: " + (" ".join(errors) or log[-400:]))
+    spent = time.time() - started
+    data = api.post(f"/api/ai/tasks/{task['id']}/document", {"lease": task["lease"], "sha256": doc.get("sha256", ""), "pdf_base64": base64.b64encode(pdf).decode("ascii"),
+                                                              "ai_model": "pdflatex", "generation_seconds": round(spent, 3)})
+    n = len(doc.get("facts") or [])
+    return {"lease": task["lease"], "ai_model": "pdflatex", "generation_seconds": round(spent, 3),
+            "summary": f"Compiled the LaTeX document of {n} facts ({len(pdf) // 1024} KB) and added it to the files as \"{data.get('title', '')}\"."[:1000]}
+
+
+def lean_assumed(task, assumes):
+    """The dependencies a Lean answer takes as hypotheses, or why they cannot be accepted."""
+    deps = {int(d["id"]): d for d in task["context"].get("dependencies") or [] if isinstance(d, dict) and d.get("id")}
+    out = {}
+    for a in assumes or []:
+        fid, hyp = int(a.get("fact_id") or 0), str(a.get("hypothesis") or "")
+        if fid not in deps:
+            return None, f"Fact {fid} is not a dependency of this fact, so it cannot be assumed."
+        if not re.fullmatch(r"[A-Za-z_][\w']{0,60}", hyp):
+            return None, f"The hypothesis name {hyp!r} is invalid."
+        out[fid] = {"fact_id": fid, "hypothesis": hyp, "label": deps[fid].get("label"), "statement": deps[fid].get("statement")}
+    return list(out.values()), None
+
+
+def lean_hypotheses_problem(code, decl, assumed):
+    """Each assumed dependency is a hypothesis of the main theorem itself, not a global assumption."""
+    short = re.escape(decl.split(".")[-1])
+    m = re.search(rf"(?m)^\s*(?:@\[[^\]]*\]\s*)?(?:private\s+|protected\s+)?(?:theorem|lemma)\s+(?:[\w.']*\.)?{short}(?![\w'])", code)
+    head, depth = "", 0
+    for i, ch in enumerate(code[m.end():] if m else ""):
+        # The statement ends at the first := outside brackets: one inside a hypothesis, as in a let, belongs to it.
+        if ch in "([{⟨":
+            depth += 1
+        elif ch in ")]}⟩":
+            depth -= 1
+        elif depth == 0 and code[m.end() + i:m.end() + i + 2] == ":=":
+            break
+        head += ch
+    for a in assumed:
+        if not re.search(rf"[(\[{{]\s*(?:[\w']+\s+)*{re.escape(a['hypothesis'])}(?:\s+[\w']+)*\s*:", head):
+            return f"The main theorem {decl} has no hypothesis {a['hypothesis']} for fact {a['label'] or a['fact_id']}."
+    if assumed and re.search(r"(?m)^\s*variable\b", code):
+        return "Assumed dependencies must be hypotheses of the main theorem, not variables."
+    return None
+
+
+def lean_match(task, code, decl, author, opts, workdir, assumed=()):
     """A model other than the one that wrote the Lean file says what that file actually proves."""
     fact = task["context"].get("fact") or {}
-    (workdir / "comparison.json").write_text(json.dumps({"fact_statement": fact.get("statement"), "lean_theorem": decl, "lean_file": code}, ensure_ascii=False, indent=1), encoding="utf-8")
+    assumed = [{"fact_id": a["fact_id"], "hypothesis": a["hypothesis"], "statement": a["statement"]} for a in assumed]
+    (workdir / "comparison.json").write_text(json.dumps({"fact_statement": fact.get("statement"), "lean_theorem": decl, "lean_file": code, "assumed": assumed}, ensure_ascii=False, indent=1), encoding="utf-8")
     prompt = f"{SAFETY}\n\n{INSTRUCTIONS['lean_match']}\n\nRead comparison.json in the current folder to begin."
     for candidate in review_models(opts):
         tool = tool_of(candidate)
@@ -689,7 +797,17 @@ def lean_match(task, code, decl, author, opts, workdir):
         relation = answer.get("relation")
         if relation not in ("same", "stronger", "weaker", "different", "negation"):
             raise RuntimeError("The statement check did not give a valid answer.")
-        return relation, str(answer.get("explanation") or "").strip(), used, seconds
+        why = str(answer.get("explanation") or "").strip()
+        # A hypothesis that says more than its fact can prove anything: the proof then counts as nothing.
+        judged = {int(h.get("fact_id") or 0): h for h in answer.get("hypotheses") or []}
+        for a in assumed:
+            h = judged.get(a["fact_id"])
+            if not h or h.get("relation") not in ("same", "implied"):
+                said = h.get("relation") if h else "not judged"
+                return "different", f"Hypothesis {a['hypothesis']} for fact {a['fact_id']}: {said}. {str((h or {}).get('explanation') or '').strip()} {why}".strip(), used, seconds
+        if assumed:
+            why += " Hypotheses: " + " ".join(f"{a['hypothesis']} ({judged[a['fact_id']]['relation']}): {str(judged[a['fact_id']].get('explanation') or '').strip()}" for a in assumed)
+        return relation, why, used, seconds
     raise RuntimeError("No independent model is available to compare the Lean statement with the fact, so nothing was recorded.")
 
 
@@ -709,14 +827,20 @@ def process_lean(api, task, opts, workdir):
         spent += seconds
         answer = scrub(answer, api.key)
         code, decl = str(answer.get("code") or ""), str(answer.get("decl_name") or "")
+        assumed, last = lean_assumed(task, answer.get("assumes"))
+        if assumed is None:
+            continue
+        last = lean_hypotheses_problem(code, decl, assumed) if assumed else None
+        if last:
+            continue
         ok, last = lean_check(code, decl, conf)
         if not ok:
             continue
-        relation, why, checker, more = lean_match(task, code, decl, model, opts, workdir)
+        relation, why, checker, more = lean_match(task, code, decl, model, opts, workdir, assumed)
         why = scrub(why, api.key)
         spent += more
         result = {"lease": task["lease"], "ai_model": model, "generation_seconds": round(spent, 3), "fact_ids": [int(fact["id"])]}
-        if relation == "negation":
+        if relation == "negation" and not assumed:
             body = f"Lean {conf['version']} compiled a proof of the negation of this statement, with standard axioms only. {checker} confirmed that it is the negation. {why}\n\nLean file:\n\n{code}"[:19000]
             try:
                 api.post(f"/api/facts/{int(fact['id'])}/reviews", {"verdict": "incorrect", "body_text": body, "ai_model": model, "generation_seconds": round(spent, 3)})
@@ -727,10 +851,14 @@ def process_lean(api, task, opts, workdir):
         if relation != "same":
             last = f"An independent check found that the Lean theorem is {relation} compared with the fact: {why}"
             continue
-        data = api.post(f"/api/facts/{int(fact['id'])}/lean", {"code": code, "decl_name": decl, "lean_version": conf["version"], "mathlib_rev": conf["mathlib_rev"], "ai_model": model, "generation_seconds": round(spent, 3)})
+        body = {"code": code, "decl_name": decl, "lean_version": conf["version"], "mathlib_rev": conf["mathlib_rev"], "ai_model": model, "generation_seconds": round(spent, 3)}
+        if assumed:
+            body["assumes"] = [{"fact_id": a["fact_id"], "hypothesis": a["hypothesis"]} for a in assumed]
+        data = api.post(f"/api/facts/{int(fact['id'])}/lean", body)
         lid = max(int(x["id"]) for x in data["lean_proofs"])
         api.post(f"/api/fact-lean/{lid}/check", {"status": "compiles", "lean_version": conf["version"], "mathlib_rev": conf["mathlib_rev"], "log": f"{last}\n\nStatement check by {checker}: same. {why}"[:19000], "ai_model": "lean-compiler"})
-        return {**result, "summary": f"Lean {conf['version']} compiled {decl} with standard axioms only, and {checker} judged that its statement matches the fact. A person should still confirm this."[:1000]}
+        given = f", assuming {', '.join(str(a['label'] or a['fact_id']) for a in assumed)} as hypotheses" if assumed else ""
+        return {**result, "summary": f"Lean {conf['version']} compiled {decl} with standard axioms only{given}, and {checker} judged that its statement matches the fact. A person should still confirm this."[:1000]}
     raise RuntimeError(f"No matching Lean proof after 3 attempts. Last problem: {last[-500:]}")
 
 
@@ -885,7 +1013,8 @@ SCHEMAS = {
     "derive": strict({"summary": {"type": "string"}, "facts": {"type": "array", "items": FACT_SCHEMA}}),
     "ask": strict({"summary": {"type": "string"}, "reply": {"type": "string"}}),
     "review": strict({"summary": {"type": "string"}, "verdict": {"type": "string", "enum": ["correct", "gap", "incorrect"]}, "explanation": {"type": "string"}}),
-    "lean": strict({"summary": {"type": "string"}, "decl_name": {"type": "string"}, "code": {"type": "string"}, "notes": {"type": "string"}}),
+    "lean": strict({"summary": {"type": "string"}, "decl_name": {"type": "string"}, "code": {"type": "string"}, "notes": {"type": "string"},
+                    "assumes": {"type": "array", "items": strict({"fact_id": {"type": "integer"}, "hypothesis": {"type": "string"}})}}),
     "notation_propose": strict({"summary": {"type": "string"}, "entries": {"type": "array", "items": strict({
         "symbol": {"type": "string"}, "meaning": {"type": "string"}, "note": nullable(),
         "variants": {"type": "array", "items": strict({"symbol": {"type": "string"}, "meaning": {"type": "string"}, "where": {"type": "string"}, "relation": {"type": "string", "enum": ["instance", "clash"]}})},
@@ -893,7 +1022,8 @@ SCHEMAS = {
     "notation_rephrase": strict({"summary": {"type": "string"}, "unchanged": {"type": "boolean"}, "statement": {"type": "string"}, "proof": nullable(),
         "local_notation": {"type": "array", "items": strict({"symbol": {"type": "string"}, "meaning": {"type": "string"}})},
         "uses": {"type": "array", "items": strict({"symbol": {"type": "string"}, "meaning_here": {"type": "string"}, "project_symbol": {"type": "string"}})}}),
-    "lean_match": strict({"relation": {"type": "string", "enum": ["same", "stronger", "weaker", "different", "negation"]}, "explanation": {"type": "string"}}),
+    "lean_match": strict({"relation": {"type": "string", "enum": ["same", "stronger", "weaker", "different", "negation"]}, "explanation": {"type": "string"},
+                          "hypotheses": {"type": "array", "items": strict({"fact_id": {"type": "integer"}, "relation": {"type": "string", "enum": ["same", "implied", "stronger", "different"]}, "explanation": {"type": "string"}})}}),
     "consolidate": strict({"summary": {"type": "string"}, "suggestions": {"type": "array", "items": strict({
         "kind": {"type": "string", "enum": ["same", "depends", "kind", "question", "topics"]}, "fact": {"type": "string"}, "other_fact": nullable(),
         "new_kind": {"type": ["string", "null"], "enum": FACT_KINDS + [None]}, "title": nullable(), "topics": {"type": "array", "items": {"type": "string"}},
@@ -1037,12 +1167,20 @@ In "explanation", name the exact location of each issue. For "correct", say what
 State the theorem faithfully: do not weaken it, add hypotheses or change its meaning. If it has several parts, prove all of them.
 Do not use sorry, admit, axiom, unsafe, native_decide, macros, elaborators or #eval, and import only Mathlib modules.
 If you find that the fact is false, prove its exact negation instead, and say so in "notes".
+Its proof may rely on the facts in "dependencies", each with an "id": you may take any of them as a hypothesis of the main theorem instead of
+proving it, as the informal proof does. Name each such hypothesis h_<id>, for example (h_1484 : ...), state in it exactly what that dependency says,
+never more, and list it in "assumes" with the fact's id. A dependency with "lean" already compiles in Lean: reuse its definitions and statement.
+Prove outright what is short enough, and leave "assumes" empty when you assume nothing. Assume nothing that is not a dependency.
 Put the file in "code", and the full name of the main theorem in "decl_name". In "notes", explain how the Lean statement matches the fact.""",
     "lean_match": """TASK: compare a mathematical fact with a Lean 4 theorem, in comparison.json. Another AI wrote the Lean file, so assume nothing.
 Read "lean_theorem" in "lean_file", and unfold every definition, notation and hypothesis in that file: a custom definition can make a theorem trivial.
 Answer in "relation": "same" only if the theorem states exactly the fact; "stronger" if it clearly implies the fact and says more;
 "weaker" if it proves less, for example with an extra hypothesis or only some parts; "negation" if it is the logical negation of the fact;
-"different" otherwise. Do not judge whether the proof is valid: Lean checked it. In "explanation", justify your answer in a few sentences.""",
+"different" otherwise. Do not judge whether the proof is valid: Lean checked it. In "explanation", justify your answer in a few sentences.
+The theorem may take some facts of "assumed" as hypotheses, named in "hypothesis": judge "relation" with them taken as given, as the fact's proof
+assumes them. For each of them, say in "hypotheses" how that hypothesis compares with the statement of that fact: "same"; "implied" if the fact
+implies it, so assuming it asks for less; "stronger" if it says more than the fact, for example a hypothesis that is false or makes the theorem
+trivial; "different" otherwise. Leave "hypotheses" empty when "assumed" is.""",
     "derive": """TASK: try to derive NEW mathematical facts useful for the subject of this task, or for the open questions in task.json.
 Write every statement and proof in the project's agreed notation, listed in "notation" in task.json. When "fact" has a "statement_in_project_notation", use it.
 Each fact must be readable alone: in "local_notation", define every symbol it uses that is not in the project's notation ("notation" in task.json),
@@ -1257,6 +1395,8 @@ def process(api, task, opts):
         return process_procedure(api, task, opts)
     with tempfile.TemporaryDirectory(prefix="oq-task-") as tmp:
         workdir = pathlib.Path(os.path.realpath(tmp))
+        if kind == "latex":
+            return process_latex(api, task, opts, workdir)
         if kind in ("review", "lean", "notation", "consolidate"):
             public = {k: task.get(k) for k in ("id", "kind", "source_type", "source_id", "prompt_text")}
             (workdir / "task.json").write_text(json.dumps({"task": public, **task["context"]}, ensure_ascii=False, indent=1), encoding="utf-8")
@@ -1451,7 +1591,7 @@ def work_once(api, opts, name, stop=None):
         # The main AI is at its limit: the other one keeps doing what it can do alone, independent reviews and checks.
         opts.__dict__.setdefault("tool_hold", {})[opts.provider] = retry or time.time() + 1800
         opts.hold = (f"{reason} Meanwhile {TOOL_NAMES.get(other, other)} keeps doing the independent reviews and checks.", retry)
-    kinds = [k for k in opts.kinds if k in KINDS and k in limits["kinds"] and (k != "lean" or lean_conf())]
+    kinds = [k for k in opts.kinds if k in KINDS and k in limits["kinds"] and (k != "lean" or lean_conf()) and (k != "latex" or tex_conf())]
     try:
         extra = refresh_procedures(api)
     except (OSError, ValueError):
@@ -1474,7 +1614,7 @@ def work_once(api, opts, name, stop=None):
         kinds = [k for k in kinds if models.get(k)]
         if not kinds:
             return False
-    body = {"kinds": kinds, "client_name": name, "ai_model": (models[kinds[0]][0] if other else opts.model or opts.provider), "models": models, "features": ["extract_bib", "extract_comments", "extract_conversation", "review", "lean", "notation", "consolidate", "procedures"], "capabilities": list(CAPABILITIES)}
+    body = {"kinds": kinds, "client_name": name, "ai_model": (models[kinds[0]][0] if other else opts.model or opts.provider), "models": models, "features": ["extract_bib", "extract_comments", "extract_conversation", "review", "lean", "notation", "consolidate", "procedures", "latex"], "capabilities": list(CAPABILITIES)}
     meanwhile = opts.hold if other else None
     task, opts.hold = claim_task(api, opts, body)
     opts.hold = opts.hold or meanwhile
@@ -1882,7 +2022,7 @@ def danus_serve(api, graph, a):
 DEFAULT_LIMITS = {
     "max_session_percent": 50, "max_weekly_percent": 50,  # share of the subscription this client may reach
     "tasks_per_day": 20, "minutes_per_day": 120, "tokens_per_day": 2000000,  # 0 = no cap
-    "task_minutes": 30, "hours": "", "kinds": ["extract", "ask", "bib", "review", "notation", "consolidate"], "review_offered": True, "notation_offered": True, "consolidate_offered": True, "paused": False,  # derivation is the costliest: opt-in
+    "task_minutes": 30, "hours": "", "kinds": ["extract", "ask", "bib", "review", "notation", "consolidate", "latex"], "review_offered": True, "notation_offered": True, "consolidate_offered": True, "latex_offered": True, "paused": False,  # derivation is the costliest: opt-in
     "danus_enabled": False, "danus_workers": 1, "danus_minutes": 60,
     "ai_billing": "subscription",  # "api" must be chosen explicitly, because it is charged per use
     "procedures": {}, "auto_procedures": False,  # the platform's procedures: each one is off until its user turns it on
@@ -1955,11 +2095,11 @@ def clean_limits(raw):
 def load_limits():
     try:
         raw = json.loads((data_dir() / "limits.json").read_text(encoding="utf-8"))
-        for kind in ("review", "notation", "consolidate"):  # offered once to existing users, who can then turn it off
+        for kind in ("review", "notation", "consolidate", "latex"):  # offered once to existing users, who can then turn it off
             if not raw.get(f"{kind}_offered"):
                 raw["kinds"] = list(dict.fromkeys(list(raw.get("kinds", DEFAULT_LIMITS["kinds"])) + [kind]))
         out = clean_limits(raw)
-        out["review_offered"] = out["notation_offered"] = out["consolidate_offered"] = True
+        out["review_offered"] = out["notation_offered"] = out["consolidate_offered"] = out["latex_offered"] = True
         return out
     except (OSError, ValueError, Stop):
         return dict(DEFAULT_LIMITS)
@@ -1967,7 +2107,7 @@ def load_limits():
 
 def save_limits(raw):
     merged = {**load_limits(), **raw}
-    clean = {**clean_limits(merged), "review_offered": True, "notation_offered": True, "consolidate_offered": True}
+    clean = {**clean_limits(merged), "review_offered": True, "notation_offered": True, "consolidate_offered": True, "latex_offered": True}
     data_dir().mkdir(parents=True, exist_ok=True)
     (data_dir() / "limits.json").write_text(json.dumps(clean, indent=2), encoding="utf-8")
     return clean
@@ -5971,7 +6111,7 @@ const pickModel=(k,val,list,p,off)=>MO[k]?`<input type=text data-md=${k} placeho
 const mv=(p,k)=>MD?.[k]??(S.models.choices[p]?.[k]||'auto');
 const WORK=[['Reading and organizing',[['extract','Extract facts','From new files, and from references and conversations when a member asks.'],['consolidate','Consolidate the facts','After extractions: merges duplicates, links results across papers, tags subjects, marks what is worth reading.'],['notation','Project notation','Proposes a common notation, and rewrites facts in it, when a member asks.'],['bib','Find references','Suggests papers, which members validate.']]],
  ['Discussion',[['ask','Answer @AI','Replies when a member writes @AI in a message or a comment.']]],
- ['Checking',[['review','Independent review','Checks a fact written by another model, when a member asks.'],['lean','Lean proofs','Writes and compiles a Lean proof, when a member asks. Needs Lean, below.']]],
+ ['Checking',[['review','Independent review','Checks a fact written by another model, when a member asks.'],['lean','Lean proofs','Writes and compiles a Lean proof, when a member asks. Needs Lean, below.'],['latex','LaTeX documents','Compiles the LaTeX document of a checked proof, when a member asks. Needs LaTeX on this computer; uses no AI.']]],
  ['Proving',[['derive','Prove new facts without asking','Takes proof requests on its own, without pressing Start. Uses much more of your subscription.']]]];
 const sw=(attr,on,label)=>`<input type=checkbox class=switch ${attr} ${on?'checked':''} aria-label="${e(label)}">`;
 const workRow=(k,l,d,p)=>{const on=draft.kinds.includes(k);return`<div class="wrow ${on?'':'off'}"><label class=wmain>${sw('data-k='+k,on,l)}<span><b>${e(l)}</b><small>${e(d)}</small></span></label><div class=wmodel>${pickModel(k,mv(p,k),S.models.suggest[p],p,!on)}</div></div>`};

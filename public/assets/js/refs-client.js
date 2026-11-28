@@ -2,7 +2,7 @@
 import { api } from './api.js';
 import { store, go, toast } from './store.js';
 import { ICONS } from './components.js';
-import { uprightScriptWords } from './bare-tex.js';
+import { COMMON_MACROS, uprightScriptWords } from './bare-tex.js';
 import { REF_TYPES, refHref, refKey, statusInfo } from './references.js';
 
 const TTL = 60000;
@@ -51,7 +51,7 @@ export async function searchRefs(term, type) {
 function paintLabel(el, text) {
   el.textContent = text;
   if (text.includes('$') && window.renderMathInElement) {
-    window.renderMathInElement(el, { delimiters: [{ left: '$', right: '$', display: false }], throwOnError: false, preProcess: uprightScriptWords });
+    window.renderMathInElement(el, { delimiters: [{ left: '$', right: '$', display: false }], throwOnError: false, macros: { ...COMMON_MACROS }, preProcess: uprightScriptWords });
   }
 }
 

@@ -187,7 +187,7 @@ final class FactController
         foreach (Db::all("SELECT s.fact_id, s.source_id FROM fact_sources s JOIN facts f ON f.id = s.fact_id AND s.revision_no = f.current_revision
                           WHERE f.project_id = ? AND s.source_type = 'bib' AND s.covers <> 'context'", [$pid]) as $s) $bibOf[(int)$s['fact_id']][] = (int)$s['source_id'];
         $lean = [];
-        foreach (Db::all('SELECT l.fact_id, l.incomplete, l.check_status FROM fact_lean l
+        foreach (Db::all('SELECT l.fact_id, l.incomplete, l.check_status, l.assumes_json FROM fact_lean l
                           JOIN facts f ON f.id = l.fact_id AND l.revision_no = f.current_revision WHERE f.project_id = ?', [$pid]) as $l) {
             $lean[(int)$l['fact_id']][] = $l;
         }
@@ -419,10 +419,13 @@ final class FactController
         return (string)$f['ai_model'] !== '' && mb_strtolower(trim((string)$f['ai_model'])) === mb_strtolower(trim((string)$model));
     }
 
+    /** compiled: a whole Lean proof compiles; relative: one compiles that takes some dependencies as hypotheses. */
     private static function leanState(array $rows): string
     {
         if (!$rows) return 'none';
-        foreach ($rows as $l) if ($l['check_status'] === 'compiles' && !$l['incomplete']) return 'compiled';
+        $assumes = fn($l) => (bool)json_decode((string)($l['assumes_json'] ?? ''), true);
+        foreach ($rows as $l) if ($l['check_status'] === 'compiles' && !$l['incomplete'] && !$assumes($l)) return 'compiled';
+        foreach ($rows as $l) if ($l['check_status'] === 'compiles' && !$l['incomplete']) return 'relative';
         foreach ($rows as $l) if ($l['check_status'] === 'unchecked' && !$l['incomplete']) return 'unchecked';
         foreach ($rows as $l) if ($l['incomplete']) return 'partial';
         return 'failed';
@@ -1214,6 +1217,7 @@ final class FactController
         $code = (string)$r->input('code', '');
         if (trim($code) === '') throw new HttpError(422, 'The Lean code is empty.');
         if (strlen($code) > self::MAX_LEAN_BYTES) throw new HttpError(413, 'The Lean code is too large (1 MB maximum).');
+        $assumes = self::leanAssumes($r->input('assumes'), $f, $code);
         $prov = Provenance::resolve($r);
         $url = $r->str('url');
         if ($url !== '' && !preg_match('#^https?://#i', $url)) throw new HttpError(422, 'The URL must start with http(s)://');
@@ -1224,11 +1228,34 @@ final class FactController
             'mathlib_rev' => mb_substr($r->str('mathlib_rev'), 0, 80) ?: null,
             'url' => mb_substr($url, 0, 500) ?: null, 'origin' => $prov['origin'], 'ai_model' => $prov['ai_model'],
             'incomplete' => self::leanIncomplete($code) ? 1 : 0,
+            'assumes_json' => $assumes ? json_encode($assumes) : null,
             'created_by' => Auth::id(), 'created_at' => Db::now(),
         ]);
         Activity::touch((int)$f['project_id'], 'fact', (int)$f['id'], 'lean', $lid);
         Db::update('facts', ['updated_at' => Db::now()], 'id = :id', ['id' => $f['id']]);
         Response::json(self::present(Access::fact((int)$f['id'])), 201);
+    }
+
+    /**
+     * Dependencies the Lean theorem takes as hypotheses, as the fact's proof assumes them: each names a current dependency and a
+     * hypothesis of the file. The proof is then checked relative to them, and is whole once each of them has its own.
+     */
+    private static function leanAssumes(mixed $raw, array $f, string $code): array
+    {
+        if ($raw === null || $raw === '' || $raw === []) return [];
+        if (!is_array($raw) || count($raw) > 50) throw new HttpError(422, 'assumes must be a list of at most 50 dependencies.');
+        $deps = array_map('intval', array_column(Db::all('SELECT depends_on_id FROM fact_deps WHERE fact_id = ?', [$f['id']]), 'depends_on_id'));
+        $out = [];
+        foreach ($raw as $a) {
+            $id = (int)($a['fact_id'] ?? 0);
+            $h = (string)($a['hypothesis'] ?? '');
+            if (!in_array($id, $deps, true)) throw new HttpError(422, "Fact $id is not a dependency of {$f['label']}: only dependencies may be assumed.");
+            if (!preg_match("/^[A-Za-z_][\\w']{0,60}$/", $h) || !preg_match('/(?<![\\w\'])' . preg_quote($h, '/') . "(?![\\w'])/", $code)) {
+                throw new HttpError(422, 'Each assumed dependency must name a hypothesis of the Lean file.');
+            }
+            $out[$id] = ['fact_id' => $id, 'hypothesis' => $h];
+        }
+        return array_values($out);
     }
 
     /** The platform does not run Lean: this records who reports what, with which toolchain. */
@@ -1769,6 +1796,9 @@ final class FactController
         $brief = fn($x) => ['id' => $x, 'label' => $byId[$x]['label'], 'title' => $byId[$x]['title'], 'kind' => $byId[$x]['kind'], 'display_kind' => $byId[$x]['display_kind'],
             'status' => $byId[$x]['status'], 'origin' => $byId[$x]['origin'], 'ai_model' => $byId[$x]['ai_model']];
         $out['project_id'] = $pid;
+        // The LaTeX document of this fact: why it cannot be made yet, and the file already made from it.
+        $out['latex'] = ['problem' => \App\LatexExport::problem($byId, $id),
+            'document' => Db::one('SELECT id, title, updated_at FROM documents WHERE project_id = ? AND exported_fact_id = ? AND deleted_at IS NULL ORDER BY id DESC LIMIT 1', [$pid, $id])];
         $out['last_activity_id'] = Activity::latest($pid, 'fact', $id);
         $out['retract_reason'] = $f['retract_reason'];
         $out['retracted_by_name'] = $f['retracted_by'] ? Db::value('SELECT name FROM users WHERE id = ?', [$f['retracted_by']]) : null;
@@ -1854,6 +1884,24 @@ final class FactController
              JOIN users u ON u.id = l.created_by LEFT JOIN users c ON c.id = l.checked_by
              LEFT JOIN users au ON au.id = l.ai_user_id LEFT JOIN users cu ON cu.id = l.check_user_id
              WHERE l.fact_id = ? ORDER BY l.revision_no DESC, l.id DESC', [$id]);
+        // Each assumed dependency, with its own Lean state: the chain is formalized once each of them has a Lean proof.
+        $assumed = [];
+        foreach ($out['lean_proofs'] as $l) foreach (json_decode((string)$l['assumes_json'], true) ?: [] as $a) $assumed[(int)$a['fact_id']] = true;
+        $info = [];
+        if ($assumed) {
+            $ids = implode(',', array_keys($assumed));
+            $rows = [];
+            foreach (Db::all("SELECT l.fact_id, l.incomplete, l.check_status, l.assumes_json FROM fact_lean l JOIN facts f ON f.id = l.fact_id AND l.revision_no = f.current_revision WHERE l.fact_id IN ($ids)") as $x) $rows[(int)$x['fact_id']][] = $x;
+            foreach (Db::all("SELECT id, label, title FROM facts WHERE id IN ($ids) AND deleted_at IS NULL") as $x) {
+                $info[(int)$x['id']] = ['fact_id' => (int)$x['id'], 'label' => $x['label'], 'title' => $x['title'], 'lean' => self::leanState($rows[(int)$x['id']] ?? [])];
+            }
+        }
+        foreach ($out['lean_proofs'] as &$l) {
+            $l['assumes'] = array_values(array_filter(array_map(fn($a) => isset($info[(int)$a['fact_id']]) ? $info[(int)$a['fact_id']] + ['hypothesis' => $a['hypothesis']] : null,
+                json_decode((string)$l['assumes_json'], true) ?: [])));
+            unset($l['assumes_json']);
+        }
+        unset($l);
         return $out;
     }
 }
