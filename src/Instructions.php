@@ -91,21 +91,22 @@ final class Instructions
         $f = Db::one('SELECT f.id, f.label, f.title, f.kind, f.current_revision, r.statement_html, r.proof_html FROM facts f JOIN fact_revisions r ON r.fact_id = f.id AND r.revision_no = f.current_revision WHERE f.id = ? AND f.project_id = ?', [$fid, $pid]);
         if (!$f) return [];
         $text = fn($h) => Sanitizer::toText((string)$h);
-        $list = fn(string $sql) => array_map(fn($d) => ['label' => $d['label'], 'title' => $d['title'], 'statement' => $text($d['statement_html'])], Db::all($sql, [$fid]));
+        $list = fn(string $sql) => array_map(fn($d) => ['label' => $d['label'], 'title' => $d['title'], 'statement' => $text($d['statement_html']), 'glossary' => json_decode((string)$d['glossary_json'], true) ?: null], Db::all($sql, [$fid]));
         $doc = AiTaskController::factSourceDocument($fid);
         return ['fact' => ['fact_id' => $fid, 'label' => $f['label'], 'title' => $f['title'], 'kind' => $f['kind'], 'statement' => $text($f['statement_html']), 'proof' => $text($f['proof_html']),
                 'definitions' => FactController::definitions($pid, $fid, (int)$f['current_revision']),
                 'sources' => array_values(array_map(fn($s) => ['label' => $s['label'] ?? $s['type'], 'page' => $s['page'] ?? null, 'quote' => $s['quote']], array_filter(FactController::presentSources($fid, (int)$f['current_revision']), fn($s) => !$s['hidden'] && $s['covers'] !== 'context')))],
-            'dependencies' => $list('SELECT f.label, f.title, r.statement_html FROM fact_deps d JOIN facts f ON f.id = d.depends_on_id JOIN fact_revisions r ON r.fact_id = f.id AND r.revision_no = f.current_revision WHERE d.fact_id = ? LIMIT 50'),
-            'used_by' => $list('SELECT f.label, f.title, r.statement_html FROM fact_deps d JOIN facts f ON f.id = d.fact_id AND f.deleted_at IS NULL JOIN fact_revisions r ON r.fact_id = f.id AND r.revision_no = f.current_revision WHERE d.depends_on_id = ? LIMIT 30')]
+            'dependencies' => $list('SELECT f.label, f.title, r.statement_html, r.glossary_json FROM fact_deps d JOIN facts f ON f.id = d.depends_on_id JOIN fact_revisions r ON r.fact_id = f.id AND r.revision_no = f.current_revision WHERE d.fact_id = ? LIMIT 50'),
+            'used_by' => $list('SELECT f.label, f.title, r.statement_html, r.glossary_json FROM fact_deps d JOIN facts f ON f.id = d.fact_id AND f.deleted_at IS NULL JOIN fact_revisions r ON r.fact_id = f.id AND r.revision_no = f.current_revision WHERE d.depends_on_id = ? LIMIT 30')]
             + ($doc ? ['document' => $doc] : []);
     }
 
-    /** The facts of the project in short, for an instruction about a question or a strategy. */
+    /** The facts of the project, each with its statement and own notation, for an instruction about a question or a strategy. */
     private static function facts(int $pid): array
     {
-        return array_map(fn($f) => ['id' => (int)$f['id'], 'label' => $f['label'], 'title' => $f['title'], 'statement' => mb_substr(Sanitizer::toText((string)$f['statement_html']), 0, 500)],
-            Db::all('SELECT f.id, f.label, f.title, r.statement_html FROM facts f JOIN fact_revisions r ON r.fact_id = f.id AND r.revision_no = f.current_revision
+        return array_map(fn($f) => ['id' => (int)$f['id'], 'label' => $f['label'], 'title' => $f['title'], 'statement' => Sanitizer::toText((string)$f['statement_html']),
+                'glossary' => json_decode((string)$f['glossary_json'], true) ?: null],
+            Db::all('SELECT f.id, f.label, f.title, r.statement_html, r.glossary_json FROM facts f JOIN fact_revisions r ON r.fact_id = f.id AND r.revision_no = f.current_revision
                      WHERE f.project_id = ? AND f.deleted_at IS NULL AND f.retracted_at IS NULL ORDER BY f.id DESC LIMIT 300', [$pid]));
     }
 

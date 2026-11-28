@@ -30,3 +30,15 @@ test('a proof search sees statements, proofs, what it may build on, and the prop
   assert.match(t.context.question.answers[0].rationale, /ACA_0 only/);
   assert.match(t.context.question.answers_note, /base system of the question/);
 });
+
+test('every AI task sees each fact with its statement and its own notation, not only its title', async () => {
+  const made = (await app.call(key, 'POST', `/api/projects/${pid}/facts/batch`, { format: 'native', ai_model: 'claude-opus-5-5', facts: [
+    { ref: 'g', title: 'Left matches code the jump', kind: 'lemma', labels: ['conclusion'], method: 'deduced', statement_text: 'Every left match $(F,S)$ for $f$ has $S\\ge_T\\emptyset\'$.', proof_text: 'P.', glossary: { 'left match': 'a pair $(F,S)$ with $F<S$ such that every $b$ has a match in $F$' } },
+  ] })).data.created;
+  assert.equal((await app.call(ann, 'POST', `/api/projects/${pid}/ai/tasks`, { kind: 'ask', prompt_text: 'What is known about left matches?' })).status, 201);
+  const t = (await app.call(key, 'POST', '/api/ai/tasks/claim', { client_name: 'c', ai_model: 'x', kinds: ['ask'], project_id: pid })).data.task;
+  const g = t.context.facts.find((f) => f.id === made[0].id);
+  assert.match(g.statement, /left match/); assert.match(g.glossary['left match'], /F<S/);
+  assert.equal(g.proof, undefined, 'proofs only for a proof search');
+  await app.call(key, 'POST', `/api/ai/tasks/${t.id}/complete`, { lease: t.lease, ai_model: 'x', reply_text: 'ok', summary: 'ok' });
+});

@@ -1,7 +1,7 @@
 {
  "min_version": "1.0.0",
  "client_version": "1.22.11",
- "fingerprint": "31de4069f033a1efe5e6bac7b16474e7acb29c15b8afdfd4016c2463c8635095",
+ "fingerprint": "19448feb1cb51f400a38b6130eba446f67f3d265c988fb95c796273f4121978f",
  "routes": [
   "GET /api/ai/procedures AiTaskController::procedures",
   "GET /api/bib/{id}/pdf BibController::pdf",
@@ -97,7 +97,7 @@
   "AiTaskController::addSuggested": "68a336e9e0c3f3cf507674ebda8a1156975440f6bd09bec80a3ffdbd1e8c27f8",
   "AiTaskController::aiOnly": "50a715819da1b43b49f4044ef971df238ac07138b44b9aba03a9ed3ee89d5c84",
   "AiTaskController::answer": "acb1f7ef79191be434ea41ed9e10d1e3aa40a75f31be56101e36414f2b5fdbea",
-  "AiTaskController::askFacts": "29436f07469c1c797a5ed73e6f86d512ae7395197666e75d0be6df5bd50532bc",
+  "AiTaskController::askFacts": "b1f5442ed18386a9c4bac549fb71d0707aecbdef649eb268ed412123de11b7f8",
   "AiTaskController::assistantId": "d847bffbc533c8686b8272875f44981da3c892f2a1daa7e5b71c87207276ea13",
   "AiTaskController::batchFacts": "1763b7a0f9eb5fd3897fd06cec31a903fe786041275d9b1cd2f2c01d70fe070a",
   "AiTaskController::batchItems": "52288dfe12f91fe98fd27fc12e1bc1e006fb6da460efd0e1d052b07283544464",
@@ -111,7 +111,7 @@
   "AiTaskController::complete": "14649896d16f0ea92e077574c6cc23551b603cc748c2c80b72f835af4af99161",
   "AiTaskController::computeSummary": "a8b57a62535a0c6a88dc28ae65cef5b9402f8f9780a255496fd4957e5d637912",
   "AiTaskController::computers": "077278c83c71633481710259b9c80d4b7d24714599d7ab525dd13b4d6c2fc7e5",
-  "AiTaskController::context": "f17d17d64131fdd2a0f8d5d4cd3b1263e65773dcd8859a39e1a481b0a19e3f4d",
+  "AiTaskController::context": "e49c91d715a034ac06f9e5e2dd79cde53d91c375e34936275c91d20738036cda",
   "AiTaskController::conversationBlocked": "f32758b0c318c285be52be714f866a1368c141c814a73ed17274f29767916a6e",
   "AiTaskController::conversationComments": "5e6966d4aa5a5837698eb6f45632134ce5f7512306728fcf630e3e229a582f33",
   "AiTaskController::conversationHash": "edee696dcf4e3013026a75be4b20f37b502f78bc1eed6128113f66a7d8af0276",
@@ -124,6 +124,7 @@
   "AiTaskController::expire": "9032b0b06a5a8fbba5d67b50fe5f23ff5fe7b3ea1c6f2c825ef700b94d434c48",
   "AiTaskController::extractComments": "e8db0bb501c6e3a0207cf23c50ee94903a532c1c9054a1eb945f898f799f2334",
   "AiTaskController::extractedBy": "2521f08281a3525adbe7e628360667b613d006ee4aa20971e25eeeda41bd0c2b",
+  "AiTaskController::factList": "bf1af96a489c8d59388f2fdc4f13cf83af65b1384356388815d888e425e00fe0",
   "AiTaskController::factSourceDocument": "8ab5fa88a1d897d7860cd8edf79c1cddb4397c6c5f7bc157955859b03c46c6b6",
   "AiTaskController::fail": "2134a3e749a4753b2b0ee401b75fa41f2870f54444d6a0e545cfaad28954830d",
   "AiTaskController::finish": "440ffa96be4e94b12a56b54c23397f0c4bca238ee89d6ca7739d469259a927fd",
@@ -368,8 +369,8 @@
   "Instructions::act": "9b20861bcc40fd0242269d972505ac49a625c8d976d3b4883cc8eb4935a21a3f",
   "Instructions::apply": "2687489e957c16528db3afa0fa015128f589fce78a1fccf637a2a3e0408ddf10",
   "Instructions::context": "09d7688ac4b531f26efa2ccbc326939930b7624173a7272d8b606d16193338d3",
-  "Instructions::factContext": "3226faabc59a9ab28d555e789cfe8e1978edd216c6271e0c94cbfa217620c707",
-  "Instructions::facts": "255e98864da12f85cac4fdc62a89ea3a31728b29ae64203f84c358f90508f6aa",
+  "Instructions::factContext": "851cb49c72c1489dbf4351079658d192e6652f3bf1008f46b5e912c27123c247",
+  "Instructions::facts": "4992904558d5c9a5a8420d05b6eeaf41ece0609ac0f8002e0d2eaa2a09670619",
   "Instructions::handles": "14c79d8699bfe62c8c7f3ae7c7343dd005c519944a4ee37c1357e8190b9eded6",
   "Instructions::questionContext": "773597398f9eb1900c1dc61691aadf34d2861112ac74ee548b83834fbe1399a6",
   "Instructions::strategies": "765f0342361fa20c781ef253fd8e08674c06c7a02447a49f37b568269a887c0b",
@@ -2118,6 +2119,20 @@
     "AiTaskController::context",
     "FactController::provingContext",
     "+FactController::provingFacts"
+   ]
+  },
+  {
+   "date": "2026-11-28",
+   "decision": "compatible",
+   "client_version": "1.22.11",
+   "min_version": "1.0.0",
+   "note": "Every AI task's facts list carries each fact's statement, own notation and status besides its title; fields are added only",
+   "changed": [
+    "AiTaskController::askFacts",
+    "AiTaskController::context",
+    "Instructions::factContext",
+    "Instructions::facts",
+    "+AiTaskController::factList"
    ]
   }
  ]

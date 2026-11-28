@@ -1061,7 +1061,9 @@ final class AiTaskController
         $ctx = [
             'project' => ['id' => $pid, 'title' => $p['title'], 'question' => Sanitizer::toText((string)$p['question_html'])],
             'questions' => Db::all('SELECT id, parent_id, title, status FROM open_questions WHERE project_id = ? AND deleted_at IS NULL ORDER BY id LIMIT 200', [$pid]),
-            'facts' => Db::all('SELECT id, label, title, kind FROM facts WHERE project_id = ? AND deleted_at IS NULL AND retracted_at IS NULL ORDER BY id DESC LIMIT 300', [$pid]),
+            // Each fact with what it says and the notation it defines, not only its title: an AI that sees titles alone cannot tell
+            // what is already known, nor build on it. Proofs are added for a proof search, below.
+            'facts' => self::factList($pid),
             'bibliography' => Db::all('SELECT id, cite_key, title, authors, year, doi FROM bib_entries WHERE project_id = ? ORDER BY id LIMIT 500', [$pid]),
         ];
         $type = $t['source_type']; $id = (int)$t['source_id'];
@@ -1267,8 +1269,8 @@ final class AiTaskController
                 $graph = array_column(FactController::graph($pid)['facts'], null, 'id');
                 $ctx['fact']['outside_refs'] = array_values(array_map(fn($x) => ['label' => $x['label'], 'settled' => $x['resolved']], $graph[$id]['outside_refs'] ?? []));
                 $ctx['dependencies'] = array_map(fn($d) => ['id' => (int)$d['id'], 'label' => $d['label'], 'title' => $d['title'], 'statement' => Sanitizer::toText((string)$d['statement_html']),
-                    'basis' => $graph[(int)$d['id']]['basis'] ?? null, 'status' => $graph[(int)$d['id']]['status'] ?? null], Db::all(
-                    'SELECT f.id, f.label, f.title, r.statement_html FROM fact_deps d JOIN facts f ON f.id = d.depends_on_id JOIN fact_revisions r ON r.fact_id = f.id AND r.revision_no = f.current_revision WHERE d.fact_id = ? LIMIT 50', [$id]));
+                    'basis' => $graph[(int)$d['id']]['basis'] ?? null, 'status' => $graph[(int)$d['id']]['status'] ?? null, 'glossary' => json_decode((string)$d['glossary_json'], true) ?: null], Db::all(
+                    'SELECT f.id, f.label, f.title, r.statement_html, r.glossary_json FROM fact_deps d JOIN facts f ON f.id = d.depends_on_id JOIN fact_revisions r ON r.fact_id = f.id AND r.revision_no = f.current_revision WHERE d.fact_id = ? LIMIT 50', [$id]));
                 // The meaning of its terms, and what an empty list of dependencies means: a referee without them reports false gaps.
                 $ctx['fact']['definitions'] = FactController::definitions($pid, $id, (int)$ctx['fact']['current_revision']);
                 // A Lean proof may take each dependency as a hypothesis; one that compiles already shows how it was stated in Lean.
@@ -1290,6 +1292,15 @@ final class AiTaskController
         return $ctx;
     }
 
+    /** The facts of a project for an AI task, newest first: statement (in the project notation when a faithful rewrite exists), own notation, status. */
+    private static function factList(int $pid): array
+    {
+        $keep = array_flip(['id', 'label', 'title', 'kind', 'status', 'statement', 'glossary', 'in_project_notation']);
+        $facts = array_filter(FactController::provingFacts($pid), fn($f) => $f['status'] !== 'retracted');
+        usort($facts, fn($a, $b) => $b['id'] <=> $a['id']);
+        return array_map(fn($f) => array_intersect_key($f, $keep), array_slice($facts, 0, 500));
+    }
+
     /** A question to the AI is often about facts: it reads their statements, and the whole of the facts its question cites. */
     private static function askFacts(array $t, array &$ctx): void
     {
@@ -1299,8 +1310,7 @@ final class AiTaskController
         $said = (string)$t['prompt_text'] . ' ' . implode(' ', array_column($ctx['thread'] ?? [], 'text'));
         preg_match_all('/@\{fact:([^}]+)\}/', $said, $m);  // a mention keeps the fact's label, a model may write its id
         $cited = array_slice(array_unique($m[1]), 0, 10);
-        $ctx['facts'] = array_map(fn($f) => ['id' => (int)$f['id'], 'label' => $f['label'], 'title' => $f['title'], 'kind' => $f['kind'],
-            'statement' => mb_substr(Sanitizer::toText((string)$f['statement_html']), 0, 800)], $rows);
+        $ctx['facts'] = self::factList($pid);
         $ctx['cited_facts'] = [];
         foreach ($rows as $f) if (in_array((string)$f['id'], $cited, true) || in_array((string)$f['label'], $cited, true)) $ctx['cited_facts'][] = ['id' => (int)$f['id'], 'label' => $f['label'], 'title' => $f['title'],
             'statement' => mb_substr(Sanitizer::toText((string)$f['statement_html']), 0, 6000), 'proof' => mb_substr(Sanitizer::toText((string)$f['proof_html']), 0, 12000)];
