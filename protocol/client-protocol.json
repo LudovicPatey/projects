@@ -1,7 +1,7 @@
 {
  "min_version": "1.0.0",
- "client_version": "1.22.11",
- "fingerprint": "19448feb1cb51f400a38b6130eba446f67f3d265c988fb95c796273f4121978f",
+ "client_version": "1.22.12",
+ "fingerprint": "d9d23fa3be896b9c06b4011add90a04040bec0cba875bcf9ee9fcbb67f6358a2",
  "routes": [
   "GET /api/ai/procedures AiTaskController::procedures",
   "GET /api/bib/{id}/pdf BibController::pdf",
@@ -111,7 +111,7 @@
   "AiTaskController::complete": "14649896d16f0ea92e077574c6cc23551b603cc748c2c80b72f835af4af99161",
   "AiTaskController::computeSummary": "a8b57a62535a0c6a88dc28ae65cef5b9402f8f9780a255496fd4957e5d637912",
   "AiTaskController::computers": "077278c83c71633481710259b9c80d4b7d24714599d7ab525dd13b4d6c2fc7e5",
-  "AiTaskController::context": "e49c91d715a034ac06f9e5e2dd79cde53d91c375e34936275c91d20738036cda",
+  "AiTaskController::context": "1b1b69a5b6141aabeb88f7e3b68f6026accc73ab63d4e1e075abf73d7ea09370",
   "AiTaskController::conversationBlocked": "f32758b0c318c285be52be714f866a1368c141c814a73ed17274f29767916a6e",
   "AiTaskController::conversationComments": "5e6966d4aa5a5837698eb6f45632134ce5f7512306728fcf630e3e229a582f33",
   "AiTaskController::conversationHash": "edee696dcf4e3013026a75be4b20f37b502f78bc1eed6128113f66a7d8af0276",
@@ -2133,6 +2133,26 @@
     "Instructions::factContext",
     "Instructions::facts",
     "+AiTaskController::factList"
+   ]
+  },
+  {
+   "date": "2026-11-28",
+   "decision": "compatible",
+   "client_version": "1.22.12",
+   "min_version": "1.0.0",
+   "note": "A proof search toward a question or strategy starts with a goal field; older clients pass it to the model with the rest of task.json",
+   "changed": [
+    "AiTaskController::context"
+   ]
+  },
+  {
+   "date": "2026-11-28",
+   "decision": "compatible",
+   "client_version": "1.22.12",
+   "min_version": "1.0.0",
+   "note": "The goal of a proof search asks for a feasibility judgement first; text only",
+   "changed": [
+    "AiTaskController::context"
    ]
   }
  ]
