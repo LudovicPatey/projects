@@ -53,7 +53,7 @@ import webbrowser
 import zipfile
 import zlib
 
-VERSION = "1.22.12"
+VERSION = "1.22.11"
 API_LEVEL = 3  # raise with the server's AiTaskController::API_LEVEL when a client needs new server features
 GITHUB_REPO = "LudovicPatey/projects"
 KINDS = ["extract", "ask", "bib", "derive", "review", "lean", "notation", "consolidate", "latex"]
@@ -1181,16 +1181,13 @@ The theorem may take some facts of "assumed" as hypotheses, named in "hypothesis
 assumes them. For each of them, say in "hypotheses" how that hypothesis compares with the statement of that fact: "same"; "implied" if the fact
 implies it, so assuming it asks for less; "stronger" if it says more than the fact, for example a hypothesis that is false or makes the theorem
 trivial; "different" otherwise. Leave "hypotheses" empty when "assumed" is.""",
-    "derive": """TASK: when task.json has a "goal", it is the purpose of this task: work toward it first. For a question, first judge whether a complete
-answer is within reach. If it is, prove a fact that answers it exactly as it is asked. If not, prove the intermediate results a complete answer would
-need and that bring it closest, and begin "summary" with that assessment and what is still missing. Without a goal, try to derive
-NEW mathematical facts useful for the subject of this task, or for the open questions in task.json.
+    "derive": """TASK: try to derive NEW mathematical facts useful for the subject of this task, or for the open questions in task.json.
 Write every statement and proof in the project's agreed notation, listed in "notation" in task.json. When "fact" has a "statement_in_project_notation", use it.
 Each fact must be readable alone: in "local_notation", define every symbol it uses that is not in the project's notation ("notation" in task.json),
 with its meaning in this fact, and every term with a technical meaning that is not standard, such as "left match" or "P-condition", even when
 another fact or paper defines it: each fact is reviewed alone, with only its own definitions and the project's. Do not repeat the project's symbols there.
 In a proof, name the facts you use by their label, or by the ref of a new fact of this answer, and list each of them in "depends_on".
-Prefer small, solid steps toward the goal. Each fact needs a complete, rigorous "proof" unless its kind is definition, conjecture or remark.
+Prefer small, solid steps. Each fact needs a complete, rigorous "proof" unless its kind is definition, conjecture or remark.
 Leave "quote", "page" and "covers" null. "depends_on" may use refs of your new facts, or labels of existing facts.
 A proof may rely only on facts of the database and on standard facts: do not use a result of another work that is not in task.json.
 Return an empty list rather than a doubtful proof. People and other models will review your facts.""",

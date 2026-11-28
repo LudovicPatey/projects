@@ -1288,21 +1288,6 @@ final class AiTaskController
             $x = LatexExport::build((int)$t['project_id'], (int)$t['source_id']);
             $ctx['latex'] = ['files' => ['main.tex' => $x['tex']] + ($x['bib'] !== '' ? ['refs.bib' => $x['bib']] : []), 'sha256' => $x['sha256'], 'title' => $x['title'], 'facts' => $x['facts']];
         }
-        if ($t['kind'] === 'derive') {
-            // Asked toward a question, the search is asked to answer it: without a stated goal, a model writes side results and leaves the question
-            // as it is, even when the facts almost settle it. A member's own request, when there is one, says what to aim for and comes first.
-            $goal = null;
-            if ($type === 'question' && $ctx['question']) {
-                $goal = 'Answer open question ' . $id . ' as it is asked: "' . $ctx['question']['title'] . '"' . (trim((string)($ctx['question']['body'] ?? Sanitizer::toText((string)($ctx['question']['body_html'] ?? '')))) !== '' ? ' (its statement is in "question")' : '') . '. '
-                    . 'Start by judging whether a complete answer is within reach of this task, from the usable facts of the database and the answers already proposed (read "question.answers" first). '
-                    . 'If it is, prove one fact whose statement answers it exactly, yes or no, in the setting the question asks for (its base system, its hypotheses, its generality); when a fact almost answers it, close the gap. '
-                    . 'If it is not, choose the intermediate results that a complete answer would need and that you can prove now, the ones that bring it closest, rather than side results. '
-                    . 'Either way, begin "summary" with your assessment: whether the question can be answered now, what your facts settle, and what is still missing and why.';
-            } elseif ($type === 'strategy' && !empty($ctx['strategy'])) {
-                $goal = 'Develop proof strategy ' . $id . ' ("' . ($ctx['strategy']['title'] ?? '') . '") toward the question it serves: prove the steps it proposes, or show where it fails.';
-            }
-            if ($goal) $ctx = ['goal' => $goal . ((string)$t['prompt_text'] !== '' ? ' A member also asked: see the request in your instructions, which comes first.' : '')] + $ctx;
-        }
         if (isset($ctx['question']['body_html'])) { $ctx['question']['body'] = Sanitizer::toText((string)$ctx['question']['body_html']); unset($ctx['question']['body_html']); }
         return $ctx;
     }

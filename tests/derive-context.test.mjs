@@ -29,9 +29,6 @@ test('a proof search sees statements, proofs, what it may build on, and the prop
   assert.deepEqual(t.context.question.answers.map((x) => [x.fact_id, x.answer, x.state]), [[made[0].id, 'positive', 'proposed']]);
   assert.match(t.context.question.answers[0].rationale, /ACA_0 only/);
   assert.match(t.context.question.answers_note, /base system of the question/);
-  assert.equal(Object.keys(t.context)[0], 'goal', 'the goal comes first');
-  assert.match(t.context.goal, new RegExp(`Answer open question ${q.id} as it is asked`));
-  assert.match(t.context.goal, /exactly, yes or no, in the setting the question asks for/); assert.match(t.context.goal, /judging whether a complete answer is within reach/); assert.match(t.context.goal, /intermediate results/);
 });
 
 test('every AI task sees each fact with its statement and its own notation, not only its title', async () => {
